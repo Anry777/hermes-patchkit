@@ -18,7 +18,9 @@
       "default": true,
       "depends_on": [],
       "conflicts_with": [],
-      "status": "placeholder"
+      "status": "exported",
+      "exported_from": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "transplanted_from_commit": "8797e7337525b1458ecdb8abe6878d3b5dbda812"
     },
     {
       "id": "auth-profile-root-fallback",
