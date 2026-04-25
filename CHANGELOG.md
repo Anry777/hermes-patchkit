@@ -7,8 +7,9 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- real exported upstream-fix patch `020-auth-profile-root-fallback`, including profile-to-root auth fallback tests
 - real exported upstream-fix patches `060-codex-memory-flush-responses-contract` and `061-codex-auxiliary-tool-role-flattening`
-- pinned manifest/profile entries for the exported Codex patches
+- pinned manifest/profile entries for the exported auth and Codex patches
 - unittest regression coverage for rollback cleanup after patches add new files
 
 ### Changed

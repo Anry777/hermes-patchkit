@@ -35,7 +35,19 @@
       "default": true,
       "depends_on": [],
       "conflicts_with": [],
-      "status": "placeholder"
+      "status": "exported",
+      "exported_from": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "transplanted_from_commit": "2fc930be",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_falls_back_to_root_when_profile_auth_missing",
+          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_keeps_two_profile_auth_stores_isolated",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_first_auth_write_forks_from_root_without_mutating_root",
+          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_falls_back_to_root_auth_when_profile_auth_missing",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
+          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_falls_back_to_root_auth_when_profile_missing"
+        ]
+      }
     },
     {
       "id": "credential-pool-recovery",

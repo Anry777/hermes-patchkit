@@ -7,7 +7,7 @@
 - [x] Add placeholder scripts and CI validation
 
 ## v0.2 — Fork export
-- [x] Export first real upstream-fix patches (`060`, `061`) from the Hermes delta
+- [x] Export first real upstream-fix patches (`020`, `060`, `061`) from the Hermes delta
 - [ ] Export the remaining logical patches from the current Hermes fork
 - [ ] Replace more placeholder patch files with real unified diffs
 - [x] Record patch provenance in manifests

@@ -22,11 +22,12 @@ It already contains:
 - helper scripts for doctor/apply/rollback/verify/export
 - stable patch IDs for the first patch candidates
 
-It already contains two real exported patch diffs from the working Hermes delta:
+It already contains real exported patch diffs from the working Hermes delta:
+- `020-auth-profile-root-fallback`
 - `060-codex-memory-flush-responses-contract`
 - `061-codex-auxiliary-tool-role-flattening`
 
-The rest of the reserved patch IDs are still placeholders. Expanding that set is the next milestone.
+The rest of the reserved patch IDs are still placeholders. Expanding that set remains the next milestone.
 
 ## Why bother?
 
@@ -82,13 +83,12 @@ python3 scripts/apply.py \
 These are the first logical units reserved in the scaffold:
 
 - `010-cli-tui-idle-refresh-fix`
-- `020-auth-profile-root-fallback`
+- `020-auth-profile-root-fallback` — exported
 - `030-credential-pool-recovery`
 - `040-fork-branding-installer` — likely optional/private
 - `050-whatsapp-baileys-pin`
 
-Right now the `.patch` files are placeholders.
-They will be replaced with real unified diffs exported from the Hermes fork.
+Some `.patch` files are now real exported diffs; the remaining placeholders will be replaced with unified diffs from the Hermes fork.
 
 ## Why this instead of just staying on a fork?
 
@@ -118,7 +118,7 @@ hermes-patchkit/
 The public repo currently includes:
 - pinned manifests, including `upstream-v2026.4.23-240-ge5647d78.yaml`
 - profiles such as `minimal`, `personal`, `full`, `upstream-fixes`, and `local-overlays`
-- a mix of real exported patches (`060`, `061`) and placeholder patch IDs for the remaining planned units
+- a mix of real exported patches (`020`, `060`, `061`) and placeholder patch IDs for the remaining planned units
 - helper scripts
 - repo hygiene for public development
 
