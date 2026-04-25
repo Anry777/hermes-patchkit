@@ -117,11 +117,41 @@ def delete_backup_state(repo: Path, backup_name: str) -> None:
         path.unlink()
 
 
-def stash_dirty_state(repo: Path, backup_name: str) -> str:
-    git(repo, 'stash', 'push', '--all', '--message', f'patchkit-pre-apply-{backup_name}')
-    stash_sha = git(repo, 'rev-parse', '-q', '--verify', 'refs/stash').stdout.strip()
-    if not stash_sha:
-        raise PatchKitError('Failed to capture pre-apply dirty state in git stash.')
+_FORCE_STASH_EXCLUDE_PATHS = (
+    ':(exclude)venv',
+    ':(exclude)venv/**',
+    ':(exclude).venv',
+    ':(exclude).venv/**',
+)
+
+
+def stash_dirty_state(repo: Path, backup_name: str) -> str | None:
+    """Capture user dirty state for forced apply without hiding local envs.
+
+    ``git stash push --all`` also removes ignored paths. In Hermes checkouts
+    the runtime virtualenv often lives inside the repo as ignored ``venv/``;
+    stashing it makes the active install disappear until rollback.  Keep those
+    root env directories in place while still stashing tracked, untracked, and
+    other ignored paths that may collide with patch-created files.
+    """
+    before_sha = git(repo, 'rev-parse', '-q', '--verify', 'refs/stash', check=False).stdout.strip()
+    result = git(
+        repo,
+        'stash',
+        'push',
+        '--all',
+        '--message',
+        f'patchkit-pre-apply-{backup_name}',
+        '--',
+        '.',
+        *_FORCE_STASH_EXCLUDE_PATHS,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise PatchKitError((result.stderr or result.stdout or 'git stash failed').strip())
+    stash_sha = git(repo, 'rev-parse', '-q', '--verify', 'refs/stash', check=False).stdout.strip()
+    if not stash_sha or stash_sha == before_sha:
+        return None
     ref_name = f'refs/patchkit/pre-apply/{backup_name}'
     git(repo, 'update-ref', ref_name, stash_sha)
     git(repo, 'stash', 'drop', 'stash@{0}')

@@ -91,6 +91,70 @@ class RollbackScriptTests(unittest.TestCase):
             status = self.run_git(repo, "status", "--porcelain").stdout.strip()
             self.assertEqual(status, "")
 
+    def test_force_apply_preserves_preexisting_ignored_venv_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "target-repo"
+            patchkit = root / "patchkit-fixture"
+            patch_source = root / "patch-source"
+            repo.mkdir()
+            (patchkit / "manifests").mkdir(parents=True)
+            (patchkit / "patches").mkdir(parents=True)
+
+            self.run_git(repo, "init")
+            self.run_git(repo, "config", "user.name", "PatchKit Test")
+            self.run_git(repo, "config", "user.email", "patchkit@example.com")
+            (repo / ".gitignore").write_text("venv/\n", encoding="utf-8")
+            (repo / "target.txt").write_text("base target\n", encoding="utf-8")
+            self.run_git(repo, "add", ".gitignore", "target.txt")
+            self.run_git(repo, "commit", "-m", "base")
+
+            self.run_git(root, "clone", str(repo), str(patch_source))
+            self.run_git(patch_source, "config", "user.name", "PatchKit Test")
+            self.run_git(patch_source, "config", "user.email", "patchkit@example.com")
+            (patch_source / "target.txt").write_text("patched target\n", encoding="utf-8")
+            patch_text = self.run_git(patch_source, "diff", "--binary", "HEAD", "--", "target.txt").stdout
+            (patchkit / "patches" / "test.patch").write_text(patch_text, encoding="utf-8")
+            (patchkit / "manifests" / "test.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "upstream": {"repo": "test/test", "ref": "HEAD"},
+                        "patches": [
+                            {"id": "test-patch", "file": "patches/test.patch", "status": "exported", "default": False}
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            venv_marker = repo / "venv" / "bin" / "python"
+            venv_marker.parent.mkdir(parents=True)
+            venv_marker.write_text("fake interpreter\n", encoding="utf-8")
+
+            apply_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(APPLY),
+                    "--repo",
+                    str(repo),
+                    "--manifest",
+                    str(patchkit / "manifests" / "test.json"),
+                    "--patch",
+                    "test-patch",
+                    "--yes",
+                    "--force",
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(apply_result.returncode, 0, msg=apply_result.stdout + apply_result.stderr)
+            self.assertEqual((repo / "target.txt").read_text(encoding="utf-8"), "patched target\n")
+            self.assertTrue(venv_marker.exists(), msg="force apply removed the pre-existing ignored venv")
+            self.assertEqual(venv_marker.read_text(encoding="utf-8"), "fake interpreter\n")
+
     def test_force_apply_then_rollback_restores_preexisting_dirty_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
