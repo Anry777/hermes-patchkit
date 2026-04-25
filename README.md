@@ -1,75 +1,100 @@
 # Hermes PatchKit
 
-Keep official Hermes Agent upstream. Reapply your custom fixes as small patch packs.
+If you have customized Hermes for yourself, you know how the story usually ends: the fork becomes the product.
 
-- No long-lived fork drift
-- Patch profiles for personal or team setups
-- Safe rollback before every apply
-- Reapply after upstream updates
-- Bilingual docs: English + Russian
+Hermes PatchKit takes a different path.
+It keeps official Hermes Agent upstream as the base and moves your local behavior into small, named patch files that you can review, reapply, and roll back.
 
-Status: early public scaffold. The repository shape, docs, manifest model, and helper scripts are in place. Real patch exports are the next milestone.
+- keep upstream Hermes as upstream
+- package local fixes as explicit patches
+- group them into repeatable profiles
+- create a backup before apply
+- dry-run before touching the target repo
 
-## Why this exists
+## What this repo is today
 
-Custom Hermes setups tend to drift into permanent forks. That works for a while, then every upstream update becomes a merge project.
+This repository is the public scaffold for that workflow.
 
-Hermes PatchKit keeps the runtime base clean:
-- upstream Hermes stays upstream;
-- local behavior lives in isolated patches;
-- manifests map patches to supported upstream refs;
-- profiles make a known customization set repeatable.
+It already contains:
+- the repo structure
+- bilingual README/docs
+- manifest and profile files
+- helper scripts for doctor/apply/rollback/verify/export
+- stable patch IDs for the first patch candidates
 
-## Quickstart
+It does not yet contain the real exported patch diffs from the working Hermes fork.
+That is the next milestone.
+
+## Why bother?
+
+A long-lived fork feels fine until upstream moves.
+Then every update becomes a merge job, and the line between “my local fix” and “my runtime base” disappears.
+
+PatchKit is meant to make that line visible again:
+- upstream stays clean
+- local changes stay isolated
+- supported combinations live in manifests
+- personal/team setups live in profiles
+
+## What PatchKit is trying to become
+
+A typical run should look like this:
+
+1. point PatchKit at a clean Hermes checkout
+2. inspect the target repo
+3. select a profile or patch list
+4. create a backup branch
+5. check whether patches apply cleanly
+6. apply them or stop safely
+7. roll back if needed
+
+That is the promise.
+This first public version is the scaffold that will grow into it.
+
+## Quick look
 
 ```bash
 git clone https://github.com/Anry777/hermes-patchkit.git
 cd hermes-patchkit
-# Validate the scaffold itself
-python scripts/verify.py --self-check
 
-# Inspect a target Hermes checkout before applying anything
-python scripts/doctor.py --repo /path/to/hermes-agent --manifest manifests/upstream-v2026.4.23.yaml
+# sanity-check the repository itself
+python3 scripts/verify.py --self-check
 
-# Preview what a profile would try to apply
-python scripts/apply.py   --repo /path/to/hermes-agent   --manifest manifests/upstream-v2026.4.23.yaml   --profile minimal   --dry-run
+# inspect a Hermes checkout before doing anything risky
+python3 scripts/doctor.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/minimal.yaml
+
+# preview a patch selection without changing the target repo
+python3 scripts/apply.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/minimal.yaml \
+  --dry-run
 ```
 
-## What you get
+## Current patch candidates
 
-### 1. Patch manifests
-A manifest ties one supported upstream ref to a known patch set.
+These are the first logical units reserved in the scaffold:
 
-### 2. Patch profiles
-Profiles like `minimal`, `personal`, and `full` turn a pile of patches into a repeatable setup.
+- `010-cli-tui-idle-refresh-fix`
+- `020-auth-profile-root-fallback`
+- `030-credential-pool-recovery`
+- `040-fork-branding-installer` — likely optional/private
+- `050-whatsapp-baileys-pin`
 
-### 3. Safe apply workflow
-`apply.py` is designed to:
-- check repo state;
-- resolve selected patches;
-- create a backup branch;
-- run `git apply --check` before changing anything;
-- apply patches or stop on the first unsafe step.
+Right now the `.patch` files are placeholders.
+They will be replaced with real unified diffs exported from the Hermes fork.
 
-### 4. Rollback path
-If an apply goes wrong, `rollback.py` takes the target repo back to a backup branch created right before the run.
-
-## Why PatchKit instead of a fork?
+## Why this instead of just staying on a fork?
 
 | Long-lived fork | PatchKit |
 |---|---|
-| Runtime base contains custom history | Runtime base stays official upstream |
-| Upgrades accumulate merge debt | Upgrades become patch revalidation |
-| Hard to separate public vs private changes | Patch units stay explicit and reviewable |
-| Rollback is usually manual | Rollback is part of the workflow |
-
-## Current v1 scope
-
-- 4–5 core patches
-- one manifest for upstream `v2026.4.23`
-- `apply.py`, `rollback.py`, `verify.py`, `doctor.py`, `export_from_fork.py`
-- bilingual README and docs
-- issue templates and CI validation
+| your runtime base carries custom history | your runtime base stays official upstream |
+| upstream updates pile up merge debt | upstream updates become patch revalidation |
+| public and private changes blur together | each change can stay in its own patch |
+| rollback is usually manual | rollback is part of the workflow |
 
 ## Repository layout
 
@@ -85,32 +110,38 @@ hermes-patchkit/
 └── .github/
 ```
 
-## Current patch candidates
+## Current scope
 
-- `010-cli-tui-idle-refresh-fix`
-- `020-auth-profile-root-fallback`
-- `030-credential-pool-recovery`
-- `040-fork-branding-installer` (likely optional/private)
-- `050-whatsapp-baileys-pin`
+The public scaffold currently covers:
+- one manifest for `v2026.4.23`
+- `minimal`, `personal`, and `full` profiles
+- placeholder patch files with stable IDs
+- helper scripts
+- repo hygiene for public development
 
-## Safety rules
+The next real step is obvious:
+export the actual patches from the Hermes fork and validate them against a clean upstream checkout.
 
-- PatchKit should refuse dirty target repos unless you pass an explicit override.
-- Every apply should create a backup branch.
-- `--dry-run` should always be available.
-- Private or business-specific overlays should stay separate from public defaults.
+## What I want this repo to be good at
+
+Not hype. Not branding. Not “customization platform” marketing copy.
+
+Useful things:
+- small diffs
+- predictable apply behavior
+- clear rollback story
+- honest compatibility notes
+- less fork drift
 
 ## Russian docs
 
-Full Russian docs: [README.ru.md](README.ru.md)
+Русская версия: [README.ru.md](README.ru.md)
 
-## Roadmap
+## More
 
-See [ROADMAP.md](ROADMAP.md).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+- roadmap: [ROADMAP.md](ROADMAP.md)
+- contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 

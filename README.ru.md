@@ -1,112 +1,131 @@
 # Hermes PatchKit
 
-Оставь официальный Hermes Agent как базу. Накатывай свои доработки маленькими patch pack'ами.
+Если ты долго допиливаешь Hermes под себя, обычно всё заканчивается одинаково: fork перестаёт быть «парой локальных правок» и становится основным продуктом.
 
-- без вечного fork drift
-- профили патчей для личной и командной настройки
-- безопасный rollback перед каждым apply
-- повторное применение после обновления upstream
-- документация на двух языках: English + Russian
+Hermes PatchKit нужен, чтобы развернуть эту историю обратно.
 
-Статус: ранний публичный scaffold. Каркас репозитория, docs, manifest model и helper scripts уже есть. Следующий рубеж — выгрузить реальные patch'и из текущего fork.
+Идея простая:
+- официальный Hermes остаётся базой
+- твои доработки живут в отдельных patch'ах
+- patch'и собираются в profiles
+- перед apply создаётся backup
+- перед реальным изменением всегда можно сделать dry-run
 
-## Зачем это нужно
+## Что здесь уже есть
 
-Кастомный Hermes часто быстро превращается в постоянный fork. Сначала это удобно, потом каждое обновление upstream становится отдельным merge-проектом.
+Сейчас это не «готовый patch manager», а первый публичный scaffold.
 
-Hermes PatchKit меняет схему работы:
-- upstream Hermes остаётся upstream;
-- локальное поведение живёт в отдельных patch'ах;
-- manifests связывают patch set с поддерживаемым upstream ref;
-- profiles делают набор доработок воспроизводимым.
+В репозитории уже лежат:
+- структура проекта
+- README и docs на двух языках
+- manifests и profiles
+- helper scripts для doctor/apply/rollback/verify/export
+- зарезервированные patch IDs под первые реальные доработки
 
-## Быстрый старт
+Чего пока нет:
+- настоящих `.patch` файлов, выгруженных из рабочего Hermes fork
+
+Это и есть следующий главный шаг.
+
+## Зачем вообще городить отдельный слой
+
+Постоянный fork удобен ровно до того момента, пока upstream не начинает жить своей жизнью.
+Потом любое обновление превращается в merge-ремонт, а граница между «официальной базой» и «моими локальными правками» исчезает.
+
+PatchKit нужен, чтобы эту границу вернуть:
+- upstream остаётся чистым
+- локальные изменения остаются отдельными
+- совместимые наборы живут в manifests
+- повторяемые конфигурации живут в profiles
+
+## Как это должно работать в нормальном виде
+
+Нормальный сценарий такой:
+
+1. берём чистый checkout Hermes
+2. прогоняем doctor
+3. выбираем profile или список patch'ей
+4. создаём backup branch
+5. проверяем, что patch'и применяются чисто
+6. применяем их или безопасно останавливаемся
+7. при необходимости откатываемся назад
+
+Эта версия репозитория — не финал, а публичный каркас под такой workflow.
+
+## Быстрый взгляд
 
 ```bash
 git clone https://github.com/Anry777/hermes-patchkit.git
 cd hermes-patchkit
-# Проверить сам scaffold
-python scripts/verify.py --self-check
 
-# Проверить целевой checkout Hermes перед apply
-python scripts/doctor.py --repo /path/to/hermes-agent --manifest manifests/upstream-v2026.4.23.yaml
+# Проверить сам репозиторий
+python3 scripts/verify.py --self-check
 
-# Посмотреть, что profile попробует применить
-python scripts/apply.py   --repo /path/to/hermes-agent   --manifest manifests/upstream-v2026.4.23.yaml   --profile minimal   --dry-run
+# Проверить целевой Hermes checkout до любых действий
+python3 scripts/doctor.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/minimal.yaml
+
+# Посмотреть, что profile попробует сделать, без изменений в repo
+python3 scripts/apply.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/minimal.yaml \
+  --dry-run
 ```
 
-## Что здесь есть
+## Какие patch'и сейчас зарезервированы
 
-### 1. Patch manifests
-Manifest привязывает известный upstream ref к конкретному набору patch'ей.
-
-### 2. Patch profiles
-Профили вроде `minimal`, `personal`, `full` превращают набор patch'ей в повторяемую конфигурацию.
-
-### 3. Безопасный apply workflow
-`apply.py` должен:
-- проверить состояние repo;
-- разрешить итоговый набор patch'ей;
-- создать backup branch;
-- выполнить `git apply --check` до любых изменений;
-- либо применить patch'и, либо остановиться на первой опасной точке.
-
-### 4. Путь к откату
-Если apply прошёл плохо, `rollback.py` возвращает repo к backup branch, созданной прямо перед запуском.
-
-## Почему это лучше, чем жить на fork
-
-| Долгоживущий fork | PatchKit |
-|---|---|
-| Runtime base уже содержит кастомную историю | Runtime base остаётся официальным upstream |
-| Обновления копят merge debt | Обновления сводятся к пере-проверке patch'ей |
-| Трудно отделить public и private изменения | Patch units остаются явными и reviewable |
-| Откат обычно ручной | Rollback встроен в workflow |
-
-## Текущий v1 scope
-
-- 4–5 основных patch'ей
-- один manifest для upstream `v2026.4.23`
-- `apply.py`, `rollback.py`, `verify.py`, `doctor.py`, `export_from_fork.py`
-- bilingual README и docs
-- issue templates и CI validation
-
-## Структура репозитория
-
-```text
-hermes-patchkit/
-├── manifests/
-├── profiles/
-├── patches/
-├── scripts/
-├── docs/en/
-├── docs/ru/
-├── examples/
-└── .github/
-```
-
-## Текущие patch candidates
+Пока в scaffold заведены такие логические единицы:
 
 - `010-cli-tui-idle-refresh-fix`
 - `020-auth-profile-root-fallback`
 - `030-credential-pool-recovery`
-- `040-fork-branding-installer` (скорее optional/private)
+- `040-fork-branding-installer` — скорее optional/private
 - `050-whatsapp-baileys-pin`
 
-## Правила безопасности
+Сейчас это placeholder'ы.
+Дальше они должны быть заменены на реальные unified diff'ы из рабочего fork.
 
-- PatchKit не должен работать по dirty repo без явного override.
-- Перед apply всегда нужен backup branch.
-- `--dry-run` должен быть доступен всегда.
-- Private/business-specific overlays не должны попадать в public defaults.
+## Почему не просто жить на fork
 
-## Roadmap
+| Долгоживущий fork | PatchKit |
+|---|---|
+| базовый runtime уже несёт кастомную историю | базовый runtime остаётся официальным upstream |
+| обновления копят merge debt | обновления сводятся к проверке patch'ей |
+| public и private изменения смешиваются | каждую доработку можно держать отдельно |
+| откат обычно ручной | rollback встроен в workflow |
 
-Смотри [ROADMAP.md](ROADMAP.md).
+## Что уже покрыто этим scaffold
 
-## Contributing
+Сейчас в публичном репо уже есть:
+- manifest для `v2026.4.23`
+- profiles `minimal`, `personal`, `full`
+- placeholder patch files со стабильными ID
+- helper scripts
+- базовая GitHub hygiene для публичной разработки
 
-Смотри [CONTRIBUTING.md](CONTRIBUTING.md).
+Следующий по-настоящему важный шаг очевиден:
+выгрузить реальные patch'и из Hermes fork и проверить их на чистом upstream checkout.
+
+## Каким я хочу видеть этот репозиторий
+
+Не шумным. Не рекламным. Не «революционной платформой кастомизации».
+
+Хочется другого:
+- маленьких diff'ов
+- предсказуемого apply
+- понятного rollback
+- честных compatibility notes
+- меньше fork drift
+
+## Документы
+
+- roadmap: [ROADMAP.md](ROADMAP.md)
+- contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- changelog: [CHANGELOG.md](CHANGELOG.md)
+- English version: [README.md](README.md)
 
 ## License
 
