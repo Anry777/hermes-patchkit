@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import shutil
 import subprocess
 import sys
 from typing import Iterable
@@ -68,9 +69,103 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return subprocess.run(['git', '-C', str(repo), *args], check=check, text=True, capture_output=True)
 
 
+def worktree_has_changes(repo: Path, include_ignored: bool = False) -> bool:
+    args = ['status', '--porcelain']
+    if include_ignored:
+        args.append('--ignored=matching')
+    result = git(repo, *args, check=False)
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 def is_clean_worktree(repo: Path) -> bool:
-    result = git(repo, 'status', '--porcelain', check=False)
-    return result.returncode == 0 and not result.stdout.strip()
+    return not worktree_has_changes(repo)
+
+
+def git_dir(repo: Path) -> Path:
+    result = git(repo, 'rev-parse', '--git-dir')
+    path = Path(result.stdout.strip())
+    if not path.is_absolute():
+        path = (repo / path).resolve()
+    return path
+
+
+def patchkit_state_path(repo: Path, backup_name: str) -> Path:
+    state_dir = git_dir(repo) / 'patchkit'
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / f'{backup_name}.json'
+
+
+def write_backup_state(repo: Path, backup_name: str, state: dict) -> Path:
+    path = patchkit_state_path(repo, backup_name)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    return path
+
+
+def read_backup_state(repo: Path, backup_name: str) -> dict | None:
+    path = patchkit_state_path(repo, backup_name)
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise PatchKitError(f'Invalid rollback state file: {path}')
+    return data
+
+
+def delete_backup_state(repo: Path, backup_name: str) -> None:
+    path = patchkit_state_path(repo, backup_name)
+    if path.exists():
+        path.unlink()
+
+
+def stash_dirty_state(repo: Path, backup_name: str) -> str:
+    git(repo, 'stash', 'push', '--all', '--message', f'patchkit-pre-apply-{backup_name}')
+    stash_sha = git(repo, 'rev-parse', '-q', '--verify', 'refs/stash').stdout.strip()
+    if not stash_sha:
+        raise PatchKitError('Failed to capture pre-apply dirty state in git stash.')
+    ref_name = f'refs/patchkit/pre-apply/{backup_name}'
+    git(repo, 'update-ref', ref_name, stash_sha)
+    git(repo, 'stash', 'drop', 'stash@{0}')
+    return ref_name
+
+
+def list_untracked_files(repo: Path) -> list[str]:
+    result = git(
+        repo,
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+        '--ignored=traditional',
+    )
+    entries = []
+    for raw in result.stdout.split('\0'):
+        if not raw:
+            continue
+        status = raw[:2]
+        if status in {'??', '!!'}:
+            entries.append(raw[3:])
+    return sorted(entries)
+
+
+def clean_untracked_paths(repo: Path, paths: Iterable[str]) -> None:
+    repo_root = repo.resolve()
+    current_candidates = set(list_untracked_files(repo))
+    for rel_path in paths:
+        if rel_path not in current_candidates:
+            continue
+        rel = Path(rel_path)
+        if rel.is_absolute() or '..' in rel.parts:
+            raise PatchKitError(f'refusing to delete non-local path: {rel_path}')
+        target = repo_root / rel
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
+
+
+def drop_ref(repo: Path, ref_name: str | None) -> None:
+    if ref_name:
+        git(repo, 'update-ref', '-d', ref_name, check=False)
 
 
 def resolve_patch_selection(manifest_ctx: ManifestContext, profile_path: Path | None, explicit_patches: str | None) -> list[dict]:

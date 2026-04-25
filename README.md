@@ -22,8 +22,11 @@ It already contains:
 - helper scripts for doctor/apply/rollback/verify/export
 - stable patch IDs for the first patch candidates
 
-It does not yet contain the real exported patch diffs from the working Hermes fork.
-That is the next milestone.
+It already contains two real exported patch diffs from the working Hermes delta:
+- `060-codex-memory-flush-responses-contract`
+- `061-codex-auxiliary-tool-role-flattening`
+
+The rest of the reserved patch IDs are still placeholders. Expanding that set is the next milestone.
 
 ## Why bother?
 
@@ -63,14 +66,14 @@ python3 scripts/verify.py --self-check
 # inspect a Hermes checkout before doing anything risky
 python3 scripts/doctor.py \
   --repo /path/to/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/minimal.yaml
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening
 
-# preview a patch selection without changing the target repo
+# preview one real exported patch without changing the target repo
 python3 scripts/apply.py \
   --repo /path/to/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/minimal.yaml \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening \
   --dry-run
 ```
 
@@ -112,15 +115,15 @@ hermes-patchkit/
 
 ## Current scope
 
-The public scaffold currently covers:
-- one manifest for `v2026.4.23`
-- `minimal`, `personal`, and `full` profiles
-- placeholder patch files with stable IDs
+The public repo currently includes:
+- pinned manifests, including `upstream-v2026.4.23-240-ge5647d78.yaml`
+- profiles such as `minimal`, `personal`, `full`, `upstream-fixes`, and `local-overlays`
+- a mix of real exported patches (`060`, `061`) and placeholder patch IDs for the remaining planned units
 - helper scripts
 - repo hygiene for public development
 
-The next real step is obvious:
-export the actual patches from the Hermes fork and validate them against a clean upstream checkout.
+The next real step is still obvious:
+export more patches from the Hermes delta and keep validating them on clean upstream checkouts.
 
 ## What I want this repo to be good at
 

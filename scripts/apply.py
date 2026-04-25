@@ -6,7 +6,20 @@ from datetime import datetime
 from pathlib import Path
 import subprocess
 
-from _common import PatchKitError, ensure_git_repo, git, is_clean_worktree, is_placeholder_patch, load_manifest, patch_file, resolve_patch_selection
+from _common import (
+    PatchKitError,
+    ensure_git_repo,
+    git,
+    is_clean_worktree,
+    is_placeholder_patch,
+    list_untracked_files,
+    load_manifest,
+    patch_file,
+    resolve_patch_selection,
+    stash_dirty_state,
+    worktree_has_changes,
+    write_backup_state,
+)
 
 
 def main() -> int:
@@ -28,8 +41,10 @@ def main() -> int:
         ensure_git_repo(repo)
         manifest_ctx = load_manifest(manifest_path)
         selected = resolve_patch_selection(manifest_ctx, profile_path, args.patch)
+        repo_is_clean = is_clean_worktree(repo)
+        repo_has_force_dirty_state = worktree_has_changes(repo, include_ignored=True)
 
-        if not is_clean_worktree(repo) and not args.force and not args.dry_run:
+        if not repo_is_clean and not args.force and not args.dry_run:
             raise PatchKitError('Target repo is dirty. Commit, stash, or rerun with --force.')
 
         print('Hermes PatchKit')
@@ -58,11 +73,27 @@ def main() -> int:
         git(repo, 'branch', backup_name)
         print(f'Created backup branch: {backup_name}')
 
+        pre_apply_ref = None
+        if args.force and repo_has_force_dirty_state:
+            pre_apply_ref = stash_dirty_state(repo, backup_name)
+            print(f'Captured pre-apply dirty state: {pre_apply_ref}')
+
+        baseline_cleanup_paths = set(list_untracked_files(repo))
+
+        state = {
+            'backup_branch': backup_name,
+            'pre_apply_ref': pre_apply_ref,
+            'apply_created_untracked': [],
+        }
+        write_backup_state(repo, backup_name, state)
+
         for patch in selected:
             patch_path = patch_file(manifest_path.parent.parent, patch)
             subprocess.run(['git', '-C', str(repo), 'apply', '--check', str(patch_path)], check=True)
             subprocess.run(['git', '-C', str(repo), 'apply', str(patch_path)], check=True)
             print(f"Applied: {patch['id']}")
+            state['apply_created_untracked'] = sorted(set(list_untracked_files(repo)) - baseline_cleanup_paths)
+            write_backup_state(repo, backup_name, state)
 
         print('Apply complete.')
         print(f'Rollback hint: python scripts/rollback.py --repo {repo} --backup {backup_name} --yes')

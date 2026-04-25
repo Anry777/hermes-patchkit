@@ -10,15 +10,37 @@ cd hermes-patchkit
 ## 2. Inspect your Hermes checkout
 
 ```bash
-python scripts/doctor.py --repo /path/to/hermes-agent --manifest manifests/upstream-v2026.4.23.yaml
+python scripts/doctor.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening
 ```
 
-## 3. Preview a profile
+## 3. Preview one real exported patch
 
 ```bash
-python scripts/apply.py   --repo /path/to/hermes-agent   --manifest manifests/upstream-v2026.4.23.yaml   --profile minimal   --dry-run
+python scripts/apply.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening \
+  --dry-run
 ```
 
 ## 4. Apply for real
 
-Once the placeholder patch files are replaced with exported diffs, rerun without `--dry-run`.
+```bash
+python scripts/apply.py \
+  --repo /path/to/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening \
+  --yes
+```
+
+## 5. Roll back if needed
+
+```bash
+python scripts/rollback.py \
+  --repo /path/to/hermes-agent \
+  --backup patchkit-backup-YYYYMMDD-HHMMSS \
+  --yes
+```

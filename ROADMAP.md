@@ -7,17 +7,18 @@
 - [x] Add placeholder scripts and CI validation
 
 ## v0.2 — Fork export
-- [ ] Export the first 5 logical patches from the current Hermes fork
-- [ ] Replace placeholder patch files with real unified diffs
-- [ ] Record patch provenance in manifests
+- [x] Export first real upstream-fix patches (`060`, `061`) from the Hermes delta
+- [ ] Export the remaining logical patches from the current Hermes fork
+- [ ] Replace more placeholder patch files with real unified diffs
+- [x] Record patch provenance in manifests
 
 ## v0.3 — First usable apply flow
-- [ ] Make `apply.py` fully apply real patches
-- [ ] Make `rollback.py` restore the target repo safely
+- [x] Make `apply.py` apply exported real patches
+- [x] Make `rollback.py` restore tracked state and clean untracked files created by apply
 - [ ] Expand `verify.py` with Hermes smoke checks
 
 ## v0.4 — Upstream validation
-- [ ] Validate against clean upstream checkout `v2026.4.23`
+- [x] Validate exported patches against clean upstream checkout `v2026.4.23-240-ge5647d78`
 - [ ] Publish compatibility notes
 - [ ] Tag first public release
 

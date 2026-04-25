@@ -3,8 +3,17 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import subprocess
 
-from _common import PatchKitError, ensure_git_repo, git
+from _common import (
+    PatchKitError,
+    clean_untracked_paths,
+    delete_backup_state,
+    drop_ref,
+    ensure_git_repo,
+    git,
+    read_backup_state,
+)
 
 
 def main() -> int:
@@ -34,10 +43,20 @@ def main() -> int:
                 print('Aborted.')
                 return 1
 
+        state = read_backup_state(repo, args.backup) or {}
+
         git(repo, 'reset', '--hard', args.backup)
+        clean_untracked_paths(repo, list(state.get('apply_created_untracked') or []))
+
+        pre_apply_ref = state.get('pre_apply_ref')
+        if pre_apply_ref:
+            git(repo, 'stash', 'apply', '--index', pre_apply_ref)
+            drop_ref(repo, pre_apply_ref)
+
+        delete_backup_state(repo, args.backup)
         print(f'Restored repo to {args.backup}')
         return 0
-    except PatchKitError as exc:
+    except (PatchKitError, subprocess.CalledProcessError) as exc:
         print(f'ERROR: {exc}')
         return 1
 
