@@ -1,132 +1,161 @@
 # Hermes PatchKit
 
-Если ты долго допиливаешь Hermes под себя, обычно всё заканчивается одинаково: fork перестаёт быть «парой локальных правок» и становится основным продуктом.
+Ты пропатчил Hermes. Upstream обновился. Что теперь?
 
-Hermes PatchKit нужен, чтобы развернуть эту историю обратно.
+Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
+Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
 
-Идея простая:
-- официальный Hermes остаётся базой
-- твои доработки живут в отдельных patch'ах
-- patch'и собираются в profiles
-- перед apply создаётся backup
-- перед реальным изменением всегда можно сделать dry-run
+```bash
+python3 scripts/tui.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
 
-## Что здесь уже есть
+Для headless/CI режима:
 
-Сейчас это не «готовый patch manager», а первый публичный scaffold.
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
 
-В репозитории уже лежат:
-- структура проекта
-- README и docs на двух языках
-- manifests и profiles
-- helper scripts для doctor/apply/rollback/verify/export
-- зарезервированные patch IDs под первые реальные доработки
+Обычная проверка безопасна: PatchKit подтягивает upstream metadata, клонирует candidate в `/tmp`, проверяет выбранные patch'и там и пишет отчёт в `reports/`. Он не применяет patch'и и не merge'ит upstream в live checkout.
 
-Что уже появилось сверх scaffold:
-- настоящий patch `020-auth-profile-root-fallback`
-- настоящий patch `060-codex-memory-flush-responses-contract`
-- настоящий patch `061-codex-auxiliary-tool-role-flattening`
+Пример вывода:
 
-Остальные зарезервированные patch IDs пока ещё placeholder'ы. Следующий шаг — продолжать заменять их на реальные export'ы.
+```text
+Hermes PatchKit update check
 
-## Зачем вообще городить отдельный слой
+Repo:      /home/me/.hermes/hermes-agent
+Manifest:  upstream-v2026.4.23-240-ge5647d78.yaml
+Current:   runtime-upstream-v2026.4.23 @ 456dc58
+Upstream:  origin/main @ abc1234
 
-Постоянный fork удобен ровно до того момента, пока upstream не начинает жить своей жизнью.
-Потом любое обновление превращается в merge-ремонт, а граница между «официальной базой» и «моими локальными правками» исчезает.
+Patch status:
+  ✓ cli-tui-idle-refresh-fix                 applies-cleanly
+  ✓ auth-profile-root-fallback               applies-cleanly
+  ✓ codex-memory-flush-responses-contract    already-present
+  ! codex-auxiliary-tool-role-flattening     conflict
 
-PatchKit нужен, чтобы эту границу вернуть:
-- upstream остаётся чистым
-- локальные изменения остаются отдельными
-- совместимые наборы живут в manifests
-- повторяемые конфигурации живут в profiles
+Safe to apply automatically: no (1 patch(es) need attention)
+Report: /path/to/hermes-patchkit/reports/update-20260425-211530.md
+```
 
-## Как это должно работать в нормальном виде
+## Зачем это нужно
 
-Нормальный сценарий такой:
+Долгоживущий fork удобен, пока upstream стоит на месте. Как только upstream начинает жить, каждое обновление превращается в merge-ремонт, а граница между «официальной базой» и «моими локальными правками» исчезает.
 
-1. берём чистый checkout Hermes
-2. прогоняем doctor
-3. выбираем profile или список patch'ей
-4. создаём backup branch
-5. проверяем, что patch'и применяются чисто
-6. применяем их или безопасно останавливаемся
-7. при необходимости откатываемся назад
+PatchKit возвращает эту границу:
 
-Эта версия репозитория — не финал, а публичный каркас под такой workflow.
+- официальный Hermes остаётся runtime-базой;
+- локальные изменения живут в маленьких именованных patch files;
+- profiles описывают повторяемые наборы patch'ей;
+- update check сначала работает на временном upstream clone;
+- apply и rollback остаются явными.
 
-## Быстрый взгляд
+## Текущий статус
+
+Проект ещё ранний, но safety loop уже рабочий:
+
+- `scripts/update.py` — one-command проверка совместимости с новым upstream и markdown report;
+- `scripts/tui.py` — маленький terminal UI поверх update checker;
+- `scripts/doctor.py` — preflight target checkout и выбранных patch'ей;
+- `scripts/apply.py` — apply profile или списка patch'ей с backup state;
+- `scripts/rollback.py` — откат PatchKit apply;
+- `scripts/verify.py` — self-check репозитория;
+- реальные exported patches для `020`, `060`, `061`;
+- зарезервированные placeholder IDs под остальные patch units.
+
+## Быстрый старт
 
 ```bash
 git clone https://github.com/Anry777/hermes-patchkit.git
 cd hermes-patchkit
 
-# Проверить сам репозиторий
 python3 scripts/verify.py --self-check
 
-# Проверить целевой Hermes checkout до любых действий
-python3 scripts/doctor.py \
-  --repo /path/to/hermes-agent \
+python3 scripts/tui.py \
+  --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --patch codex-auxiliary-tool-role-flattening
-
-# Посмотреть один реальный exported patch без изменений в repo
-python3 scripts/apply.py \
-  --repo /path/to/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
-  --dry-run
+  --profile profiles/upstream-fixes.yaml
 ```
 
-## Какие patch'и сейчас зарезервированы
+Если нужен неинтерактивный вывод:
 
-Пока в scaffold заведены такие логические единицы:
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
+
+Для одного patch'а:
+
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --patch codex-auxiliary-tool-role-flattening
+```
+
+## Что значат статусы
+
+| Status | Meaning |
+|---|---|
+| `applies-cleanly` | Patch применился к upstream candidate. |
+| `already-present` | Reverse patch применился, значит upstream, вероятно, уже содержит ровно это изменение. |
+| `conflict` | Patch больше не применяется чисто: его нужно refresh'нуть или retired. |
+| `placeholder` | В manifest есть зарезервированный patch ID, но real diff ещё не экспортирован. |
+
+`update.py` возвращает:
+
+- `0`, если выбранный patch set структурно безопасен;
+- `2`, если хотя бы один patch требует внимания;
+- `1`, если preflight или выполнение упали.
+
+## Текущие patch candidates
 
 - `010-cli-tui-idle-refresh-fix`
 - `020-auth-profile-root-fallback` — exported
-- `030-credential-pool-recovery`
-- `040-fork-branding-installer` — скорее optional/private
-- `050-whatsapp-baileys-pin`
-
-Часть patch files уже заменена на реальные exported diffs; оставшиеся placeholder'ы дальше будут заменяться на unified diff'ы из рабочего fork.
+- `030-credential-pool-recovery` — placeholder
+- `040-fork-branding-installer` — placeholder, скорее optional/private
+- `050-whatsapp-baileys-pin` — placeholder
+- `060-codex-memory-flush-responses-contract` — exported
+- `061-codex-auxiliary-tool-role-flattening` — exported
 
 ## Почему не просто жить на fork
 
 | Долгоживущий fork | PatchKit |
 |---|---|
-| базовый runtime уже несёт кастомную историю | базовый runtime остаётся официальным upstream |
-| обновления копят merge debt | обновления сводятся к проверке patch'ей |
-| public и private изменения смешиваются | каждую доработку можно держать отдельно |
-| откат обычно ручной | rollback встроен в workflow |
+| runtime base несёт кастомную историю | runtime base может оставаться official upstream |
+| upstream updates копят merge debt | upstream updates становятся проверкой patch'ей |
+| public и private изменения смешиваются | каждое изменение живёт отдельным patch'ем |
+| rollback обычно ручной | rollback встроен в workflow |
 
-## Что уже покрыто этим scaffold
+## Структура
 
-Сейчас в публичном репо уже есть:
-- pinned manifests, включая `upstream-v2026.4.23-240-ge5647d78.yaml`
-- profiles `minimal`, `personal`, `full`, `upstream-fixes`, `local-overlays`
-- смесь из реальных exported patches (`020`, `060`, `061`) и placeholder patch IDs для остальных запланированных единиц
-- helper scripts
-- базовая GitHub hygiene для публичной разработки
-
-Следующий по-настоящему важный шаг всё ещё тот же:
-продолжать выгружать реальные patch'и из Hermes delta и валидировать их на чистом upstream checkout.
-
-## Каким я хочу видеть этот репозиторий
-
-Не шумным. Не рекламным. Не «революционной платформой кастомизации».
-
-Хочется другого:
-- маленьких diff'ов
-- предсказуемого apply
-- понятного rollback
-- честных compatibility notes
-- меньше fork drift
+```text
+hermes-patchkit/
+├── manifests/
+├── profiles/
+├── patches/
+├── scripts/
+├── docs/en/
+├── docs/ru/
+├── reports/
+└── .github/
+```
 
 ## Документы
 
+- English README: [README.md](README.md)
+- update workflow: [docs/ru/update-workflow.md](docs/ru/update-workflow.md)
+- rollback: [docs/ru/rollback.md](docs/ru/rollback.md)
 - roadmap: [ROADMAP.md](ROADMAP.md)
 - contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - changelog: [CHANGELOG.md](CHANGELOG.md)
-- English version: [README.md](README.md)
 
 ## License
 

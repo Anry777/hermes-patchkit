@@ -15,14 +15,17 @@
 ## v0.3 — First usable apply flow
 - [x] Make `apply.py` apply exported real patches
 - [x] Make `rollback.py` restore tracked state and clean untracked files created by apply
+- [x] Add `update.py` to check selected patches against a temporary upstream candidate before touching live runtime
+- [x] Add a small `tui.py` flow for update status/report viewing
 - [ ] Expand `verify.py` with Hermes smoke checks
 
 ## v0.4 — Upstream validation
 - [x] Validate exported patches against clean upstream checkout `v2026.4.23-240-ge5647d78`
-- [ ] Publish compatibility notes
+- [x] Publish first compatibility/update workflow docs around `update.py`
+- [ ] Add patch refresh tooling for new upstream releases
 - [ ] Tag first public release
 
 ## Later
 - [ ] Support multiple upstream versions with compatibility matrix
-- [ ] Add richer interactive selection flow
-- [ ] Add patch refresh tooling for new upstream releases
+- [ ] Replace the simple terminal UI with a richer Textual UI when packaging is ready
+- [ ] Add guided patch refresh tooling for conflicted patches

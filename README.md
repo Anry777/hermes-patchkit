@@ -1,100 +1,135 @@
 # Hermes PatchKit
 
-If you have customized Hermes for yourself, you know how the story usually ends: the fork becomes the product.
+You patched Hermes. Upstream moved. Now what?
 
-Hermes PatchKit takes a different path.
-It keeps official Hermes Agent upstream as the base and moves your local behavior into small, named patch files that you can review, reapply, and roll back.
+Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
+It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-- keep upstream Hermes as upstream
-- package local fixes as explicit patches
-- group them into repeatable profiles
-- create a backup before apply
-- dry-run before touching the target repo
+```bash
+python3 scripts/tui.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
 
-## What this repo is today
+Headless mode for CI/scripts:
 
-This repository is the public scaffold for that workflow.
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
 
-It already contains:
-- the repo structure
-- bilingual README/docs
-- manifest and profile files
-- helper scripts for doctor/apply/rollback/verify/export
-- stable patch IDs for the first patch candidates
+The default update check is safe: it fetches upstream metadata, clones the upstream candidate into `/tmp`, checks the selected patch set there, and writes a report under `reports/`. It does not apply patches or merge upstream into your live checkout.
 
-It already contains real exported patch diffs from the working Hermes delta:
-- `020-auth-profile-root-fallback`
-- `060-codex-memory-flush-responses-contract`
-- `061-codex-auxiliary-tool-role-flattening`
+Example output:
 
-The rest of the reserved patch IDs are still placeholders. Expanding that set remains the next milestone.
+```text
+Hermes PatchKit update check
 
-## Why bother?
+Repo:      /home/me/.hermes/hermes-agent
+Manifest:  upstream-v2026.4.23-240-ge5647d78.yaml
+Current:   runtime-upstream-v2026.4.23 @ 456dc58
+Upstream:  origin/main @ abc1234
 
-A long-lived fork feels fine until upstream moves.
-Then every update becomes a merge job, and the line between “my local fix” and “my runtime base” disappears.
+Patch status:
+  ✓ cli-tui-idle-refresh-fix                 applies-cleanly
+  ✓ auth-profile-root-fallback               applies-cleanly
+  ✓ codex-memory-flush-responses-contract    already-present
+  ! codex-auxiliary-tool-role-flattening     conflict
 
-PatchKit is meant to make that line visible again:
-- upstream stays clean
-- local changes stay isolated
-- supported combinations live in manifests
-- personal/team setups live in profiles
+Safe to apply automatically: no (1 patch(es) need attention)
+Report: /path/to/hermes-patchkit/reports/update-20260425-211530.md
+```
 
-## What PatchKit is trying to become
+## Why this exists
 
-A typical run should look like this:
+A long-lived fork feels fine until upstream starts moving. Then every update turns into a merge job, and the line between “official runtime base” and “my local fixes” disappears.
 
-1. point PatchKit at a clean Hermes checkout
-2. inspect the target repo
-3. select a profile or patch list
-4. create a backup branch
-5. check whether patches apply cleanly
-6. apply them or stop safely
-7. roll back if needed
+PatchKit keeps that line visible:
 
-That is the promise.
-This first public version is the scaffold that will grow into it.
+- official Hermes stays the runtime base;
+- local changes live as small named patch files;
+- profiles describe repeatable patch sets;
+- update checks run against a temporary upstream clone first;
+- apply and rollback stay explicit.
 
-## Quick look
+## Current status
+
+This repository is still early, but it now has a working safety loop:
+
+- `scripts/update.py` — one-command upstream compatibility check with markdown reports;
+- `scripts/tui.py` — small terminal UI/guide over the update checker;
+- `scripts/doctor.py` — inspect a target checkout and selected patch set;
+- `scripts/apply.py` — apply a profile or explicit patch list with backup state;
+- `scripts/rollback.py` — roll back a PatchKit apply;
+- `scripts/verify.py` — repo self-checks;
+- real exported patches for `020`, `060`, and `061`;
+- reserved placeholder IDs for the remaining planned patch units.
+
+## Quick start
 
 ```bash
 git clone https://github.com/Anry777/hermes-patchkit.git
 cd hermes-patchkit
 
-# sanity-check the repository itself
 python3 scripts/verify.py --self-check
 
-# inspect a Hermes checkout before doing anything risky
-python3 scripts/doctor.py \
-  --repo /path/to/hermes-agent \
+python3 scripts/tui.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
+
+If you prefer non-interactive output:
+
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml
+```
+
+For a single patch:
+
+```bash
+python3 scripts/update.py \
+  --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
   --patch codex-auxiliary-tool-role-flattening
-
-# preview one real exported patch without changing the target repo
-python3 scripts/apply.py \
-  --repo /path/to/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
-  --dry-run
 ```
+
+## Patch status meanings
+
+| Status | Meaning |
+|---|---|
+| `applies-cleanly` | The patch applies to the upstream candidate. |
+| `already-present` | The reverse patch applies, so upstream likely already contains that exact change. |
+| `conflict` | The patch no longer applies cleanly and needs refresh or retirement. |
+| `placeholder` | The manifest points at a reserved patch ID that is not exported yet. |
+
+`update.py` exits with:
+
+- `0` when the selected patch set is structurally safe;
+- `2` when at least one patch needs attention;
+- `1` for preflight or execution errors.
 
 ## Current patch candidates
 
-These are the first logical units reserved in the scaffold:
-
 - `010-cli-tui-idle-refresh-fix`
 - `020-auth-profile-root-fallback` — exported
-- `030-credential-pool-recovery`
-- `040-fork-branding-installer` — likely optional/private
-- `050-whatsapp-baileys-pin`
+- `030-credential-pool-recovery` — placeholder
+- `040-fork-branding-installer` — placeholder, likely optional/private
+- `050-whatsapp-baileys-pin` — placeholder
+- `060-codex-memory-flush-responses-contract` — exported
+- `061-codex-auxiliary-tool-role-flattening` — exported
 
-Some `.patch` files are now real exported diffs; the remaining placeholders will be replaced with unified diffs from the Hermes fork.
-
-## Why this instead of just staying on a fork?
+## Why not just stay on a fork?
 
 | Long-lived fork | PatchKit |
 |---|---|
-| your runtime base carries custom history | your runtime base stays official upstream |
+| your runtime base carries custom history | your runtime base can stay official upstream |
 | upstream updates pile up merge debt | upstream updates become patch revalidation |
 | public and private changes blur together | each change can stay in its own patch |
 | rollback is usually manual | rollback is part of the workflow |
@@ -109,39 +144,15 @@ hermes-patchkit/
 ├── scripts/
 ├── docs/en/
 ├── docs/ru/
-├── examples/
+├── reports/
 └── .github/
 ```
 
-## Current scope
-
-The public repo currently includes:
-- pinned manifests, including `upstream-v2026.4.23-240-ge5647d78.yaml`
-- profiles such as `minimal`, `personal`, `full`, `upstream-fixes`, and `local-overlays`
-- a mix of real exported patches (`020`, `060`, `061`) and placeholder patch IDs for the remaining planned units
-- helper scripts
-- repo hygiene for public development
-
-The next real step is still obvious:
-export more patches from the Hermes delta and keep validating them on clean upstream checkouts.
-
-## What I want this repo to be good at
-
-Not hype. Not branding. Not “customization platform” marketing copy.
-
-Useful things:
-- small diffs
-- predictable apply behavior
-- clear rollback story
-- honest compatibility notes
-- less fork drift
-
-## Russian docs
-
-Русская версия: [README.ru.md](README.ru.md)
-
 ## More
 
+- Russian README: [README.ru.md](README.ru.md)
+- update workflow: [docs/en/update-workflow.md](docs/en/update-workflow.md)
+- rollback: [docs/en/rollback.md](docs/en/rollback.md)
 - roadmap: [ROADMAP.md](ROADMAP.md)
 - contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - changelog: [CHANGELOG.md](CHANGELOG.md)

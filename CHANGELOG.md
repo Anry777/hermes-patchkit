@@ -7,12 +7,15 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
+- `scripts/tui.py`, a small terminal UI/guide over the update checker
 - real exported upstream-fix patch `020-auth-profile-root-fallback`, including profile-to-root auth fallback tests
 - real exported upstream-fix patches `060-codex-memory-flush-responses-contract` and `061-codex-auxiliary-tool-role-flattening`
 - pinned manifest/profile entries for the exported auth and Codex patches
-- unittest regression coverage for rollback cleanup after patches add new files
+- unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed
+- README and update workflow docs now lead with the one-command update/TUI flow instead of maintainer-only manual steps
 - `apply.py` now captures rollback state for exported patches, including patch-created untracked files and pre-apply dirty state when `--force` is used; forced apply now snapshots cleanup baselines after stashing dirty state so same-path untracked and ignored collisions are still recorded for rollback
 - forced apply no longer hides root `venv/` or `.venv/` directories when capturing dirty state, preventing PatchKit from making an in-repo Hermes runtime virtualenv disappear
 - `rollback.py` now restores the backup branch, removes only PatchKit-recorded untracked files, re-applies pre-existing dirty state captured during forced apply, and deletes recorded symlinks literally instead of following them into tracked content
