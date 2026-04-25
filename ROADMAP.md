@@ -8,7 +8,7 @@
 
 ## v0.2 — Fork export
 - [x] Export first real upstream-fix patches (`020`, `060`, `061`) from the Hermes delta
-- [ ] Finish the remaining planned upstream-fix patch (`030`) or remove it from the manifest
+- [x] Export the credential-pool recovery patch (`030`) from the legacy fork
 - [x] Remove unsupported placeholder patch ideas from the public manifest/profile set
 - [x] Record patch provenance in manifests
 

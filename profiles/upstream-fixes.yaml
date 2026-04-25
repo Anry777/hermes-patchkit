@@ -3,6 +3,7 @@
   "patches": [
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
+    "credential-pool-recovery",
     "codex-memory-flush-responses-contract",
     "codex-auxiliary-tool-role-flattening"
   ]

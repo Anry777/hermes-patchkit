@@ -11,8 +11,9 @@ The format follows Keep a Changelog.
 - `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
 - `scripts/tui.py`, a small terminal UI/guide over the update checker
 - real exported upstream-fix patch `020-auth-profile-root-fallback`, including profile-to-root auth fallback tests
+- real exported upstream-fix patch `030-credential-pool-recovery`, transplanted from the legacy fork credential-pool recovery commits
 - real exported upstream-fix patches `060-codex-memory-flush-responses-contract` and `061-codex-auxiliary-tool-role-flattening`
-- pinned manifest/profile entries for the exported auth and Codex patches
+- pinned manifest/profile entries for the exported auth, credential-pool and Codex patches
 - unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed

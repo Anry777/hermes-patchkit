@@ -43,9 +43,27 @@
       "category": "auth",
       "optional": true,
       "default": true,
-      "depends_on": [],
+      "depends_on": [
+        "auth-profile-root-fallback"
+      ],
       "conflicts_with": [],
-      "status": "placeholder"
+      "status": "exported",
+      "exported_from": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "transplanted_from_commit": "97fa2dbcc01b3561a9f14d1f132ab20310d440b5",
+      "transplanted_from_commits": [
+        "e17a823c073bf47f3d78116e0804e6082a20d7c1",
+        "97fa2dbcc01b3561a9f14d1f132ab20310d440b5"
+      ],
+      "verification": {
+        "focused_tests": [
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
+          "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
+          "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
+          "tests/run_agent/test_run_agent.py::TestRunConversation::test_successful_response_records_credential_pool_success",
+          "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
+        ]
+      }
     }
   ]
 }

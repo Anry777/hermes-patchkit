@@ -2,6 +2,7 @@
   "name": "full",
   "patches": [
     "cli-tui-idle-refresh-fix",
-    "auth-profile-root-fallback"
+    "auth-profile-root-fallback",
+    "credential-pool-recovery"
   ]
 }

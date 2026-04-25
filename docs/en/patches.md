@@ -10,14 +10,9 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 |---|---|---|---|
 | `010-cli-tui-idle-refresh-fix` | exported | Stops idle CLI/TUI repaint from pulling the terminal viewport. | Applies cleanly in the latest live smoke check. |
 | `020-auth-profile-root-fallback` | exported | Lets profile auth stores fall back to the root auth store when the profile has no `auth.json` yet. | Has focused auth/profile regression coverage. |
+| `030-credential-pool-recovery` | exported | Improves credential-pool recovery by tracking the active credential ID, keeping invalid credentials out of cooldown recovery, and rotating round-robin entries only after leases are released. | Transplanted from the legacy fork commits `e17a823c` and `97fa2dbc`; depends on `020-auth-profile-root-fallback`. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Keeps Codex memory flush on the Responses transport contract. | Conflicts with current fetched upstream in `run_agent.py`; refresh or retire before the next live upstream merge. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flattens unsupported transcript roles such as `tool` before auxiliary Codex Responses calls. | Applies cleanly in the latest live smoke check. |
-
-## Planned patch units
-
-| Patch | Status | What it should do | Notes |
-|---|---|---|---|
-| `030-credential-pool-recovery` | planned | Improve credential-pool recovery and separate exhausted credentials from invalid ones. | Kept in the manifest as planned work, but not included in active profiles until a real diff exists. |
 
 ## Workflow features
 

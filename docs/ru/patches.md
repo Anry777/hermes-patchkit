@@ -9,15 +9,10 @@
 | Patch | Статус | Что делает | Примечания |
 |---|---|---|---|
 | `010-cli-tui-idle-refresh-fix` | exported | Убирает idle CLI/TUI repaint, который тянул terminal viewport. | На последнем live smoke check применяется чисто. |
-| `020-auth-profile-root-fallback` | exported | Позволяет profile auth store fallback'иться на root auth store, если у профиля ещё нет `auth.json`. | Есть focused regression tests по auth/profile поведению. |
-| `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Держит Codex memory flush в рамках Responses transport contract. | Конфликтует с текущим fetched upstream в `run_agent.py`; перед следующим live upstream merge нужен refresh или retirement. |
-| `061-codex-auxiliary-tool-role-flattening` | exported | Flatten'ит unsupported transcript roles вроде `tool` перед auxiliary Codex Responses calls. | На последнем live smoke check применяется чисто. |
-
-## Запланированные patch units
-
-| Patch | Статус | Что должен сделать | Примечания |
-|---|---|---|---|
-| `030-credential-pool-recovery` | planned | Улучшить credential-pool recovery и разделить exhausted credentials от invalid credentials. | Остаётся в manifest как planned work, но не входит в active profiles, пока нет real diff. |
+| `020-auth-profile-root-fallback` | exported | Даёт profile auth stores фолбэк на root auth store, если в profile ещё нет `auth.json`. | Есть focused auth/profile regression coverage. |
+| `030-credential-pool-recovery` | exported | Улучшает credential-pool recovery: отслеживает active credential ID, не возвращает invalid credentials через cooldown recovery и откладывает round-robin rotation до release lease. | Перенесён из legacy fork commits `e17a823c` и `97fa2dbc`; зависит от `020-auth-profile-root-fallback`. |
+| `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Держит Codex memory flush на Responses transport contract. | Конфликтует с текущим fetched upstream в `run_agent.py`; перед следующим live upstream merge нужно refresh или retire. |
+| `061-codex-auxiliary-tool-role-flattening` | exported | Flatten unsupported transcript roles вроде `tool` перед auxiliary Codex Responses calls. | Чисто применяется в последнем live smoke check. |
 
 ## Workflow-фичи
 
