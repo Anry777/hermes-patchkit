@@ -7,6 +7,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Added
+- dedicated patch/feature catalog docs: `docs/en/patches.md` and `docs/ru/patches.md`
 - `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
 - `scripts/tui.py`, a small terminal UI/guide over the update checker
 - real exported upstream-fix patch `020-auth-profile-root-fallback`, including profile-to-root auth fallback tests
@@ -15,6 +16,8 @@ The format follows Keep a Changelog.
 - unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed
+- README/README.ru now link to the patch catalog instead of duplicating the patch list inline
+- removed unsupported placeholder patch ideas from manifests, profiles and patch files
 - README and update workflow docs now lead with the one-command update/TUI flow instead of maintainer-only manual steps
 - `apply.py` now captures rollback state for exported patches, including patch-created untracked files and pre-apply dirty state when `--force` is used; forced apply now snapshots cleanup baselines after stashing dirty state so same-path untracked and ignored collisions are still recorded for rollback
 - forced apply no longer hides root `venv/` or `.venv/` directories when capturing dirty state, preventing PatchKit from making an in-repo Hermes runtime virtualenv disappear

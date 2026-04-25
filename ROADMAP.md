@@ -8,8 +8,8 @@
 
 ## v0.2 — Fork export
 - [x] Export first real upstream-fix patches (`020`, `060`, `061`) from the Hermes delta
-- [ ] Export the remaining logical patches from the current Hermes fork
-- [ ] Replace more placeholder patch files with real unified diffs
+- [ ] Finish the remaining planned upstream-fix patch (`030`) or remove it from the manifest
+- [x] Remove unsupported placeholder patch ideas from the public manifest/profile set
 - [x] Record patch provenance in manifests
 
 ## v0.3 — First usable apply flow

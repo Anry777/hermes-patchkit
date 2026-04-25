@@ -1,6 +1,10 @@
 # Patches directory
 
-This directory will contain one unified diff per logical customization.
+This directory contains one unified diff per maintained PatchKit patch unit.
 
-Current files are placeholders that reserve stable patch IDs.
-They will be replaced with real diffs exported from the Hermes fork during Phase A.
+The human-readable catalog lives in:
+
+- English: [../docs/en/patches.md](../docs/en/patches.md)
+- Russian: [../docs/ru/patches.md](../docs/ru/patches.md)
+
+Do not infer support status from filenames alone. The manifest and catalog are the source of truth.

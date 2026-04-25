@@ -2,8 +2,6 @@
   "name": "personal",
   "patches": [
     "cli-tui-idle-refresh-fix",
-    "auth-profile-root-fallback",
-    "credential-pool-recovery",
-    "whatsapp-baileys-pin"
+    "auth-profile-root-fallback"
   ]
 }

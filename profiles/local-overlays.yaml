@@ -1,7 +1,0 @@
-{
-  "name": "local-overlays",
-  "patches": [
-    "fork-branding-installer",
-    "whatsapp-baileys-pin"
-  ]
-}

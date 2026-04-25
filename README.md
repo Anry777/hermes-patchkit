@@ -34,10 +34,9 @@ Current:   runtime-upstream-v2026.4.23 @ 456dc58
 Upstream:  origin/main @ abc1234
 
 Patch status:
-  ✓ cli-tui-idle-refresh-fix                 applies-cleanly
-  ✓ auth-profile-root-fallback               applies-cleanly
-  ✓ codex-memory-flush-responses-contract    already-present
-  ! codex-auxiliary-tool-role-flattening     conflict
+  ✓ selected-patch-a                       applies-cleanly
+  ✓ selected-patch-b                       already-present
+  ! selected-patch-c                       conflict
 
 Safe to apply automatically: no (1 patch(es) need attention)
 Report: /path/to/hermes-patchkit/reports/update-20260425-211530.md
@@ -65,8 +64,7 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/apply.py` — apply a profile or explicit patch list with backup state;
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
-- real exported patches for `020`, `060`, and `061`;
-- reserved placeholder IDs for the remaining planned patch units.
+- maintained patch and feature catalog: [docs/en/patches.md](docs/en/patches.md).
 
 ## Quick start
 
@@ -115,15 +113,9 @@ python3 scripts/update.py \
 - `2` when at least one patch needs attention;
 - `1` for preflight or execution errors.
 
-## Current patch candidates
+## Patch catalog
 
-- `010-cli-tui-idle-refresh-fix`
-- `020-auth-profile-root-fallback` — exported
-- `030-credential-pool-recovery` — placeholder
-- `040-fork-branding-installer` — placeholder, likely optional/private
-- `050-whatsapp-baileys-pin` — placeholder
-- `060-codex-memory-flush-responses-contract` — exported
-- `061-codex-auxiliary-tool-role-flattening` — exported
+The maintained list of patch units and workflow features lives in [docs/en/patches.md](docs/en/patches.md).
 
 ## Why not just stay on a fork?
 
@@ -150,6 +142,7 @@ hermes-patchkit/
 
 ## More
 
+- patch catalog and features: [docs/en/patches.md](docs/en/patches.md)
 - Russian README: [README.ru.md](README.ru.md)
 - update workflow: [docs/en/update-workflow.md](docs/en/update-workflow.md)
 - rollback: [docs/en/rollback.md](docs/en/rollback.md)

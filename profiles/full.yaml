@@ -2,9 +2,6 @@
   "name": "full",
   "patches": [
     "cli-tui-idle-refresh-fix",
-    "auth-profile-root-fallback",
-    "credential-pool-recovery",
-    "fork-branding-installer",
-    "whatsapp-baileys-pin"
+    "auth-profile-root-fallback"
   ]
 }

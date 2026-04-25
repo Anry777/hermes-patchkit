@@ -8,6 +8,8 @@ cd hermes-patchkit
 python3 scripts/verify.py --self-check
 ```
 
+Patch catalog and workflow features: [patches.md](patches.md).
+
 ## 2. Check upstream compatibility first
 
 Start here when upstream Hermes moved:

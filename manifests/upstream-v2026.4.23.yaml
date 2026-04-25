@@ -46,34 +46,6 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "placeholder"
-    },
-    {
-      "id": "fork-branding-installer",
-      "file": "patches/040-fork-branding-installer.patch",
-      "title_en": "Fork branding and installer defaults",
-      "title_ru": "Форковый branding и installer defaults",
-      "description_en": "Carry fork-specific branding and installer defaults as an optional overlay.",
-      "description_ru": "Выносит форковый branding и installer defaults в отдельный optional overlay.",
-      "category": "branding",
-      "optional": true,
-      "default": false,
-      "depends_on": [],
-      "conflicts_with": [],
-      "status": "placeholder"
-    },
-    {
-      "id": "whatsapp-baileys-pin",
-      "file": "patches/050-whatsapp-baileys-pin.patch",
-      "title_en": "Pin WhatsApp bridge dependency",
-      "title_ru": "Зафиксировать зависимость WhatsApp bridge",
-      "description_en": "Pin the WhatsApp bridge dependency to a known commit for reproducibility.",
-      "description_ru": "Фиксирует зависимость WhatsApp bridge на известный commit для воспроизводимости.",
-      "category": "integration",
-      "optional": true,
-      "default": true,
-      "depends_on": [],
-      "conflicts_with": [],
-      "status": "placeholder"
     }
   ]
 }

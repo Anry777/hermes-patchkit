@@ -34,10 +34,9 @@ Current:   runtime-upstream-v2026.4.23 @ 456dc58
 Upstream:  origin/main @ abc1234
 
 Patch status:
-  ✓ cli-tui-idle-refresh-fix                 applies-cleanly
-  ✓ auth-profile-root-fallback               applies-cleanly
-  ✓ codex-memory-flush-responses-contract    already-present
-  ! codex-auxiliary-tool-role-flattening     conflict
+  ✓ selected-patch-a                       applies-cleanly
+  ✓ selected-patch-b                       already-present
+  ! selected-patch-c                       conflict
 
 Safe to apply automatically: no (1 patch(es) need attention)
 Report: /path/to/hermes-patchkit/reports/update-20260425-211530.md
@@ -65,8 +64,7 @@ PatchKit возвращает эту границу:
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
-- реальные exported patches для `020`, `060`, `061`;
-- зарезервированные placeholder IDs под остальные patch units.
+- поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md).
 
 ## Быстрый старт
 
@@ -115,15 +113,9 @@ python3 scripts/update.py \
 - `2`, если хотя бы один patch требует внимания;
 - `1`, если preflight или выполнение упали.
 
-## Текущие patch candidates
+## Каталог patch'ей
 
-- `010-cli-tui-idle-refresh-fix`
-- `020-auth-profile-root-fallback` — exported
-- `030-credential-pool-recovery` — placeholder
-- `040-fork-branding-installer` — placeholder, скорее optional/private
-- `050-whatsapp-baileys-pin` — placeholder
-- `060-codex-memory-flush-responses-contract` — exported
-- `061-codex-auxiliary-tool-role-flattening` — exported
+Поддерживаемый список patch units и workflow-фич живёт в [docs/ru/patches.md](docs/ru/patches.md).
 
 ## Почему не просто жить на fork
 
@@ -150,6 +142,7 @@ hermes-patchkit/
 
 ## Документы
 
+- список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md)
 - English README: [README.md](README.md)
 - update workflow: [docs/ru/update-workflow.md](docs/ru/update-workflow.md)
 - rollback: [docs/ru/rollback.md](docs/ru/rollback.md)
