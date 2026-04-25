@@ -1,0 +1,7 @@
+{
+  "name": "upstream-friendly",
+  "patches": [
+    "cli-tui-idle-refresh-fix",
+    "auth-profile-root-fallback"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.4.23"
+  },
+  "patches": [
+    {
+      "id": "cli-tui-idle-refresh-fix",
+      "file": "patches/010-cli-tui-idle-refresh-fix.patch",
+      "title_en": "Disable idle TUI repaint in CLI",
+      "title_ru": "Отключить idle repaint TUI в CLI",
+      "description_en": "Prevent idle prompt repaint from pulling the terminal viewport.",
+      "description_ru": "Убирает дёргание и проскролл терминала из-за idle repaint.",
+      "category": "ux",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "placeholder"
+    },
+    {
+      "id": "auth-profile-root-fallback",
+      "file": "patches/020-auth-profile-root-fallback.patch",
+      "title_en": "Profile auth.json fallback to root store",
+      "title_ru": "Фолбэк profile auth.json на root auth store",
+      "description_en": "Let profiles reuse the root auth store when they do not have their own auth.json yet.",
+      "description_ru": "Позволяет профилям использовать root auth store, если у профиля ещё нет своего auth.json.",
+      "category": "auth",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "placeholder"
+    },
+    {
+      "id": "credential-pool-recovery",
+      "file": "patches/030-credential-pool-recovery.patch",
+      "title_en": "Improve credential pool recovery",
+      "title_ru": "Улучшить recovery credential pool",
+      "description_en": "Track active credential IDs and separate exhausted credentials from invalid ones.",
+      "description_ru": "Отделяет exhausted credentials от invalid credentials и точнее ведёт recovery.",
+      "category": "auth",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "placeholder"
+    },
+    {
+      "id": "fork-branding-installer",
+      "file": "patches/040-fork-branding-installer.patch",
+      "title_en": "Fork branding and installer defaults",
+      "title_ru": "Форковый branding и installer defaults",
+      "description_en": "Carry fork-specific branding and installer defaults as an optional overlay.",
+      "description_ru": "Выносит форковый branding и installer defaults в отдельный optional overlay.",
+      "category": "branding",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "placeholder"
+    },
+    {
+      "id": "whatsapp-baileys-pin",
+      "file": "patches/050-whatsapp-baileys-pin.patch",
+      "title_en": "Pin WhatsApp bridge dependency",
+      "title_ru": "Зафиксировать зависимость WhatsApp bridge",
+      "description_en": "Pin the WhatsApp bridge dependency to a known commit for reproducibility.",
+      "description_ru": "Фиксирует зависимость WhatsApp bridge на известный commit для воспроизводимости.",
+      "category": "integration",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "placeholder"
+    }
+  ]
+}

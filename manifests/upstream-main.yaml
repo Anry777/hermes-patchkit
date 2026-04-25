@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "main"
+  },
+  "notes_en": "Development manifest for testing patch compatibility against upstream main.",
+  "notes_ru": "Development manifest для проверки совместимости patch'ей с upstream main.",
+  "patches": []
+}
