@@ -219,6 +219,31 @@
           "tests/gateway/test_send_image_file.py"
         ]
       }
+    },
+    {
+      "id": "max-send-message-media-routing",
+      "file": "patches/074-max-send-message-media-routing.patch",
+      "title_en": "MAX send_message media routing",
+      "title_ru": "Маршрутизация MAX media через send_message",
+      "description_en": "Routes send_message MEDIA image attachments for MAX through the native MAX adapter image upload path instead of dropping them as unsupported media, and steers agents away from SVG photo delivery.",
+      "description_ru": "Направляет MAX MEDIA image attachments из send_message в native путь MAX adapter для загрузки изображений вместо отбрасывания как unsupported media, а также явно запрещает SVG для photo delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-output"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a8937625974978d595e8f0aea583f8fae34a73ea",
+      "base_runtime": "35c4c906fce23aa15aeb83de275397f3dd38d86b",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py"
+        ]
+      }
     }
   ]
 }

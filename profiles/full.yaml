@@ -7,6 +7,7 @@
     "max-gateway-text-mvp",
     "max-gateway-image-input",
     "max-gateway-oneme-url-safety",
-    "max-gateway-image-output"
+    "max-gateway-image-output",
+    "max-send-message-media-routing"
   ]
 }
