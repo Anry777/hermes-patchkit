@@ -5,6 +5,7 @@
     "auth-profile-root-fallback",
     "credential-pool-recovery",
     "max-gateway-text-mvp",
-    "max-gateway-image-input"
+    "max-gateway-image-input",
+    "max-gateway-oneme-url-safety"
   ]
 }

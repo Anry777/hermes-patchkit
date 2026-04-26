@@ -7,6 +7,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
+- `072-max-gateway-oneme-url-safety`: MAX inbound photos from `i.oneme.ru` are no longer blocked by URL safety when that exact HTTPS CDN host resolves to `198.18.0.0/15`; subdomains, HTTP, and unrelated benchmark/private-style hosts remain blocked.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added

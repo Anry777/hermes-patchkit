@@ -165,6 +165,33 @@
           "tests/gateway/test_allowlist_startup_check.py"
         ]
       }
+    },
+    {
+      "id": "max-gateway-oneme-url-safety",
+      "file": "patches/072-max-gateway-oneme-url-safety.patch",
+      "title_en": "MAX OneMe image CDN URL safety allowlist",
+      "title_ru": "URL safety allowlist для MAX OneMe image CDN",
+      "description_en": "Allows the exact MAX image CDN host i.oneme.ru through URL safety when it resolves to benchmark/private-style 198.18.0.0/15 addresses, preserving SSRF protection for subdomains, HTTP, and unrelated hosts.",
+      "description_ru": "Разрешает точный MAX image CDN host i.oneme.ru в URL safety, когда он резолвится в benchmark/private-style адреса 198.18.0.0/15, сохраняя SSRF-защиту для subdomains, HTTP и несвязанных hosts.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-input"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "bf335b47b",
+      "base_runtime": "b1328cb46",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_url_safety.py",
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py"
+        ]
+      }
     }
   ]
 }
