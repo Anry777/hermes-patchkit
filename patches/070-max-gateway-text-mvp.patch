@@ -822,10 +822,10 @@ index fe59e80f0..ef1d59525 100644
          "description": "Allow all users to interact with messaging bots (true/false). Default: false.",
          "prompt": "Allow all users (true/false)",
 diff --git a/hermes_cli/gateway.py b/hermes_cli/gateway.py
-index 3b828fecf..fc1589e54 100644
+index 3b828fecf..226f0eb71 100644
 --- a/hermes_cli/gateway.py
 +++ b/hermes_cli/gateway.py
-@@ -2724,6 +2724,35 @@ _PLATFORMS = [
+@@ -2724,9 +2724,96 @@ _PLATFORMS = [
               "help": "OpenID to deliver cron results and notifications to."},
          ],
      },
@@ -861,6 +861,82 @@ index 3b828fecf..fc1589e54 100644
  ]
  
  
++def _max_env(name: str) -> str:
++    return (get_env_value(name) or "").strip()
++
++
++def _max_transport() -> str:
++    transport = _max_env("MAX_TRANSPORT").lower() or "webhook"
++    return transport if transport in {"webhook", "polling"} else "webhook"
++
++
++def _max_poll_timeout() -> str:
++    return _max_env("MAX_POLL_TIMEOUT") or "30"
++
++
++def _max_poll_idle_sleep() -> str:
++    return _max_env("MAX_POLL_IDLE_SLEEP") or "1.0"
++
++
++def _max_operator_diagnostic_lines() -> list[str]:
++    """Return MAX setup/status hints that do not require a live bot token probe."""
++    token = _max_env("MAX_BOT_TOKEN")
++    if not token:
++        return []
++
++    transport = _max_transport()
++    home = _max_env("MAX_HOME_CHANNEL")
++    lines: list[str] = []
++
++    if transport == "polling":
++        lines.extend([
++            "MAX transport: polling (local development/testing)",
++            "Inbound: GET /updates; no public HTTPS webhook URL is required",
++            f"Polling cadence: timeout {_max_poll_timeout()}s, idle sleep {_max_poll_idle_sleep()}s",
++        ])
++    else:
++        webhook_url = _max_env("MAX_WEBHOOK_PUBLIC_URL")
++        webhook_secret = _max_env("MAX_WEBHOOK_SECRET")
++        auto_subscribe = _max_env("MAX_AUTO_SUBSCRIBE").lower() in {"1", "true", "yes", "on"}
++        lines.append("MAX transport: webhook (production default)")
++        if webhook_url:
++            lines.append(f"Webhook URL: {webhook_url}")
++            lines.append(f"Auto-subscribe: {'enabled' if auto_subscribe else 'disabled'}")
++        else:
++            lines.extend([
++                "Missing MAX_WEBHOOK_PUBLIC_URL for production webhooks",
++                "For local testing without a public URL, set MAX_TRANSPORT=polling",
++            ])
++        if not webhook_secret:
++            lines.append("Webhook secret: not set (recommended for X-Max-Bot-Api-Secret)")
++
++    if home:
++        lines.append(f"Home target: {home}")
++    if transport == "polling":
++        lines.append("Next: start with `hermes gateway run` after the MAX bot is approved")
++    else:
++        lines.append("Next: complete MAX bot approval, then run `hermes gateway setup` or set env vars")
++    return lines
++
++
+ def _platform_status(platform: dict) -> str:
+     """Return a plain-text status string for a platform.
+ 
+@@ -2775,6 +2862,14 @@ def _platform_status(platform: dict) -> str:
+         if val or token:
+             return "partially configured"
+         return "not configured"
++    if platform.get("key") == "max":
++        if not val:
++            return "not configured"
++        if _max_transport() == "polling":
++            return f"configured, polling dev/test (timeout {_max_poll_timeout()}s, idle {_max_poll_idle_sleep()}s)"
++        if not _max_env("MAX_WEBHOOK_PUBLIC_URL"):
++            return "configured, webhook needs public URL or polling"
++        return "configured, webhook"
+     if val:
+         return "configured"
+     return "not configured"
 diff --git a/hermes_cli/platforms.py b/hermes_cli/platforms.py
 index 05507eace..9bd7119df 100644
 --- a/hermes_cli/platforms.py
@@ -895,7 +971,7 @@ index e28acd41b..18510338c 100644
          if missing_home:
              print()
 diff --git a/hermes_cli/status.py b/hermes_cli/status.py
-index d07e1a822..8c81956e8 100644
+index d07e1a822..76d9db942 100644
 --- a/hermes_cli/status.py
 +++ b/hermes_cli/status.py
 @@ -327,6 +327,7 @@ def show_status(args):
@@ -906,6 +982,25 @@ index d07e1a822..8c81956e8 100644
      }
      
      for name, (token_var, home_var) in platforms.items():
+@@ -345,6 +346,18 @@ def show_status(args):
+             status += f" (home: {home_channel})"
+         
+         print(f"  {name:<12}  {check_mark(has_token)} {status}")
++
++    try:
++        from hermes_cli.gateway import _max_operator_diagnostic_lines
++
++        max_lines = _max_operator_diagnostic_lines()
++        if max_lines:
++            print()
++            print(color("◆ MAX Gateway", Colors.CYAN, Colors.BOLD))
++            for line in max_lines:
++                print(f"  {line}")
++    except Exception:
++        pass
+     
+     # =========================================================================
+     # Gateway Status
 diff --git a/tests/cron/test_scheduler.py b/tests/cron/test_scheduler.py
 index 4cd4b7cd7..7f8a2a4a7 100644
 --- a/tests/cron/test_scheduler.py
@@ -1324,6 +1419,109 @@ index 000000000..f2fca0384
 +        assert result["success"] is True
 +        assert send.await_count == 2
 +        assert all(len(call.args[2]) <= 4000 for call in send.await_args_list)
+diff --git a/tests/hermes_cli/test_gateway.py b/tests/hermes_cli/test_gateway.py
+index 9dea51987..2061ebf49 100644
+--- a/tests/hermes_cli/test_gateway.py
++++ b/tests/hermes_cli/test_gateway.py
+@@ -6,6 +6,60 @@ from unittest.mock import patch, call
+ import hermes_cli.gateway as gateway
+ 
+ 
++class TestMaxGatewayOperatorUx:
++    def test_platform_status_guides_webhook_config_without_public_url(self, monkeypatch):
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        monkeypatch.delenv("MAX_TRANSPORT", raising=False)
++        monkeypatch.delenv("MAX_WEBHOOK_PUBLIC_URL", raising=False)
++
++        platform = next(p for p in gateway._PLATFORMS if p["key"] == "max")
++
++        assert gateway._platform_status(platform) == "configured, webhook needs public URL or polling"
++
++    def test_platform_status_summarizes_polling_cadence(self, monkeypatch):
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        monkeypatch.setenv("MAX_TRANSPORT", "polling")
++        monkeypatch.setenv("MAX_POLL_TIMEOUT", "7")
++        monkeypatch.setenv("MAX_POLL_IDLE_SLEEP", "0.25")
++
++        platform = next(p for p in gateway._PLATFORMS if p["key"] == "max")
++
++        assert gateway._platform_status(platform) == "configured, polling dev/test (timeout 7s, idle 0.25s)"
++
++    def test_max_operator_diagnostics_for_polling_mode(self, monkeypatch):
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        monkeypatch.setenv("MAX_TRANSPORT", "polling")
++        monkeypatch.setenv("MAX_POLL_TIMEOUT", "7")
++        monkeypatch.setenv("MAX_POLL_IDLE_SLEEP", "0.25")
++        monkeypatch.setenv("MAX_HOME_CHANNEL", "chat:777")
++
++        lines = gateway._max_operator_diagnostic_lines()
++
++        assert lines == [
++            "MAX transport: polling (local development/testing)",
++            "Inbound: GET /updates; no public HTTPS webhook URL is required",
++            "Polling cadence: timeout 7s, idle sleep 0.25s",
++            "Home target: chat:777",
++            "Next: start with `hermes gateway run` after the MAX bot is approved",
++        ]
++
++    def test_max_operator_diagnostics_for_webhook_missing_url(self, monkeypatch):
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        monkeypatch.delenv("MAX_TRANSPORT", raising=False)
++        monkeypatch.delenv("MAX_WEBHOOK_PUBLIC_URL", raising=False)
++        monkeypatch.delenv("MAX_WEBHOOK_SECRET", raising=False)
++
++        lines = gateway._max_operator_diagnostic_lines()
++
++        assert lines == [
++            "MAX transport: webhook (production default)",
++            "Missing MAX_WEBHOOK_PUBLIC_URL for production webhooks",
++            "For local testing without a public URL, set MAX_TRANSPORT=polling",
++            "Webhook secret: not set (recommended for X-Max-Bot-Api-Secret)",
++            "Next: complete MAX bot approval, then run `hermes gateway setup` or set env vars",
++        ]
++
++
+ class TestSystemdLingerStatus:
+     def test_reports_enabled(self, monkeypatch):
+         monkeypatch.setattr(gateway, "is_linux", lambda: True)
+diff --git a/tests/hermes_cli/test_status.py b/tests/hermes_cli/test_status.py
+index 216687660..bddee5fe9 100644
+--- a/tests/hermes_cli/test_status.py
++++ b/tests/hermes_cli/test_status.py
+@@ -44,6 +44,33 @@ def test_show_status_termux_gateway_section_skips_systemctl(monkeypatch, capsys,
+     assert "systemd (user)" not in output
+ 
+ 
++def test_show_status_includes_max_operator_diagnostics(monkeypatch, capsys, tmp_path):
++    from hermes_cli import status as status_mod
++    import hermes_cli.auth as auth_mod
++    import hermes_cli.gateway as gateway_mod
++
++    monkeypatch.setattr(status_mod, "get_env_path", lambda: tmp_path / ".env", raising=False)
++    monkeypatch.setattr(status_mod, "get_hermes_home", lambda: tmp_path, raising=False)
++    monkeypatch.setattr(status_mod, "load_config", lambda: {"model": "gpt-5.4"}, raising=False)
++    monkeypatch.setattr(status_mod, "resolve_requested_provider", lambda requested=None: "openai-codex", raising=False)
++    monkeypatch.setattr(status_mod, "resolve_provider", lambda requested=None, **kwargs: "openai-codex", raising=False)
++    monkeypatch.setattr(status_mod, "provider_label", lambda provider: "OpenAI Codex", raising=False)
++    monkeypatch.setattr(auth_mod, "get_nous_auth_status", lambda: {}, raising=False)
++    monkeypatch.setattr(auth_mod, "get_codex_auth_status", lambda: {}, raising=False)
++    monkeypatch.setattr(auth_mod, "get_qwen_auth_status", lambda: {}, raising=False)
++    monkeypatch.setattr(gateway_mod, "find_gateway_pids", lambda exclude_pids=None: [], raising=False)
++    monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++    monkeypatch.setenv("MAX_TRANSPORT", "polling")
++    monkeypatch.setenv("MAX_POLL_TIMEOUT", "7")
++    monkeypatch.setenv("MAX_POLL_IDLE_SLEEP", "0.25")
++
++    status_mod.show_status(SimpleNamespace(all=False, deep=False))
++
++    output = capsys.readouterr().out
++    assert "MAX transport: polling (local development/testing)" in output
++    assert "Polling cadence: timeout 7s, idle sleep 0.25s" in output
++
++
+ def test_show_status_reports_nous_auth_error(monkeypatch, capsys, tmp_path):
+     from hermes_cli import status as status_mod
+     import hermes_cli.auth as auth_mod
 diff --git a/tools/send_message_tool.py b/tools/send_message_tool.py
 index 19da4f55a..8cd27aa64 100644
 --- a/tools/send_message_tool.py
