@@ -11,6 +11,7 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- real exported local-overlay patch `073-max-gateway-image-output`, adding MAX outbound image upload/send support for local `MEDIA:/path` images and markdown image URLs, with caption support and `attachment.not.ready` retry handling
 - real exported local-overlay patch `071-max-gateway-image-input`, extending MAX inbound handling to image/photo attachments and image-only messages, with local image caching for Hermes vision tools
 - real exported local-overlay patch `070-max-gateway-text-mvp` for a webhook-first, text-only MAX messenger gateway with explicit `MAX_TRANSPORT=polling` local-test fallback, configurable `MAX_POLL_TIMEOUT` / `MAX_POLL_IDLE_SLEEP` polling cadence, and CLI/status operator diagnostics for MAX setup without a live approved bot
 - dedicated patch/feature catalog docs: `docs/en/patches.md` and `docs/ru/patches.md`

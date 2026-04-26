@@ -192,6 +192,33 @@
           "tests/gateway/test_media_download_retry.py"
         ]
       }
+    },
+    {
+      "id": "max-gateway-image-output",
+      "file": "patches/073-max-gateway-image-output.patch",
+      "title_en": "MAX messenger image output",
+      "title_ru": "Отправка изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to upload outbound local and remote images, send them as MAX image attachments with captions, and retry attachment.not.ready responses without changing text-only delivery.",
+      "description_ru": "Расширяет MAX gateway: загружает исходящие локальные и remote изображения, отправляет их как MAX image attachments с caption и retry для attachment.not.ready без изменения text-only delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-oneme-url-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "35c4c906fce23aa15aeb83de275397f3dd38d86b",
+      "base_runtime": "bf335b47b",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py",
+          "tests/gateway/test_send_image_file.py"
+        ]
+      }
     }
   ]
 }
