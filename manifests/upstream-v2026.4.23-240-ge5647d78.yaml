@@ -139,6 +139,32 @@
           "tests/cron/test_scheduler.py"
         ]
       }
+    },
+    {
+      "id": "max-gateway-image-input",
+      "file": "patches/071-max-gateway-image-input.patch",
+      "title_en": "MAX messenger image input",
+      "title_ru": "Приём изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to accept inbound image attachments from MessageBody.attachments, map them to Hermes photo events, cache image URLs locally for stable vision input, and keep image-only messages instead of dropping them.",
+      "description_ru": "Расширяет MAX gateway: принимает входящие image attachments из MessageBody.attachments, преобразует их в Hermes photo events, кеширует image URLs локально для стабильного vision input и не отбрасывает сообщения только с изображением.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-text-mvp"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "b1328cb46",
+      "base_runtime": "7987c55d5",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py"
+        ]
+      }
     }
   ]
 }

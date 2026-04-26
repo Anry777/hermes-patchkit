@@ -4,6 +4,7 @@
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
     "credential-pool-recovery",
-    "max-gateway-text-mvp"
+    "max-gateway-text-mvp",
+    "max-gateway-image-input"
   ]
 }
