@@ -130,10 +130,10 @@ index 4eb26edf0..f289dccea 100644
  ]
 diff --git a/gateway/platforms/max.py b/gateway/platforms/max.py
 new file mode 100644
-index 000000000..9352441ff
+index 000000000..e6da0f719
 --- /dev/null
 +++ b/gateway/platforms/max.py
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,542 @@
 +"""MAX messenger platform adapter.
 +
 +Webhook-first, text-only MAX Bot API integration for Hermes gateway.
@@ -418,11 +418,25 @@ index 000000000..9352441ff
 +        params: Dict[str, Any] = {"timeout": poll_timeout}
 +        if self._poll_marker is not None:
 +            params["marker"] = self._poll_marker
-+        response = await self._get_client().get(
-+            f"{self.base_url}/updates",
-+            params=params,
-+            headers=self._headers(),
++        request_timeout = httpx.Timeout(
++            connect=10.0,
++            read=max(float(poll_timeout) + 10.0, 30.0),
++            write=30.0,
++            pool=30.0,
 +        )
++        try:
++            response = await self._get_client().get(
++                f"{self.base_url}/updates",
++                params=params,
++                headers=self._headers(),
++                timeout=request_timeout,
++            )
++        except httpx.ReadTimeout:
++            logger.debug(
++                "[MAX] polling read timeout after %ss; treating as an empty poll",
++                poll_timeout,
++            )
++            return []
 +        response.raise_for_status()
 +        data = response.json()
 +        if not isinstance(data, dict):
@@ -663,10 +677,36 @@ index 000000000..9352441ff
 +            text=event.text[:128],
 +        )
 diff --git a/gateway/run.py b/gateway/run.py
-index f5c1858db..27eb30f17 100644
+index f5c1858db..5c91796a1 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -2959,6 +2959,13 @@ class GatewayRunner:
+@@ -1983,6 +1983,8 @@ class GatewayRunner:
+                        "WEIXIN_ALLOWED_USERS",
+                        "BLUEBUBBLES_ALLOWED_USERS",
+                        "QQ_ALLOWED_USERS",
++                       "MAX_ALLOWED_USERS",
++                       "MAX_GROUP_ALLOWED_USERS",
+                        "GATEWAY_ALLOWED_USERS")
+         )
+         _allow_all = os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in ("true", "1", "yes") or any(
+@@ -1997,13 +1999,14 @@ class GatewayRunner:
+                        "WECOM_CALLBACK_ALLOW_ALL_USERS",
+                        "WEIXIN_ALLOW_ALL_USERS",
+                        "BLUEBUBBLES_ALLOW_ALL_USERS",
+-                       "QQ_ALLOW_ALL_USERS")
++                       "QQ_ALLOW_ALL_USERS",
++                       "MAX_ALLOW_ALL_USERS")
+         )
+         if not _any_allowlist and not _allow_all:
+             logger.warning(
+                 "No user allowlists configured. All unauthorized users will be denied. "
+                 "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.hermes/.env to allow open access, "
+-                "or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id)."
++                "or configure platform allowlists (e.g., MAX_ALLOWED_USERS=your_id)."
+             )
+         
+         # Discover Python plugins before shell hooks so plugin block
+@@ -2959,6 +2962,13 @@ class GatewayRunner:
                  return None
              return QQAdapter(config)
  
@@ -680,7 +720,7 @@ index f5c1858db..27eb30f17 100644
          return None
  
      def _is_user_authorized(self, source: SessionSource) -> bool:
-@@ -3001,10 +3008,12 @@ class GatewayRunner:
+@@ -3001,10 +3011,12 @@ class GatewayRunner:
              Platform.WEIXIN: "WEIXIN_ALLOWED_USERS",
              Platform.BLUEBUBBLES: "BLUEBUBBLES_ALLOWED_USERS",
              Platform.QQBOT: "QQ_ALLOWED_USERS",
@@ -693,7 +733,7 @@ index f5c1858db..27eb30f17 100644
          }
          platform_allow_all_map = {
              Platform.TELEGRAM: "TELEGRAM_ALLOW_ALL_USERS",
-@@ -3023,6 +3032,7 @@ class GatewayRunner:
+@@ -3023,6 +3035,7 @@ class GatewayRunner:
              Platform.WEIXIN: "WEIXIN_ALLOW_ALL_USERS",
              Platform.BLUEBUBBLES: "BLUEBUBBLES_ALLOW_ALL_USERS",
              Platform.QQBOT: "QQ_ALLOW_ALL_USERS",
@@ -1021,12 +1061,46 @@ index 4cd4b7cd7..7f8a2a4a7 100644
          ):
              monkeypatch.delenv(fallback_env, raising=False)
          monkeypatch.setenv(env_var, chat_id)
+diff --git a/tests/gateway/test_allowlist_startup_check.py b/tests/gateway/test_allowlist_startup_check.py
+index 96441c052..13c54447c 100644
+--- a/tests/gateway/test_allowlist_startup_check.py
++++ b/tests/gateway/test_allowlist_startup_check.py
+@@ -14,6 +14,7 @@ def _would_warn():
+                    "EMAIL_ALLOWED_USERS",
+                    "SMS_ALLOWED_USERS", "MATTERMOST_ALLOWED_USERS",
+                    "MATRIX_ALLOWED_USERS", "DINGTALK_ALLOWED_USERS", "FEISHU_ALLOWED_USERS", "WECOM_ALLOWED_USERS",
++                   "MAX_ALLOWED_USERS", "MAX_GROUP_ALLOWED_USERS",
+                    "GATEWAY_ALLOWED_USERS")
+     )
+     _allow_all = os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in ("true", "1", "yes") or any(
+@@ -22,7 +23,8 @@ def _would_warn():
+                    "WHATSAPP_ALLOW_ALL_USERS", "SLACK_ALLOW_ALL_USERS",
+                    "SIGNAL_ALLOW_ALL_USERS", "EMAIL_ALLOW_ALL_USERS",
+                    "SMS_ALLOW_ALL_USERS", "MATTERMOST_ALLOW_ALL_USERS",
+-                   "MATRIX_ALLOW_ALL_USERS", "DINGTALK_ALLOW_ALL_USERS", "FEISHU_ALLOW_ALL_USERS", "WECOM_ALLOW_ALL_USERS")
++                   "MATRIX_ALLOW_ALL_USERS", "DINGTALK_ALLOW_ALL_USERS", "FEISHU_ALLOW_ALL_USERS", "WECOM_ALLOW_ALL_USERS",
++                   "MAX_ALLOW_ALL_USERS")
+     )
+     return not _any_allowlist and not _allow_all
+ 
+@@ -44,3 +46,11 @@ class TestAllowlistStartupCheck:
+     def test_gateway_allow_all_users_suppresses_warning(self):
+         with patch.dict(os.environ, {"GATEWAY_ALLOW_ALL_USERS": "yes"}, clear=True):
+             assert _would_warn() is False
++
++    def test_max_allowed_users_suppresses_warning(self):
++        with patch.dict(os.environ, {"MAX_ALLOWED_USERS": "123"}, clear=True):
++            assert _would_warn() is False
++
++    def test_max_allow_all_users_suppresses_warning(self):
++        with patch.dict(os.environ, {"MAX_ALLOW_ALL_USERS": "true"}, clear=True):
++            assert _would_warn() is False
 diff --git a/tests/gateway/test_max.py b/tests/gateway/test_max.py
 new file mode 100644
-index 000000000..f2fca0384
+index 000000000..6e0a080b1
 --- /dev/null
 +++ b/tests/gateway/test_max.py
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,416 @@
 +"""Tests for the MAX messenger gateway adapter."""
 +
 +from __future__ import annotations
@@ -1035,6 +1109,7 @@ index 000000000..f2fca0384
 +from types import SimpleNamespace
 +from unittest.mock import AsyncMock, patch
 +
++import httpx
 +import pytest
 +
 +from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig, _apply_env_overrides
@@ -1069,10 +1144,16 @@ index 000000000..f2fca0384
 +            return FakeResponse({"success": True})
 +        return FakeResponse({"message": {"id": f"msg-{len(self.posts)}"}})
 +
-+    async def get(self, url, *, params=None, headers=None):
-+        self.gets.append({"url": url, "params": params or {}, "headers": headers or {}})
++    async def get(self, url, *, params=None, headers=None, timeout=None):
++        call = {"url": url, "params": params or {}, "headers": headers or {}}
++        if timeout is not None:
++            call["timeout"] = timeout
++        self.gets.append(call)
 +        if self._get_responses:
-+            return self._get_responses.pop(0)
++            response = self._get_responses.pop(0)
++            if isinstance(response, BaseException):
++                raise response
++            return response
 +        return FakeResponse({"marker": None, "updates": []})
 +
 +    async def aclose(self):
@@ -1246,13 +1327,10 @@ index 000000000..f2fca0384
 +
 +        assert updates == [_message_update(update_id="poll-1")]
 +        assert adapter._poll_marker == 42
-+        assert client.gets == [
-+            {
-+                "url": "https://platform-api.max.ru/updates",
-+                "params": {"timeout": 1},
-+                "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
-+            }
-+        ]
++        assert client.gets[0]["url"] == "https://platform-api.max.ru/updates"
++        assert client.gets[0]["params"] == {"timeout": 1}
++        assert client.gets[0]["headers"] == {"Authorization": "max-token", "Content-Type": "application/json"}
++        assert isinstance(client.gets[0]["timeout"], httpx.Timeout)
 +
 +        await adapter._poll_once(timeout=1)
 +        assert client.gets[-1]["params"] == {"timeout": 1, "marker": 42}
@@ -1287,13 +1365,33 @@ index 000000000..f2fca0384
 +        updates = await adapter._poll_once()
 +
 +        assert updates == []
-+        assert client.gets == [
-+            {
-+                "url": "https://platform-api.max.ru/updates",
-+                "params": {"timeout": 7},
-+                "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
-+            }
-+        ]
++        assert client.gets[0]["url"] == "https://platform-api.max.ru/updates"
++        assert client.gets[0]["params"] == {"timeout": 7}
++        assert client.gets[0]["headers"] == {"Authorization": "max-token", "Content-Type": "application/json"}
++        assert isinstance(client.gets[0]["timeout"], httpx.Timeout)
++
++    @pytest.mark.asyncio
++    async def test_poll_once_gives_http_read_timeout_headroom_over_long_poll_timeout(self):
++        adapter = _make_adapter(token="max-token", transport="polling", poll_timeout=20)
++        client = RecordingClient(get_responses=[FakeResponse({"marker": None, "updates": []})])
++        adapter._client = client
++
++        await adapter._poll_once()
++
++        request_timeout = client.gets[0]["timeout"]
++        assert isinstance(request_timeout, httpx.Timeout)
++        assert request_timeout.read > 20
++
++    @pytest.mark.asyncio
++    async def test_poll_once_treats_http_read_timeout_as_empty_poll_without_error_log(self, caplog):
++        adapter = _make_adapter(token="max-token", transport="polling", poll_timeout=20)
++        client = RecordingClient(get_responses=[httpx.ReadTimeout("long poll timed out")])
++        adapter._client = client
++
++        updates = await adapter._poll_once()
++
++        assert updates == []
++        assert "polling error" not in caplog.text
 +
 +    @pytest.mark.asyncio
 +    async def test_send_posts_text_to_chat_id_query_with_modern_body_fields(self):

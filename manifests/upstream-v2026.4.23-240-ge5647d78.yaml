@@ -119,8 +119,8 @@
       "file": "patches/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",
       "title_ru": "Text gateway для MAX messenger (webhook-first + dev polling)",
-      "description_en": "Adds a text-only MAX messenger gateway adapter using MAX-recommended webhook delivery for production inbound updates, explicit MAX_TRANSPORT=polling for local testing, configurable polling cadence, operator status diagnostics, and POST /messages for outbound text.",
-      "description_ru": "Добавляет text-only gateway adapter для MAX messenger: production inbound updates через рекомендованный MAX webhook, явный MAX_TRANSPORT=polling для локального теста, настраиваемый polling cadence, operator status diagnostics и outbound text через POST /messages.",
+      "description_en": "Adds a text-only MAX messenger gateway adapter using MAX-recommended webhook delivery for production inbound updates, explicit MAX_TRANSPORT=polling for local testing, configurable polling cadence with HTTP timeout headroom, operator status diagnostics, and POST /messages for outbound text.",
+      "description_ru": "Добавляет text-only gateway adapter для MAX messenger: production inbound updates через рекомендованный MAX webhook, явный MAX_TRANSPORT=polling для локального теста, настраиваемый polling cadence с HTTP timeout headroom, operator status diagnostics и outbound text через POST /messages.",
       "category": "messaging",
       "track": "local-overlay",
       "optional": true,
@@ -133,6 +133,7 @@
       "verification": {
         "focused_tests": [
           "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py",
           "tests/hermes_cli/test_gateway.py",
           "tests/hermes_cli/test_status.py",
           "tests/cron/test_scheduler.py"
