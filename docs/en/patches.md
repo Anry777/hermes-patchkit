@@ -13,6 +13,7 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 | `030-credential-pool-recovery` | exported | Improves credential-pool recovery by tracking the active credential ID, keeping invalid credentials out of cooldown recovery, and rotating round-robin entries only after leases are released. | Transplanted from the legacy fork commits `e17a823c` and `97fa2dbc`; depends on `020-auth-profile-root-fallback`. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Keeps Codex memory flush on the Responses transport contract. | Conflicts with current fetched upstream in `run_agent.py`; refresh or retire before the next live upstream merge. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flattens unsupported transcript roles such as `tool` before auxiliary Codex Responses calls. | Applies cleanly in the latest live smoke check. |
+| `070-max-gateway-text-mvp` | exported | Adds a text-only MAX messenger gateway using webhook-first inbound delivery and `POST /messages` outbound text. | Local-overlay patch; follows official MAX production guidance, with `GET /updates` intentionally not used as the primary transport. |
 
 ## Workflow features
 
@@ -30,5 +31,6 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 - `exported`: the patch file contains a real unified diff.
 - `planned`: the patch ID is kept in the manifest as planned work, but the real diff is not ready.
 - `needs refresh check`: the patch exists, but current upstream compatibility needs maintainer review.
+- `local-overlay`: a PatchKit-maintained integration or customization that is useful locally but not assumed to be upstream-bound.
 
 Removed ideas are not listed here. This catalog is for PatchKit units that are meant to stay maintained.

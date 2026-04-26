@@ -113,6 +113,29 @@
       "conflicts_with": [],
       "status": "exported",
       "exported_from": "e5647d7863d306c8f479e1da011ebe4a4848d56d"
+    },
+    {
+      "id": "max-gateway-text-mvp",
+      "file": "patches/070-max-gateway-text-mvp.patch",
+      "title_en": "MAX messenger text gateway (webhook-first)",
+      "title_ru": "Text gateway для MAX messenger (webhook-first)",
+      "description_en": "Adds a text-only MAX messenger gateway adapter using MAX-recommended webhook delivery for inbound updates and POST /messages for outbound text.",
+      "description_ru": "Добавляет text-only gateway adapter для MAX messenger: inbound updates через рекомендованный MAX webhook и outbound text через POST /messages.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "121e75684218ec7506f8d18c1179064b5e55ebfb",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/cron/test_scheduler.py"
+        ]
+      }
     }
   ]
 }

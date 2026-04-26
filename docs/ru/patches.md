@@ -13,6 +13,7 @@
 | `030-credential-pool-recovery` | exported | Улучшает credential-pool recovery: отслеживает active credential ID, не возвращает invalid credentials через cooldown recovery и откладывает round-robin rotation до release lease. | Перенесён из legacy fork commits `e17a823c` и `97fa2dbc`; зависит от `020-auth-profile-root-fallback`. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Держит Codex memory flush на Responses transport contract. | Конфликтует с текущим fetched upstream в `run_agent.py`; перед следующим live upstream merge нужно refresh или retire. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flatten unsupported transcript roles вроде `tool` перед auxiliary Codex Responses calls. | Чисто применяется в последнем live smoke check. |
+| `070-max-gateway-text-mvp` | exported | Добавляет text-only gateway для MAX messenger: inbound delivery через webhook-first и outbound text через `POST /messages`. | Local-overlay patch; следует official production-рекомендации MAX, `GET /updates` намеренно не используется как основной transport. |
 
 ## Workflow-фичи
 
@@ -30,5 +31,6 @@
 - `exported`: patch file содержит реальный unified diff.
 - `planned`: patch ID оставлен в manifest как запланированная работа, но real diff ещё не готов.
 - `needs refresh check`: patch существует, но совместимость с текущим upstream требует review.
+- `local-overlay`: поддерживаемая PatchKit integration/customization, полезная локально, но не обязательно upstream-bound.
 
 Удалённые идеи здесь не перечисляются. Этот каталог — только для PatchKit units, которые реально планируется поддерживать.

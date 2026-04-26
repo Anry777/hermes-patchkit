@@ -1,0 +1,1209 @@
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 3dbb54c7d..d2e018747 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -77,7 +77,7 @@ _KNOWN_DELIVERY_PLATFORMS = frozenset({
+     "telegram", "discord", "slack", "whatsapp", "signal",
+     "matrix", "mattermost", "homeassistant", "dingtalk", "feishu",
+     "wecom", "wecom_callback", "weixin", "sms", "email", "webhook", "bluebubbles",
+-    "qqbot",
++    "qqbot", "max",
+ })
+ 
+ # Platforms that support a configured cron/notification home target, mapped to
+@@ -97,6 +97,7 @@ _HOME_TARGET_ENV_VARS = {
+     "weixin": "WEIXIN_HOME_CHANNEL",
+     "bluebubbles": "BLUEBUBBLES_HOME_CHANNEL",
+     "qqbot": "QQBOT_HOME_CHANNEL",
++    "max": "MAX_HOME_CHANNEL",
+ }
+ 
+ # Legacy env var names kept for back-compat.  Each entry is the current
+diff --git a/gateway/config.py b/gateway/config.py
+index 509737279..6d6eefb06 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -67,6 +67,7 @@ class Platform(Enum):
+     WEIXIN = "weixin"
+     BLUEBUBBLES = "bluebubbles"
+     QQBOT = "qqbot"
++    MAX = "max"
+ 
+ 
+ @dataclass
+@@ -314,6 +315,9 @@ class GatewayConfig:
+             # QQBot uses extra dict for app credentials
+             elif platform == Platform.QQBOT and config.extra.get("app_id") and config.extra.get("client_secret"):
+                 connected.append(platform)
++            # MAX uses a Bot API token in the Authorization header
++            elif platform == Platform.MAX and config.token:
++                connected.append(platform)
+             # DingTalk uses client_id/client_secret from config.extra or env vars
+             elif platform == Platform.DINGTALK and (
+                 config.extra.get("client_id") or os.getenv("DINGTALK_CLIENT_ID")
+@@ -811,6 +815,7 @@ def _validate_gateway_config(config: "GatewayConfig") -> None:
+         Platform.MATTERMOST: "MATTERMOST_TOKEN",
+         Platform.MATRIX: "MATRIX_ACCESS_TOKEN",
+         Platform.WEIXIN: "WEIXIN_TOKEN",
++        Platform.MAX: "MAX_BOT_TOKEN",
+     }
+     for platform, pconfig in config.platforms.items():
+         if not pconfig.enabled:
+@@ -1276,6 +1281,53 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+                 name=os.getenv("QQBOT_HOME_CHANNEL_NAME") or os.getenv(qq_home_name_env, "Home"),
+             )
+ 
++    # MAX messenger Bot API
++    max_token = os.getenv("MAX_BOT_TOKEN", "").strip()
++    if max_token:
++        if Platform.MAX not in config.platforms:
++            config.platforms[Platform.MAX] = PlatformConfig()
++        config.platforms[Platform.MAX].enabled = True
++        config.platforms[Platform.MAX].token = max_token
++        extra = config.platforms[Platform.MAX].extra
++        max_allowed_users = os.getenv("MAX_ALLOWED_USERS", "").strip()
++        if max_allowed_users:
++            extra["allow_from"] = max_allowed_users
++        max_group_allowed = os.getenv("MAX_GROUP_ALLOWED_USERS", "").strip()
++        if max_group_allowed:
++            extra["group_allow_from"] = max_group_allowed
++        max_allow_all = os.getenv("MAX_ALLOW_ALL_USERS", "").strip()
++        if max_allow_all:
++            extra["allow_all_users"] = max_allow_all.lower() in ("true", "1", "yes", "on")
++        max_base_url = os.getenv("MAX_BASE_URL", "").strip()
++        if max_base_url:
++            extra["base_url"] = max_base_url.rstrip("/")
++        for env_name, extra_key in (
++            ("MAX_WEBHOOK_HOST", "webhook_host"),
++            ("MAX_WEBHOOK_PATH", "webhook_path"),
++            ("MAX_WEBHOOK_PUBLIC_URL", "webhook_public_url"),
++            ("MAX_WEBHOOK_SECRET", "webhook_secret"),
++            ("MAX_UPDATE_TYPES", "update_types"),
++        ):
++            value = os.getenv(env_name, "").strip()
++            if value:
++                extra[extra_key] = value
++        max_webhook_port = os.getenv("MAX_WEBHOOK_PORT", "").strip()
++        if max_webhook_port:
++            extra["webhook_port"] = int(max_webhook_port)
++        max_auto_subscribe = os.getenv("MAX_AUTO_SUBSCRIBE", "").strip()
++        if max_auto_subscribe:
++            extra["auto_subscribe"] = max_auto_subscribe.lower() in ("true", "1", "yes", "on")
++        max_bot_user_id = os.getenv("MAX_BOT_USER_ID", "").strip()
++        if max_bot_user_id:
++            extra["bot_user_id"] = max_bot_user_id
++        max_home = os.getenv("MAX_HOME_CHANNEL", "").strip()
++        if max_home:
++            config.platforms[Platform.MAX].home_channel = HomeChannel(
++                platform=Platform.MAX,
++                chat_id=max_home,
++                name=os.getenv("MAX_HOME_CHANNEL_NAME", "Home"),
++            )
++
+     # Session settings
+     idle_minutes = os.getenv("SESSION_IDLE_MINUTES")
+     if idle_minutes:
+diff --git a/gateway/platforms/__init__.py b/gateway/platforms/__init__.py
+index 4eb26edf0..f289dccea 100644
+--- a/gateway/platforms/__init__.py
++++ b/gateway/platforms/__init__.py
+@@ -9,11 +9,13 @@ Each adapter handles:
+ """
+ 
+ from .base import BasePlatformAdapter, MessageEvent, SendResult
++from .max import MaxAdapter
+ from .qqbot import QQAdapter
+ 
+ __all__ = [
+     "BasePlatformAdapter",
+     "MessageEvent",
+     "SendResult",
++    "MaxAdapter",
+     "QQAdapter",
+ ]
+diff --git a/gateway/platforms/max.py b/gateway/platforms/max.py
+new file mode 100644
+index 000000000..2be64c1b0
+--- /dev/null
++++ b/gateway/platforms/max.py
+@@ -0,0 +1,420 @@
++"""MAX messenger platform adapter.
++
++Webhook-first, text-only MAX Bot API integration for Hermes gateway.
++
++Official MAX Bot API semantics used here:
++- production inbound delivery is Webhook via POST /subscriptions;
++- MAX sends each webhook as an HTTPS POST containing an Update object;
++- webhook secrets are verified through X-Max-Bot-Api-Secret;
++- outbound text messages use POST /messages;
++- bot token is sent in the Authorization header;
++- text payload uses NewMessageBody fields, with a 4000-character text limit.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++import os
++import re
++from datetime import datetime
++from typing import Any, Dict, Optional
++from urllib.parse import urlparse
++
++import httpx
++
++try:
++    from aiohttp import web
++
++    AIOHTTP_AVAILABLE = True
++except ImportError:  # pragma: no cover - dependency is installed in normal Hermes envs
++    web = None  # type: ignore[assignment]
++    AIOHTTP_AVAILABLE = False
++
++from gateway.config import Platform, PlatformConfig
++from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
++from gateway.platforms.helpers import MessageDeduplicator
++from gateway.session import SessionSource
++
++logger = logging.getLogger(__name__)
++
++DEFAULT_BASE_URL = "https://platform-api.max.ru"
++DEFAULT_WEBHOOK_HOST = "127.0.0.1"
++DEFAULT_WEBHOOK_PORT = 8647
++DEFAULT_WEBHOOK_PATH = "/max-webhook"
++DEFAULT_UPDATE_TYPES = ("message_created", "bot_started")
++MAX_TEXT_LENGTH = 4000
++_SECRET_RE = re.compile(r"^[a-zA-Z0-9_-]{5,256}$")
++
++
++def check_max_requirements() -> bool:
++    """Return True when MAX is configured enough to start."""
++    return bool(os.getenv("MAX_BOT_TOKEN", "").strip()) and AIOHTTP_AVAILABLE
++
++
++def _as_str(value: Any) -> str:
++    if value is None:
++        return ""
++    return str(value)
++
++
++def _first_present(data: Dict[str, Any], *keys: str) -> Any:
++    for key in keys:
++        value = data.get(key)
++        if value is not None:
++            return value
++    return None
++
++
++def _env_bool(name: str, default: bool = False) -> bool:
++    value = os.getenv(name)
++    if value is None:
++        return default
++    return value.strip().lower() in {"1", "true", "yes", "on"}
++
++
++def _split_csv(value: Any) -> list[str]:
++    if isinstance(value, (list, tuple)):
++        return [str(item).strip() for item in value if str(item).strip()]
++    return [part.strip() for part in str(value or "").split(",") if part.strip()]
++
++
++class MaxAdapter(BasePlatformAdapter):
++    """Webhook-first text-only adapter for MAX messenger bots."""
++
++    MAX_MESSAGE_LENGTH = MAX_TEXT_LENGTH
++
++    def __init__(self, config: PlatformConfig):
++        super().__init__(config, Platform.MAX)
++        extra = config.extra or {}
++        self.token = (config.token or extra.get("token") or os.getenv("MAX_BOT_TOKEN", "")).strip()
++        self.base_url = str(extra.get("base_url") or os.getenv("MAX_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
++        self.bot_user_id = _as_str(extra.get("bot_user_id") or os.getenv("MAX_BOT_USER_ID")).strip()
++        self.bot_username = _as_str(extra.get("bot_username") or os.getenv("MAX_BOT_USERNAME")).strip().lstrip("@")
++        self.webhook_host = str(extra.get("webhook_host") or os.getenv("MAX_WEBHOOK_HOST") or DEFAULT_WEBHOOK_HOST)
++        self.webhook_port = int(extra.get("webhook_port") or os.getenv("MAX_WEBHOOK_PORT") or DEFAULT_WEBHOOK_PORT)
++        self.webhook_path = str(extra.get("webhook_path") or os.getenv("MAX_WEBHOOK_PATH") or DEFAULT_WEBHOOK_PATH)
++        if not self.webhook_path.startswith("/"):
++            self.webhook_path = f"/{self.webhook_path}"
++        self.webhook_public_url = str(
++            extra.get("webhook_public_url") or os.getenv("MAX_WEBHOOK_PUBLIC_URL") or ""
++        ).strip()
++        self.webhook_secret = str(extra.get("webhook_secret") or os.getenv("MAX_WEBHOOK_SECRET") or "").strip()
++        self.auto_subscribe = bool(
++            extra.get("auto_subscribe")
++            if "auto_subscribe" in extra
++            else _env_bool("MAX_AUTO_SUBSCRIBE", True)
++        )
++        self.update_types = _split_csv(extra.get("update_types") or os.getenv("MAX_UPDATE_TYPES")) or list(DEFAULT_UPDATE_TYPES)
++        self._client: Optional[httpx.AsyncClient] = None
++        self._runner = None
++        self._dedup = MessageDeduplicator(max_size=5000, ttl_seconds=600)
++        self._background_tasks: set[asyncio.Task] = set()
++
++    @property
++    def name(self) -> str:
++        return "MAX"
++
++    def _headers(self) -> Dict[str, str]:
++        return {
++            "Authorization": self.token,
++            "Content-Type": "application/json",
++        }
++
++    def _get_client(self) -> httpx.AsyncClient:
++        if self._client is None:
++            self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
++        return self._client
++
++    async def connect(self) -> bool:
++        """Start the local webhook receiver and optionally subscribe it in MAX."""
++        if not self.token:
++            logger.error("[MAX] MAX_BOT_TOKEN is not configured")
++            return False
++        if not AIOHTTP_AVAILABLE:
++            logger.error("[MAX] aiohttp is required for webhook delivery")
++            return False
++        if self.webhook_secret and not _SECRET_RE.match(self.webhook_secret):
++            logger.error(
++                "[MAX] MAX_WEBHOOK_SECRET must match ^[a-zA-Z0-9_-]{5,256}$"
++            )
++            return False
++        if self._running:
++            return True
++
++        app = web.Application()  # type: ignore[union-attr]
++        app.router.add_get("/health", self._handle_health)
++        app.router.add_post(self.webhook_path, self._handle_webhook)
++
++        self._runner = web.AppRunner(app)  # type: ignore[union-attr]
++        await self._runner.setup()
++        try:
++            site = web.TCPSite(self._runner, self.webhook_host, self.webhook_port)  # type: ignore[union-attr]
++            await site.start()
++        except Exception:
++            await self._runner.cleanup()
++            self._runner = None
++            raise
++
++        self._get_client()
++        self._mark_connected()
++        logger.info(
++            "[MAX] webhook receiver listening on http://%s:%s%s",
++            self.webhook_host,
++            self.webhook_port,
++            self.webhook_path,
++        )
++
++        if self.auto_subscribe:
++            if self.webhook_public_url:
++                await self._subscribe_webhook()
++            else:
++                logger.warning(
++                    "[MAX] MAX_WEBHOOK_PUBLIC_URL is not configured; webhook receiver is running, "
++                    "but MAX will not deliver events until /subscriptions is configured."
++                )
++        return True
++
++    async def disconnect(self) -> None:
++        """Stop webhook receiver and close HTTP resources."""
++        self._mark_disconnected()
++        for task in list(self._background_tasks):
++            if not task.done():
++                task.cancel()
++        if self._background_tasks:
++            await asyncio.gather(*self._background_tasks, return_exceptions=True)
++            self._background_tasks.clear()
++        if self._runner is not None:
++            await self._runner.cleanup()
++            self._runner = None
++        if self._client is not None:
++            await self._client.aclose()
++            self._client = None
++
++    async def _handle_health(self, request: "web.Request") -> "web.Response":
++        return web.json_response({"status": "ok", "platform": "max"})  # type: ignore[union-attr]
++
++    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
++        target = str(chat_id).strip()
++        target_type = "user" if target.startswith("user:") else "chat"
++        return {"id": target, "name": target, "type": target_type}
++
++    def _validate_public_webhook_url(self) -> None:
++        parsed = urlparse(self.webhook_public_url)
++        if parsed.scheme != "https" or not parsed.netloc:
++            raise ValueError("MAX_WEBHOOK_PUBLIC_URL must be an HTTPS URL")
++        if parsed.port is not None:
++            raise ValueError("MAX webhook URL must not include a port; MAX supports HTTPS port 443 only")
++
++    def _subscription_payload(self) -> Dict[str, Any]:
++        self._validate_public_webhook_url()
++        payload: Dict[str, Any] = {
++            "url": self.webhook_public_url,
++            "update_types": self.update_types,
++        }
++        if self.webhook_secret:
++            payload["secret"] = self.webhook_secret
++        return payload
++
++    async def _subscribe_webhook(self) -> Dict[str, Any]:
++        payload = self._subscription_payload()
++        response = await self._get_client().post(
++            f"{self.base_url}/subscriptions",
++            json=payload,
++            headers=self._headers(),
++        )
++        response.raise_for_status()
++        data = response.json()
++        logger.info("[MAX] webhook subscription configured for %s", self.webhook_public_url)
++        return data if isinstance(data, dict) else {"success": True}
++
++    async def _handle_webhook(self, request: "web.Request") -> "web.Response":
++        if self.webhook_secret:
++            supplied = request.headers.get("X-Max-Bot-Api-Secret", "")
++            if supplied != self.webhook_secret:
++                return web.json_response({"error": "unauthorized"}, status=401)  # type: ignore[union-attr]
++        try:
++            update = await request.json()
++        except Exception:
++            return web.json_response({"error": "invalid_json"}, status=400)  # type: ignore[union-attr]
++        if not isinstance(update, dict):
++            return web.json_response({"error": "invalid_update"}, status=400)  # type: ignore[union-attr]
++
++        task = asyncio.create_task(self._handle_update(update), name="max-webhook-update")
++        self._background_tasks.add(task)
++        task.add_done_callback(self._background_tasks.discard)
++        return web.json_response({"success": True})  # type: ignore[union-attr]
++
++    async def send(
++        self,
++        chat_id: str,
++        content: str,
++        reply_to: Optional[str] = None,
++        metadata: Optional[Dict[str, Any]] = None,
++    ) -> SendResult:
++        """Send a text message through MAX POST /messages."""
++        metadata = metadata or {}
++        if not self.token:
++            return SendResult(success=False, error="MAX_BOT_TOKEN is not configured")
++        if not content:
++            return SendResult(success=False, error="MAX text message is empty")
++
++        chunks = self.truncate_message(content, self.MAX_MESSAGE_LENGTH)
++        last_result: Optional[SendResult] = None
++        for chunk in chunks:
++            params = self._target_params(chat_id, metadata)
++            body: Dict[str, Any] = {"text": chunk}
++            if reply_to:
++                body["link"] = {"type": "reply", "mid": reply_to}
++            if "notify" in metadata:
++                body["notify"] = bool(metadata["notify"])
++            if metadata.get("format"):
++                body["format"] = metadata["format"]
++            try:
++                response = await self._get_client().post(
++                    f"{self.base_url}/messages",
++                    params=params,
++                    json=body,
++                    headers=self._headers(),
++                )
++                response.raise_for_status()
++                payload = response.json()
++            except Exception as exc:
++                return SendResult(success=False, error=str(exc), retryable=True)
++
++            message_id = self._extract_message_id(payload)
++            last_result = SendResult(success=True, message_id=message_id, raw_response=payload)
++        return last_result or SendResult(success=False, error="No MAX message chunks were sent")
++
++    @staticmethod
++    def _target_params(target: str, metadata: Dict[str, Any]) -> Dict[str, str]:
++        target_type = str(metadata.get("target_type") or "chat").lower().strip()
++        raw = str(target).strip()
++        if raw.startswith("user:"):
++            return {"user_id": raw.split(":", 1)[1]}
++        if raw.startswith("chat:"):
++            return {"chat_id": raw.split(":", 1)[1]}
++        if target_type == "user":
++            return {"user_id": raw}
++        return {"chat_id": raw}
++
++    @staticmethod
++    def _extract_message_id(payload: Any) -> Optional[str]:
++        if not isinstance(payload, dict):
++            return None
++        message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
++        value = _first_present(payload, "message_id", "id", "mid")
++        if value is None:
++            value = _first_present(message, "message_id", "id", "mid")
++        return _as_str(value) if value is not None else None
++
++    async def _handle_update(self, update: Dict[str, Any]) -> None:
++        event = self._update_to_event(update)
++        if event is None:
++            return
++        dedup_key = self._dedup_key(update, event)
++        if self._dedup.is_duplicate(dedup_key):
++            return
++        await self.handle_message(event)
++
++    def _update_to_event(self, update: Dict[str, Any]) -> Optional[MessageEvent]:
++        if update.get("update_type") != "message_created":
++            return None
++        message = update.get("message")
++        if not isinstance(message, dict):
++            return None
++        sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
++        if self._is_own_message(sender):
++            return None
++        body = message.get("body") if isinstance(message.get("body"), dict) else {}
++        text = body.get("text")
++        if not isinstance(text, str) or not text.strip():
++            return None
++        recipient = message.get("recipient") if isinstance(message.get("recipient"), dict) else {}
++        chat_id = self._chat_id(sender, recipient)
++        if not chat_id:
++            return None
++        source = SessionSource(
++            platform=Platform.MAX,
++            chat_id=chat_id,
++            chat_name=self._chat_name(recipient),
++            chat_type=self._chat_type(recipient),
++            user_id=_as_str(sender.get("user_id") or sender.get("id")).strip() or None,
++            user_name=self._user_name(sender),
++            is_bot=bool(sender.get("is_bot")),
++        )
++        message_id = self._extract_message_id(message)
++        timestamp = self._timestamp(update, message)
++        return MessageEvent(
++            text=text,
++            message_type=MessageType.TEXT,
++            source=source,
++            raw_message=update,
++            message_id=message_id,
++            timestamp=timestamp,
++        )
++
++    def _is_own_message(self, sender: Dict[str, Any]) -> bool:
++        sender_id = _as_str(sender.get("user_id") or sender.get("id")).strip()
++        if self.bot_user_id and sender_id == self.bot_user_id:
++            return True
++        username = _as_str(sender.get("username")).strip().lstrip("@")
++        return bool(self.bot_username and username and username.lower() == self.bot_username.lower())
++
++    @staticmethod
++    def _chat_id(sender: Dict[str, Any], recipient: Dict[str, Any]) -> str:
++        chat_id = _first_present(recipient, "chat_id", "id")
++        if chat_id is not None:
++            return _as_str(chat_id)
++        # Dialog updates may identify the peer only through the sender object.
++        return _as_str(_first_present(sender, "user_id", "id"))
++
++    @staticmethod
++    def _chat_name(recipient: Dict[str, Any]) -> Optional[str]:
++        value = _first_present(recipient, "title", "name")
++        return _as_str(value) if value is not None else None
++
++    @staticmethod
++    def _chat_type(recipient: Dict[str, Any]) -> str:
++        raw = _as_str(recipient.get("type")).lower()
++        if raw == "channel":
++            return "channel"
++        if raw == "chat":
++            return "group"
++        return "dm"
++
++    @staticmethod
++    def _user_name(sender: Dict[str, Any]) -> Optional[str]:
++        first = _as_str(sender.get("first_name")).strip()
++        last = _as_str(sender.get("last_name")).strip()
++        full = " ".join(part for part in (first, last) if part).strip()
++        if full:
++            return full
++        username = _as_str(sender.get("username")).strip()
++        return username or None
++
++    @staticmethod
++    def _timestamp(update: Dict[str, Any], message: Dict[str, Any]) -> datetime:
++        raw = _first_present(message, "timestamp", "created_at")
++        if raw is None:
++            raw = update.get("timestamp")
++        try:
++            value = float(raw)
++            # MAX docs use Unix-time. Be tolerant of millisecond timestamps.
++            if value > 10_000_000_000:
++                value = value / 1000.0
++            return datetime.fromtimestamp(value)
++        except Exception:
++            return datetime.now()
++
++    @staticmethod
++    def _dedup_key(update: Dict[str, Any], event: MessageEvent) -> str:
++        explicit = _first_present(update, "update_id", "id", "marker")
++        if explicit is not None:
++            return f"max:update:{explicit}"
++        return "max:message:{chat}:{user}:{ts}:{text}".format(
++            chat=event.source.chat_id,
++            user=event.source.user_id or "",
++            ts=int(event.timestamp.timestamp()),
++            text=event.text[:128],
++        )
+diff --git a/gateway/run.py b/gateway/run.py
+index f5c1858db..27eb30f17 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -2959,6 +2959,13 @@ class GatewayRunner:
+                 return None
+             return QQAdapter(config)
+ 
++        elif platform == Platform.MAX:
++            from gateway.platforms.max import MaxAdapter, check_max_requirements
++            if not check_max_requirements():
++                logger.warning("MAX: MAX_BOT_TOKEN not configured")
++                return None
++            return MaxAdapter(config)
++
+         return None
+ 
+     def _is_user_authorized(self, source: SessionSource) -> bool:
+@@ -3001,10 +3008,12 @@ class GatewayRunner:
+             Platform.WEIXIN: "WEIXIN_ALLOWED_USERS",
+             Platform.BLUEBUBBLES: "BLUEBUBBLES_ALLOWED_USERS",
+             Platform.QQBOT: "QQ_ALLOWED_USERS",
++            Platform.MAX: "MAX_ALLOWED_USERS",
+         }
+         platform_group_env_map = {
+             Platform.TELEGRAM: "TELEGRAM_GROUP_ALLOWED_USERS",
+             Platform.QQBOT: "QQ_GROUP_ALLOWED_USERS",
++            Platform.MAX: "MAX_GROUP_ALLOWED_USERS",
+         }
+         platform_allow_all_map = {
+             Platform.TELEGRAM: "TELEGRAM_ALLOW_ALL_USERS",
+@@ -3023,6 +3032,7 @@ class GatewayRunner:
+             Platform.WEIXIN: "WEIXIN_ALLOW_ALL_USERS",
+             Platform.BLUEBUBBLES: "BLUEBUBBLES_ALLOW_ALL_USERS",
+             Platform.QQBOT: "QQ_ALLOW_ALL_USERS",
++            Platform.MAX: "MAX_ALLOW_ALL_USERS",
+         }
+ 
+         # Per-platform allow-all flag (e.g., DISCORD_ALLOW_ALL_USERS=true)
+diff --git a/hermes_cli/config.py b/hermes_cli/config.py
+index fe59e80f0..91cef4d68 100644
+--- a/hermes_cli/config.py
++++ b/hermes_cli/config.py
+@@ -52,6 +52,10 @@ _EXTRA_ENV_KEYS = frozenset({
+     "QQ_HOME_CHANNEL", "QQ_HOME_CHANNEL_NAME",  # legacy aliases (pre-rename, still read for back-compat)
+     "QQ_ALLOWED_USERS", "QQ_GROUP_ALLOWED_USERS", "QQ_ALLOW_ALL_USERS", "QQ_MARKDOWN_SUPPORT",
+     "QQ_STT_API_KEY", "QQ_STT_BASE_URL", "QQ_STT_MODEL",
++    "MAX_BOT_TOKEN", "MAX_BASE_URL", "MAX_BOT_USER_ID", "MAX_BOT_USERNAME",
++    "MAX_ALLOWED_USERS", "MAX_GROUP_ALLOWED_USERS", "MAX_ALLOW_ALL_USERS",
++    "MAX_HOME_CHANNEL", "MAX_HOME_CHANNEL_NAME", "MAX_WEBHOOK_PUBLIC_URL", "MAX_WEBHOOK_SECRET",
++    "MAX_WEBHOOK_HOST", "MAX_WEBHOOK_PORT", "MAX_WEBHOOK_PATH", "MAX_UPDATE_TYPES", "MAX_AUTO_SUBSCRIBE",
+     "TERMINAL_ENV", "TERMINAL_SSH_KEY", "TERMINAL_SSH_PORT",
+     "WHATSAPP_MODE", "WHATSAPP_ENABLED",
+     "MATTERMOST_HOME_CHANNEL", "MATTERMOST_REPLY_MODE",
+@@ -1792,6 +1796,85 @@ OPTIONAL_ENV_VARS = {
+         "prompt": "QQ Sandbox Mode",
+         "category": "messaging",
+     },
++    "MAX_BOT_TOKEN": {
++        "description": "MAX Bot API token. Sent via Authorization header to platform-api.max.ru",
++        "prompt": "MAX Bot Token",
++        "password": True,
++        "url": "https://dev.max.ru/",
++        "category": "messaging",
++    },
++    "MAX_ALLOWED_USERS": {
++        "description": "Comma-separated MAX user IDs allowed to use the bot",
++        "prompt": "MAX Allowed Users",
++        "category": "messaging",
++    },
++    "MAX_GROUP_ALLOWED_USERS": {
++        "description": "Comma-separated MAX chat/channel IDs allowed to interact with the bot",
++        "prompt": "MAX Group Allowed Users",
++        "category": "messaging",
++    },
++    "MAX_ALLOW_ALL_USERS": {
++        "description": "Allow all MAX users without an allowlist (true/false)",
++        "prompt": "Allow All MAX Users",
++        "category": "messaging",
++    },
++    "MAX_HOME_CHANNEL": {
++        "description": "Default MAX chat/user target for cron delivery and notifications. Use chat:<id> or user:<id> when ambiguous.",
++        "prompt": "MAX Home Channel",
++        "category": "messaging",
++    },
++    "MAX_HOME_CHANNEL_NAME": {
++        "description": "Display name for the MAX home channel",
++        "prompt": "MAX Home Channel Name",
++        "category": "messaging",
++    },
++    "MAX_BASE_URL": {
++        "description": "MAX Bot API base URL (default: https://platform-api.max.ru)",
++        "prompt": "MAX API Base URL",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_WEBHOOK_PUBLIC_URL": {
++        "description": "Public HTTPS MAX webhook URL, without an explicit port (MAX delivers on 443)",
++        "prompt": "MAX Webhook Public URL",
++        "category": "messaging",
++    },
++    "MAX_WEBHOOK_SECRET": {
++        "description": "MAX webhook secret validated from X-Max-Bot-Api-Secret (5-256 chars: A-Z, a-z, 0-9, underscore, hyphen)",
++        "prompt": "MAX Webhook Secret",
++        "password": True,
++        "category": "messaging",
++    },
++    "MAX_WEBHOOK_HOST": {
++        "description": "Local host/interface for the MAX webhook receiver (default: 127.0.0.1)",
++        "prompt": "MAX Webhook Host",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_WEBHOOK_PORT": {
++        "description": "Local port for the MAX webhook receiver behind your HTTPS reverse proxy (default: 8647)",
++        "prompt": "MAX Webhook Port",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_WEBHOOK_PATH": {
++        "description": "Local path for the MAX webhook receiver (default: /max-webhook)",
++        "prompt": "MAX Webhook Path",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_UPDATE_TYPES": {
++        "description": "Comma-separated MAX update types for webhook subscription (default: message_created,bot_started)",
++        "prompt": "MAX Update Types",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_AUTO_SUBSCRIBE": {
++        "description": "Automatically POST /subscriptions at gateway startup when MAX_WEBHOOK_PUBLIC_URL is configured (true/false)",
++        "prompt": "MAX Auto Subscribe",
++        "category": "messaging",
++        "advanced": True,
++    },
+     "GATEWAY_ALLOW_ALL_USERS": {
+         "description": "Allow all users to interact with messaging bots (true/false). Default: false.",
+         "prompt": "Allow all users (true/false)",
+diff --git a/hermes_cli/gateway.py b/hermes_cli/gateway.py
+index 3b828fecf..9c4bb854f 100644
+--- a/hermes_cli/gateway.py
++++ b/hermes_cli/gateway.py
+@@ -2724,6 +2724,32 @@ _PLATFORMS = [
+              "help": "OpenID to deliver cron results and notifications to."},
+         ],
+     },
++    {
++        "key": "max",
++        "label": "MAX",
++        "emoji": "💬",
++        "token_var": "MAX_BOT_TOKEN",
++        "setup_instructions": [
++            "1. Create a MAX bot and copy its Bot API token from the MAX developer console",
++            "2. Add the bot to a chat/channel when you want group or channel updates",
++            "3. For group/channel delivery, make the bot an admin as required by MAX",
++            "4. Configure an HTTPS webhook endpoint on port 443; MAX recommends Webhook for production",
++            "5. Hermes can auto-create POST /subscriptions when MAX_WEBHOOK_PUBLIC_URL is set",
++        ],
++        "vars": [
++            {"name": "MAX_BOT_TOKEN", "prompt": "MAX Bot API token", "password": True,
++             "help": "Sent as the raw Authorization header to https://platform-api.max.ru."},
++            {"name": "MAX_WEBHOOK_PUBLIC_URL", "prompt": "Public HTTPS webhook URL (no explicit port, or empty to register manually)", "password": False,
++             "help": "MAX delivers production events to HTTPS port 443, e.g. https://bot.example.com/max-webhook."},
++            {"name": "MAX_WEBHOOK_SECRET", "prompt": "Webhook secret for X-Max-Bot-Api-Secret", "password": True,
++             "help": "Recommended by MAX. Use 5-256 chars: A-Z, a-z, 0-9, underscore, hyphen."},
++            {"name": "MAX_ALLOWED_USERS", "prompt": "Allowed MAX user IDs (comma-separated, leave empty for pairing/open policy)", "password": False,
++             "is_allowlist": True,
++             "help": "Optional — restrict DM access to specific MAX user IDs."},
++            {"name": "MAX_HOME_CHANNEL", "prompt": "Home target for cron/notifications (chat:<id> or user:<id>, or empty)", "password": False,
++             "help": "Use chat:<id> for chats/channels or user:<id> for direct user delivery."},
++        ],
++    },
+ ]
+ 
+ 
+diff --git a/hermes_cli/platforms.py b/hermes_cli/platforms.py
+index 05507eace..9bd7119df 100644
+--- a/hermes_cli/platforms.py
++++ b/hermes_cli/platforms.py
+@@ -36,6 +36,7 @@ PLATFORMS: OrderedDict[str, PlatformInfo] = OrderedDict([
+     ("wecom_callback", PlatformInfo(label="💬 WeCom Callback",  default_toolset="hermes-wecom-callback")),
+     ("weixin",         PlatformInfo(label="💬 Weixin",          default_toolset="hermes-weixin")),
+     ("qqbot",          PlatformInfo(label="💬 QQBot",           default_toolset="hermes-qqbot")),
++    ("max",            PlatformInfo(label="💬 MAX",             default_toolset="hermes-max")),
+     ("webhook",        PlatformInfo(label="🔗 Webhook",         default_toolset="hermes-webhook")),
+     ("api_server",     PlatformInfo(label="🌐 API Server",      default_toolset="hermes-api-server")),
+     ("cron",           PlatformInfo(label="⏰ Cron",            default_toolset="hermes-cron")),
+diff --git a/hermes_cli/setup.py b/hermes_cli/setup.py
+index e28acd41b..18510338c 100644
+--- a/hermes_cli/setup.py
++++ b/hermes_cli/setup.py
+@@ -2286,6 +2286,7 @@ def setup_gateway(config: dict):
+         or get_env_value("WEIXIN_ACCOUNT_ID")
+         or get_env_value("BLUEBUBBLES_SERVER_URL")
+         or get_env_value("QQ_APP_ID")
++        or get_env_value("MAX_BOT_TOKEN")
+         or get_env_value("WEBHOOK_ENABLED")
+     )
+     if any_messaging:
+@@ -2311,6 +2312,8 @@ def setup_gateway(config: dict):
+             get_env_value("QQBOT_HOME_CHANNEL") or get_env_value("QQ_HOME_CHANNEL")
+         ):
+             missing_home.append("QQBot")
++        if get_env_value("MAX_BOT_TOKEN") and not get_env_value("MAX_HOME_CHANNEL"):
++            missing_home.append("MAX")
+ 
+         if missing_home:
+             print()
+diff --git a/hermes_cli/status.py b/hermes_cli/status.py
+index d07e1a822..8c81956e8 100644
+--- a/hermes_cli/status.py
++++ b/hermes_cli/status.py
+@@ -327,6 +327,7 @@ def show_status(args):
+         "Weixin": ("WEIXIN_ACCOUNT_ID", "WEIXIN_HOME_CHANNEL"),
+         "BlueBubbles": ("BLUEBUBBLES_SERVER_URL", "BLUEBUBBLES_HOME_CHANNEL"),
+         "QQBot": ("QQ_APP_ID", "QQBOT_HOME_CHANNEL"),
++        "MAX": ("MAX_BOT_TOKEN", "MAX_HOME_CHANNEL"),
+     }
+     
+     for name, (token_var, home_var) in platforms.items():
+diff --git a/tests/cron/test_scheduler.py b/tests/cron/test_scheduler.py
+index 4cd4b7cd7..7f8a2a4a7 100644
+--- a/tests/cron/test_scheduler.py
++++ b/tests/cron/test_scheduler.py
+@@ -77,6 +77,7 @@ class TestResolveDeliveryTarget:
+             ("wecom", "WECOM_HOME_CHANNEL", "wecom-home"),
+             ("weixin", "WEIXIN_HOME_CHANNEL", "wxid_home"),
+             ("qqbot", "QQ_HOME_CHANNEL", "group-openid-home"),
++            ("max", "MAX_HOME_CHANNEL", "chat:max-home"),
+         ],
+     )
+     def test_origin_delivery_without_origin_falls_back_to_supported_home_channels(
+@@ -98,6 +99,7 @@ class TestResolveDeliveryTarget:
+             "WECOM_HOME_CHANNEL",
+             "WEIXIN_HOME_CHANNEL",
+             "QQ_HOME_CHANNEL",
++            "MAX_HOME_CHANNEL",
+         ):
+             monkeypatch.delenv(fallback_env, raising=False)
+         monkeypatch.setenv(env_var, chat_id)
+diff --git a/tests/gateway/test_max.py b/tests/gateway/test_max.py
+new file mode 100644
+index 000000000..f5416193e
+--- /dev/null
++++ b/tests/gateway/test_max.py
+@@ -0,0 +1,308 @@
++"""Tests for the MAX messenger gateway adapter."""
++
++from __future__ import annotations
++
++import asyncio
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, patch
++
++import pytest
++
++from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig, _apply_env_overrides
++from gateway.platforms.base import MessageType
++from tools.send_message_tool import _parse_target_ref, _send_to_platform
++
++
++class FakeResponse:
++    def __init__(self, payload=None, *, status_code=200):
++        self._payload = payload or {}
++        self.status_code = status_code
++        self.text = str(self._payload)
++
++    def json(self):
++        return self._payload
++
++    def raise_for_status(self):
++        if self.status_code >= 400:
++            raise RuntimeError(f"HTTP {self.status_code}: {self.text}")
++
++
++class RecordingClient:
++    def __init__(self):
++        self.posts = []
++        self.closed = False
++
++    async def post(self, url, *, params=None, json=None, headers=None):
++        self.posts.append({"url": url, "params": params or {}, "json": json or {}, "headers": headers or {}})
++        if url.endswith("/subscriptions"):
++            return FakeResponse({"success": True})
++        return FakeResponse({"message": {"id": f"msg-{len(self.posts)}"}})
++
++    async def aclose(self):
++        self.closed = True
++
++
++class FakeWebhookRequest:
++    def __init__(self, payload, *, secret=None):
++        self._payload = payload
++        self.headers = {}
++        if secret is not None:
++            self.headers["X-Max-Bot-Api-Secret"] = secret
++
++    async def json(self):
++        if isinstance(self._payload, BaseException):
++            raise self._payload
++        return self._payload
++
++
++def _make_adapter(token="max-token", **extra):
++    from gateway.platforms.max import MaxAdapter
++
++    return MaxAdapter(PlatformConfig(enabled=True, token=token, extra=extra))
++
++
++def _message_update(text="hello MAX", *, update_id="upd-1", sender_id=123, chat_id=777):
++    return {
++        "update_id": update_id,
++        "update_type": "message_created",
++        "timestamp": 1710000000,
++        "message": {
++            "sender": {"user_id": sender_id, "first_name": "Alice", "username": "alice", "is_bot": False},
++            "recipient": {"chat_id": chat_id, "type": "chat", "title": "Ops"},
++            "timestamp": 1710000000,
++            "body": {"text": text},
++        },
++    }
++
++
++async def _drain_adapter_tasks(adapter, *, max_rounds=10):
++    for _ in range(max_rounds):
++        tasks = [task for task in getattr(adapter, "_background_tasks", set()) if not task.done()]
++        if not tasks:
++            await asyncio.sleep(0)
++            tasks = [task for task in getattr(adapter, "_background_tasks", set()) if not task.done()]
++        if not tasks:
++            return
++        await asyncio.gather(*tasks, return_exceptions=True)
++
++
++class TestMaxConfigLoading:
++    def test_apply_env_overrides_enables_webhook_first_max_with_header_token_and_home_channel(self, monkeypatch):
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        monkeypatch.setenv("MAX_ALLOWED_USERS", "123,456")
++        monkeypatch.setenv("MAX_ALLOW_ALL_USERS", "false")
++        monkeypatch.setenv("MAX_HOME_CHANNEL", "777")
++        monkeypatch.setenv("MAX_HOME_CHANNEL_NAME", "MAX Home")
++        monkeypatch.setenv("MAX_WEBHOOK_PUBLIC_URL", "https://bot.example.com/max-webhook")
++        monkeypatch.setenv("MAX_WEBHOOK_SECRET", "secret_123")
++        monkeypatch.setenv("MAX_WEBHOOK_PATH", "max-webhook")
++        monkeypatch.setenv("MAX_WEBHOOK_PORT", "8647")
++        monkeypatch.setenv("MAX_UPDATE_TYPES", "message_created,bot_started")
++        monkeypatch.setenv("MAX_AUTO_SUBSCRIBE", "true")
++
++        config = GatewayConfig()
++        _apply_env_overrides(config)
++
++        assert Platform.MAX in config.platforms
++        platform_config = config.platforms[Platform.MAX]
++        assert platform_config.enabled is True
++        assert platform_config.token == "max-token"
++        assert platform_config.extra["allow_from"] == "123,456"
++        assert platform_config.extra["allow_all_users"] is False
++        assert platform_config.extra["webhook_public_url"] == "https://bot.example.com/max-webhook"
++        assert platform_config.extra["webhook_secret"] == "secret_123"
++        assert platform_config.extra["webhook_path"] == "max-webhook"
++        assert platform_config.extra["webhook_port"] == 8647
++        assert platform_config.extra["update_types"] == "message_created,bot_started"
++        assert platform_config.extra["auto_subscribe"] is True
++        assert platform_config.home_channel == HomeChannel(Platform.MAX, "777", "MAX Home")
++        assert config.get_connected_platforms() == [Platform.MAX]
++
++    def test_check_requirements_requires_token(self, monkeypatch):
++        from gateway.platforms.max import check_max_requirements
++
++        monkeypatch.delenv("MAX_BOT_TOKEN", raising=False)
++        assert check_max_requirements() is False
++        monkeypatch.setenv("MAX_BOT_TOKEN", "max-token")
++        assert check_max_requirements() is True
++
++
++class TestMaxAdapter:
++    def test_headers_use_raw_authorization_token_not_query_token_or_bearer(self):
++        adapter = _make_adapter(token="max-token")
++
++        headers = adapter._headers()
++
++        assert headers["Authorization"] == "max-token"
++        assert headers["Content-Type"] == "application/json"
++        assert "Bearer" not in headers["Authorization"]
++
++    def test_subscription_payload_matches_official_webhook_api_and_secret_header_model(self):
++        adapter = _make_adapter(
++            webhook_public_url="https://bot.example.com/max-webhook",
++            webhook_secret="secret_123",
++            update_types="message_created,bot_started",
++        )
++
++        assert adapter._subscription_payload() == {
++            "url": "https://bot.example.com/max-webhook",
++            "update_types": ["message_created", "bot_started"],
++            "secret": "secret_123",
++        }
++
++    def test_subscription_rejects_non_https_or_explicit_port_public_urls(self):
++        with pytest.raises(ValueError, match="HTTPS"):
++            _make_adapter(webhook_public_url="http://bot.example.com/max-webhook")._subscription_payload()
++        with pytest.raises(ValueError, match="port 443"):
++            _make_adapter(webhook_public_url="https://bot.example.com:8443/max-webhook")._subscription_payload()
++
++    @pytest.mark.asyncio
++    async def test_subscribe_posts_to_official_subscriptions_endpoint(self):
++        adapter = _make_adapter(
++            token="max-token",
++            webhook_public_url="https://bot.example.com/max-webhook",
++            webhook_secret="secret_123",
++        )
++        client = RecordingClient()
++        adapter._client = client
++
++        result = await adapter._subscribe_webhook()
++
++        assert result == {"success": True}
++        assert client.posts == [
++            {
++                "url": "https://platform-api.max.ru/subscriptions",
++                "params": {},
++                "json": {
++                    "url": "https://bot.example.com/max-webhook",
++                    "update_types": ["message_created", "bot_started"],
++                    "secret": "secret_123",
++                },
++                "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            }
++        ]
++
++    @pytest.mark.asyncio
++    async def test_send_posts_text_to_chat_id_query_with_modern_body_fields(self):
++        adapter = _make_adapter(token="max-token")
++        client = RecordingClient()
++        adapter._client = client
++
++        result = await adapter.send("777", "**hello**", metadata={"target_type": "chat", "notify": False, "format": "markdown"})
++
++        assert result.success is True
++        assert result.message_id == "msg-1"
++        assert client.posts == [
++            {
++                "url": "https://platform-api.max.ru/messages",
++                "params": {"chat_id": "777"},
++                "json": {"text": "**hello**", "notify": False, "format": "markdown"},
++                "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            }
++        ]
++
++    @pytest.mark.asyncio
++    async def test_send_can_target_user_id_explicitly(self):
++        adapter = _make_adapter(token="max-token")
++        client = RecordingClient()
++        adapter._client = client
++
++        result = await adapter.send("123", "hello", metadata={"target_type": "user"})
++
++        assert result.success is True
++        assert client.posts[0]["params"] == {"user_id": "123"}
++
++    @pytest.mark.asyncio
++    async def test_long_text_is_chunked_at_official_4000_character_limit(self):
++        adapter = _make_adapter(token="max-token")
++        client = RecordingClient()
++        adapter._client = client
++
++        result = await adapter.send("777", "x" * 4100, metadata={"target_type": "chat"})
++
++        assert result.success is True
++        assert len(client.posts) == 2
++        assert all(len(call["json"]["text"]) <= 4000 for call in client.posts)
++
++    def test_message_created_update_converts_official_message_body_to_event(self):
++        adapter = _make_adapter(bot_user_id="999")
++
++        event = adapter._update_to_event(_message_update())
++
++        assert event is not None
++        assert event.text == "hello MAX"
++        assert event.message_type == MessageType.TEXT
++        assert event.source.platform == Platform.MAX
++        assert event.source.chat_id == "777"
++        assert event.source.chat_type == "group"
++        assert event.source.chat_name == "Ops"
++        assert event.source.user_id == "123"
++        assert event.source.user_name == "Alice"
++
++    @pytest.mark.asyncio
++    async def test_webhook_requires_x_max_bot_api_secret_when_configured_and_acks_quickly(self):
++        adapter = _make_adapter(webhook_secret="secret_123")
++        calls = []
++
++        async def handler(event):
++            calls.append(event.text)
++
++        adapter.set_message_handler(handler)
++        bad = await adapter._handle_webhook(FakeWebhookRequest(_message_update(), secret="wrong"))
++        assert bad.status == 401
++
++        ok = await adapter._handle_webhook(FakeWebhookRequest(_message_update(), secret="secret_123"))
++        assert ok.status == 200
++        await _drain_adapter_tasks(adapter)
++        assert calls == ["hello MAX"]
++
++    @pytest.mark.asyncio
++    async def test_webhook_rejects_invalid_json_before_dispatch(self):
++        adapter = _make_adapter(webhook_secret="secret_123")
++        calls = []
++        adapter.set_message_handler(lambda event: calls.append(event.text))
++
++        response = await adapter._handle_webhook(FakeWebhookRequest(ValueError("bad json"), secret="secret_123"))
++
++        assert response.status == 400
++        assert calls == []
++
++    @pytest.mark.asyncio
++    async def test_self_messages_and_duplicate_webhook_updates_are_not_dispatched(self):
++        adapter = _make_adapter(bot_user_id="999")
++        calls = []
++
++        async def handler(event):
++            calls.append(event.text)
++
++        adapter.set_message_handler(handler)
++        await adapter._handle_update(_message_update(text="dedup me", update_id="same"))
++        await _drain_adapter_tasks(adapter)
++        await adapter._handle_update(_message_update(text="dedup me", update_id="same"))
++        await _drain_adapter_tasks(adapter)
++        await adapter._handle_update(_message_update(text="from bot", update_id="bot", sender_id=999))
++        await _drain_adapter_tasks(adapter)
++
++        assert calls == ["dedup me"]
++
++
++class TestMaxSendMessageToolIntegration:
++    def test_max_target_parse_defaults_to_chat_id_and_accepts_explicit_user_prefix(self):
++        assert _parse_target_ref("max", "777") == ("777", None, True)
++        assert _parse_target_ref("max", "user:123") == ("user:123", None, True)
++
++    def test_send_to_platform_routes_max_and_chunks_to_4000(self):
++        send = AsyncMock(return_value={"success": True, "message_id": "1"})
++        with patch("tools.send_message_tool._send_max", send):
++            result = asyncio.run(
++                _send_to_platform(
++                    Platform.MAX,
++                    SimpleNamespace(enabled=True, token="max-token", extra={}),
++                    "777",
++                    "x" * 4100,
++                )
++            )
++
++        assert result["success"] is True
++        assert send.await_count == 2
++        assert all(len(call.args[2]) <= 4000 for call in send.await_args_list)
+diff --git a/tools/send_message_tool.py b/tools/send_message_tool.py
+index 19da4f55a..8cd27aa64 100644
+--- a/tools/send_message_tool.py
++++ b/tools/send_message_tool.py
+@@ -215,6 +215,7 @@ def _handle_send(args):
+         "weixin": Platform.WEIXIN,
+         "email": Platform.EMAIL,
+         "sms": Platform.SMS,
++        "max": Platform.MAX,
+     }
+     platform = platform_map.get(platform_name)
+     if not platform:
+@@ -322,6 +323,10 @@ def _parse_target_ref(platform_name: str, target_ref: str):
+         match = _WEIXIN_TARGET_RE.fullmatch(target_ref)
+         if match:
+             return match.group(1), None, True
++    if platform_name == "max":
++        stripped = target_ref.strip()
++        if stripped.startswith(("user:", "chat:")) and stripped.split(":", 1)[1].strip():
++            return stripped, None, True
+     if platform_name in _PHONE_PLATFORMS:
+         match = _E164_TARGET_RE.fullmatch(target_ref)
+         if match:
+@@ -444,6 +449,11 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
+     }
+     if _feishu_available:
+         _MAX_LENGTHS[Platform.FEISHU] = FeishuAdapter.MAX_MESSAGE_LENGTH
++    try:
++        from gateway.platforms.max import MaxAdapter
++        _MAX_LENGTHS[Platform.MAX] = MaxAdapter.MAX_MESSAGE_LENGTH
++    except ImportError:
++        _MAX_LENGTHS[Platform.MAX] = 4000
+ 
+     # Smart-chunk the message to fit within platform limits.
+     # For short messages or platforms without a known limit this is a no-op.
+@@ -571,6 +581,8 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
+             result = await _send_bluebubbles(pconfig.extra, chat_id, chunk)
+         elif platform == Platform.QQBOT:
+             result = await _send_qqbot(pconfig, chat_id, chunk)
++        elif platform == Platform.MAX:
++            result = await _send_max(pconfig, chat_id, chunk)
+         else:
+             result = {"error": f"Direct sending not yet implemented for {platform.value}"}
+ 
+@@ -1458,6 +1470,33 @@ def _check_send_message():
+         return False
+ 
+ 
++async def _send_max(pconfig, chat_id, message):
++    """Send via MAX Bot API directly."""
++    try:
++        from gateway.platforms.max import MaxAdapter
++    except ImportError as exc:
++        return _error(f"MAX direct send requires gateway.platforms.max: {exc}")
++
++    adapter = MaxAdapter(pconfig)
++    try:
++        result = await adapter.send(chat_id, message)
++        if result.success:
++            return {
++                "success": True,
++                "platform": "max",
++                "chat_id": chat_id,
++                "message_id": result.message_id,
++            }
++        return _error(f"MAX send failed: {result.error or 'unknown error'}")
++    except Exception as exc:
++        return _error(f"MAX send failed: {exc}")
++    finally:
++        try:
++            await adapter.disconnect()
++        except Exception:
++            pass
++
++
+ async def _send_qqbot(pconfig, chat_id, message):
+     """Send via QQBot using the REST API directly (no WebSocket needed).
+ 
+diff --git a/toolsets.py b/toolsets.py
+index 65f560bfe..8975978ae 100644
+--- a/toolsets.py
++++ b/toolsets.py
+@@ -404,6 +404,12 @@ TOOLSETS = {
+         "includes": []
+     },
+ 
++    "hermes-max": {
++        "description": "MAX bot toolset - MAX messenger via Bot API (full access)",
++        "tools": _HERMES_CORE_TOOLS,
++        "includes": []
++    },
++
+     "hermes-wecom": {
+         "description": "WeCom bot toolset - enterprise WeChat messaging (full access)",
+         "tools": _HERMES_CORE_TOOLS,
+@@ -431,7 +437,7 @@ TOOLSETS = {
+     "hermes-gateway": {
+         "description": "Gateway toolset - union of all messaging platform tools",
+         "tools": [],
+-        "includes": ["hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-bluebubbles", "hermes-homeassistant", "hermes-email", "hermes-sms", "hermes-mattermost", "hermes-matrix", "hermes-dingtalk", "hermes-feishu", "hermes-wecom", "hermes-wecom-callback", "hermes-weixin", "hermes-qqbot", "hermes-webhook"]
++        "includes": ["hermes-telegram", "hermes-discord", "hermes-whatsapp", "hermes-slack", "hermes-signal", "hermes-bluebubbles", "hermes-homeassistant", "hermes-email", "hermes-sms", "hermes-mattermost", "hermes-matrix", "hermes-dingtalk", "hermes-feishu", "hermes-wecom", "hermes-wecom-callback", "hermes-weixin", "hermes-qqbot", "hermes-max", "hermes-webhook"]
+     }
+ }
+ 

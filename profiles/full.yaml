@@ -3,6 +3,7 @@
   "patches": [
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
-    "credential-pool-recovery"
+    "credential-pool-recovery",
+    "max-gateway-text-mvp"
   ]
 }
