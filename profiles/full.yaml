@@ -9,6 +9,7 @@
     "max-gateway-oneme-url-safety",
     "max-gateway-image-output",
     "max-send-message-media-routing",
-    "max-gateway-file-attachments"
+    "max-gateway-file-attachments",
+    "max-media-directive-safety"
   ]
 }

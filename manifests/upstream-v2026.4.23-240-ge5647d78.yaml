@@ -271,6 +271,34 @@
           "tests/tools/test_send_message_missing_platforms.py"
         ]
       }
+    },
+    {
+      "id": "max-media-directive-safety",
+      "file": "patches/076-max-media-directive-safety.patch",
+      "title_en": "MAX media directive safety",
+      "title_ru": "Безопасная обработка MAX media directives",
+      "description_en": "Prevents documented MEDIA examples and markdown code snippets from being treated as real attachments, and updates the MAX prompt hint to require MEDIA directives as plain lines with real local paths.",
+      "description_ru": "Не даёт документационным примерам MEDIA и markdown code snippets запускать отправку вложений, а также уточняет MAX prompt hint: MEDIA directives должны быть plain lines с реальными локальными путями.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-file-attachments"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "396d8ed3b8582b9e151d7afb68cff0c9620d4193",
+      "base_runtime": "ae00dd81d28646548cec9fbdd42b55dbc38a98ca",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_platform_base.py::TestExtractMedia",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      }
     }
   ]
 }

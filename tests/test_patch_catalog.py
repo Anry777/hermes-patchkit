@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.23-240-ge5647d78.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
+MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
 
 
 class PatchCatalogTests(unittest.TestCase):
@@ -40,6 +41,23 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("/uploads", patch_text)
         self.assertIn('"type": "file"', patch_text)
         self.assertIn("send_document", patch_text)
+
+    def test_max_media_directive_safety_is_exported_real_patch(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        entry = next(patch for patch in manifest["patches"] if patch["id"] == "max-media-directive-safety")
+
+        self.assertEqual(entry["status"], "exported")
+        self.assertEqual(entry["track"], "local-overlay")
+        self.assertIn("max-gateway-file-attachments", entry["depends_on"])
+
+        patch_text = MAX_MEDIA_DIRECTIVE_SAFETY_PATCH.read_text(encoding="utf-8")
+        self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+        self.assertIn("diff --git", patch_text)
+        self.assertIn("gateway/platforms/base.py", patch_text)
+        self.assertIn("agent/prompt_builder.py", patch_text)
+        self.assertIn("test_media_tag_inside_fenced_code_block_is_documentation_not_attachment", patch_text)
+        self.assertIn("/absolute/path", patch_text)
+        self.assertIn("code block", patch_text)
 
 
 if __name__ == "__main__":

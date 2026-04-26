@@ -1,0 +1,139 @@
+diff --git a/agent/prompt_builder.py b/agent/prompt_builder.py
+index 77f3f1d19..0d631d3a0 100644
+--- a/agent/prompt_builder.py
++++ b/agent/prompt_builder.py
+@@ -313,7 +313,8 @@ PLATFORM_HINTS = {
+     "max": (
+         "You are on MAX messenger communicating with your user. "
+         "Keep responses chat-friendly and concise. You can send files natively: "
+-        "include MEDIA:/absolute/path/to/file in your response. Images "
++        "write MEDIA:<real local file path> on its own plain line in the response, "
++        "without backticks and without wrapping it in a markdown code block. Images "
+         "(.png, .jpg, .jpeg, .gif, .webp) are uploaded and delivered as native photos; "
+         "other local files (.pdf, .txt, .md, .csv, .docx, .xlsx, etc.) are sent as "
+         "downloadable MAX file attachments. Do not use SVG for MAX photo delivery; "
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index fd325fde4..9ea65fe0b 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -1457,17 +1457,43 @@ class BasePlatformAdapter(ABC):
+         media_pattern = re.compile(
+             r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm|ogg|opus|mp3|wav|m4a|epub|pdf|zip|rar|7z|docx?|xlsx?|pptx?|txt|csv|apk|ipa)(?=[\s`"',;:)\]}]|$)|\S+)[`"']?'''
+         )
++
++        protected_spans: list[tuple[int, int]] = []
++        for protected in re.finditer(r'```[^\n]*\n.*?```', content, re.DOTALL):
++            protected_spans.append((protected.start(), protected.end()))
++        for protected in re.finditer(r'`[^`\n]+`', content):
++            protected_spans.append((protected.start(), protected.end()))
++
++        def _in_protected_span(pos: int) -> bool:
++            return any(start <= pos < end for start, end in protected_spans)
++
++        def _is_documentation_placeholder(path: str) -> bool:
++            normalized = path.strip()
++            return normalized == "/path" or normalized.startswith("/absolute/path/")
++
++        remove_spans: list[tuple[int, int]] = []
+         for match in media_pattern.finditer(content):
++            if _in_protected_span(match.start()):
++                continue
+             path = match.group("path").strip()
+             if len(path) >= 2 and path[0] == path[-1] and path[0] in "`\"'":
+                 path = path[1:-1].strip()
+             path = path.lstrip("`\"'").rstrip("`\"',.;:)}]")
+-            if path:
++            if path and not _is_documentation_placeholder(path):
+                 media.append((os.path.expanduser(path), has_voice_tag))
+-
+-        # Remove MEDIA tags from content (including surrounding quote/backtick wrappers)
+-        if media:
+-            cleaned = media_pattern.sub('', cleaned)
++                remove_spans.append((match.start(), match.end()))
++
++        # Remove only accepted MEDIA tags from content. Documentation examples
++        # such as `MEDIA:/absolute/path/to/file.pdf` must stay visible and must
++        # not trigger noisy attachment-send attempts.
++        if remove_spans:
++            parts: list[str] = []
++            last = 0
++            for start, end in remove_spans:
++                parts.append(content[last:start])
++                last = end
++            parts.append(content[last:])
++            cleaned = ''.join(parts).replace("[[audio_as_voice]]", "")
+             cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+         
+         return media, cleaned
+diff --git a/tests/agent/test_prompt_builder.py b/tests/agent/test_prompt_builder.py
+index 88de5186b..9b6a31862 100644
+--- a/tests/agent/test_prompt_builder.py
++++ b/tests/agent/test_prompt_builder.py
+@@ -807,6 +807,15 @@ class TestPromptBuilderConstants:
+         # check that this test is calibrated correctly).
+         assert "include MEDIA:" in PLATFORM_HINTS["telegram"]
+ 
++    def test_max_hint_uses_plain_media_directive_without_placeholder_paths(self):
++        hint = PLATFORM_HINTS["max"]
++
++        assert "MEDIA:" in hint
++        assert "plain line" in hint.lower()
++        assert "backticks" in hint.lower()
++        assert "code block" in hint.lower()
++        assert "/absolute/path" not in hint
++
+     def test_platform_hints_mattermost(self):
+         hint = PLATFORM_HINTS["mattermost"]
+         assert "Mattermost" in hint
+diff --git a/tests/gateway/test_max.py b/tests/gateway/test_max.py
+index b7704015d..6352064dd 100644
+--- a/tests/gateway/test_max.py
++++ b/tests/gateway/test_max.py
+@@ -772,7 +772,11 @@ class TestMaxPromptHints:
+ 
+         hint = PLATFORM_HINTS["max"]
+ 
+-        assert "MEDIA:/absolute/path/to/file" in hint
++        assert "MEDIA:<real local file path>" in hint
++        assert "plain line" in hint
++        assert "backticks" in hint
++        assert "code block" in hint
++        assert "/absolute/path" not in hint
+         assert "Images" in hint
+         assert "downloadable MAX file attachments" in hint
+         assert "native" in hint
+diff --git a/tests/gateway/test_platform_base.py b/tests/gateway/test_platform_base.py
+index 690a82095..cef2acbca 100644
+--- a/tests/gateway/test_platform_base.py
++++ b/tests/gateway/test_platform_base.py
+@@ -321,6 +321,30 @@ class TestExtractMedia:
+         assert "Here" in cleaned
+         assert "After" in cleaned
+ 
++    def test_media_tag_inside_fenced_code_block_is_documentation_not_attachment(self):
++        content = "Example:\n```text\nMEDIA:/absolute/path/to/file.pdf\n```"
++
++        media, cleaned = BasePlatformAdapter.extract_media(content)
++
++        assert media == []
++        assert cleaned == content
++
++    def test_media_tag_inside_inline_code_is_documentation_not_attachment(self):
++        content = "Use `MEDIA:/absolute/path/to/file.pdf` as a plain response directive."
++
++        media, cleaned = BasePlatformAdapter.extract_media(content)
++
++        assert media == []
++        assert cleaned == content
++
++    def test_media_tag_ignores_documentation_placeholder_paths(self):
++        content = "Examples:\nMEDIA:/absolute/path/to/image.jpg\nMEDIA:/path"
++
++        media, cleaned = BasePlatformAdapter.extract_media(content)
++
++        assert media == []
++        assert cleaned == content
++
+ 
+ # ---------------------------------------------------------------------------
+ # truncate_message
