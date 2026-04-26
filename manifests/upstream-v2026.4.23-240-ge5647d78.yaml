@@ -299,6 +299,33 @@
           "tests/tools/test_send_message_tool.py"
         ]
       }
+    },
+    {
+      "id": "max-markdown-formatting",
+      "file": "patches/077-max-markdown-formatting.patch",
+      "title_en": "MAX markdown text formatting",
+      "title_ru": "Markdown formatting для сообщений MAX",
+      "description_en": "Defaults MAX outgoing text and captions to official markdown formatting, adds MAX_TEXT_FORMAT configuration, and updates the MAX prompt hint to use concise MAX-safe Markdown.",
+      "description_ru": "По умолчанию отправляет MAX text/captions с official markdown formatting, добавляет настройку MAX_TEXT_FORMAT и обновляет MAX prompt hint под аккуратный MAX-safe Markdown.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-media-directive-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "e036aa23eb99a52e247099a8c5b3bf1f071af827",
+      "base_runtime": "396d8ed3b8582b9e151d7afb68cff0c9620d4193",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      }
     }
   ]
 }

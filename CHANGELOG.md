@@ -11,6 +11,7 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- real exported local-overlay patch `077-max-markdown-formatting`, defaulting MAX outgoing text/captions to official Markdown formatting with `MAX_TEXT_FORMAT` configuration and MAX-safe Markdown prompt guidance
 - real exported local-overlay patch `076-max-media-directive-safety`, preventing MAX `MEDIA:` documentation examples, placeholder paths, inline code, and fenced code blocks from being misrouted as native attachments
 - real exported local-overlay patch `075-max-gateway-file-attachments`, adding MAX native file/document upload for non-image `MEDIA:/path` attachments and inbound file attachment caching as Hermes document events
 - real exported local-overlay patch `074-max-send-message-media-routing`, routing `send_message` tool `MEDIA:/path` raster images for MAX through native image upload/send instead of omitting attachments as unsupported media
