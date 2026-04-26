@@ -20,7 +20,7 @@ index 3dbb54c7d..d2e018747 100644
  
  # Legacy env var names kept for back-compat.  Each entry is the current
 diff --git a/gateway/config.py b/gateway/config.py
-index 509737279..18f80c9a2 100644
+index 509737279..139ecbeea 100644
 --- a/gateway/config.py
 +++ b/gateway/config.py
 @@ -67,6 +67,7 @@ class Platform(Enum):
@@ -49,7 +49,7 @@ index 509737279..18f80c9a2 100644
      }
      for platform, pconfig in config.platforms.items():
          if not pconfig.enabled:
-@@ -1276,6 +1281,54 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+@@ -1276,6 +1281,60 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
                  name=os.getenv("QQBOT_HOME_CHANNEL_NAME") or os.getenv(qq_home_name_env, "Home"),
              )
  
@@ -87,6 +87,12 @@ index 509737279..18f80c9a2 100644
 +        max_webhook_port = os.getenv("MAX_WEBHOOK_PORT", "").strip()
 +        if max_webhook_port:
 +            extra["webhook_port"] = int(max_webhook_port)
++        max_poll_timeout = os.getenv("MAX_POLL_TIMEOUT", "").strip()
++        if max_poll_timeout:
++            extra["poll_timeout"] = int(max_poll_timeout)
++        max_poll_idle_sleep = os.getenv("MAX_POLL_IDLE_SLEEP", "").strip()
++        if max_poll_idle_sleep:
++            extra["poll_idle_sleep"] = float(max_poll_idle_sleep)
 +        max_auto_subscribe = os.getenv("MAX_AUTO_SUBSCRIBE", "").strip()
 +        if max_auto_subscribe:
 +            extra["auto_subscribe"] = max_auto_subscribe.lower() in ("true", "1", "yes", "on")
@@ -124,10 +130,10 @@ index 4eb26edf0..f289dccea 100644
  ]
 diff --git a/gateway/platforms/max.py b/gateway/platforms/max.py
 new file mode 100644
-index 000000000..dd0dadcfd
+index 000000000..9352441ff
 --- /dev/null
 +++ b/gateway/platforms/max.py
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,528 @@
 +"""MAX messenger platform adapter.
 +
 +Webhook-first, text-only MAX Bot API integration for Hermes gateway.
@@ -179,6 +185,8 @@ index 000000000..dd0dadcfd
 +DEFAULT_TRANSPORT = "webhook"
 +TRANSPORT_WEBHOOK = "webhook"
 +TRANSPORT_POLLING = "polling"
++DEFAULT_POLL_TIMEOUT = 30
++DEFAULT_POLL_IDLE_SLEEP = 1.0
 +MAX_TEXT_LENGTH = 4000
 +_SECRET_RE = re.compile(r"^[a-zA-Z0-9_-]{5,256}$")
 +
@@ -226,6 +234,22 @@ index 000000000..dd0dadcfd
 +    return [part.strip() for part in str(value or "").split(",") if part.strip()]
 +
 +
++def _coerce_int(value: Any, default: int, *, minimum: int = 1) -> int:
++    try:
++        parsed = int(value)
++    except (TypeError, ValueError):
++        return default
++    return max(minimum, parsed)
++
++
++def _coerce_float(value: Any, default: float, *, minimum: float = 0.0) -> float:
++    try:
++        parsed = float(value)
++    except (TypeError, ValueError):
++        return default
++    return max(minimum, parsed)
++
++
 +class MaxAdapter(BasePlatformAdapter):
 +    """Webhook-first text-only adapter for MAX messenger bots."""
 +
@@ -248,6 +272,14 @@ index 000000000..dd0dadcfd
 +        ).strip()
 +        self.webhook_secret = str(extra.get("webhook_secret") or os.getenv("MAX_WEBHOOK_SECRET") or "").strip()
 +        self.transport = _normalize_transport(extra.get("transport") or os.getenv("MAX_TRANSPORT") or DEFAULT_TRANSPORT)
++        self.poll_timeout = _coerce_int(
++            extra.get("poll_timeout") or os.getenv("MAX_POLL_TIMEOUT"),
++            DEFAULT_POLL_TIMEOUT,
++        )
++        self.poll_idle_sleep = _coerce_float(
++            extra.get("poll_idle_sleep") or os.getenv("MAX_POLL_IDLE_SLEEP"),
++            DEFAULT_POLL_IDLE_SLEEP,
++        )
 +        self.auto_subscribe = bool(
 +            extra.get("auto_subscribe")
 +            if "auto_subscribe" in extra
@@ -364,7 +396,7 @@ index 000000000..dd0dadcfd
 +        backoff = 1.0
 +        while self._running:
 +            try:
-+                updates = await self._poll_once(timeout=30)
++                updates = await self._poll_once()
 +                if updates is None:
 +                    await asyncio.sleep(backoff)
 +                    backoff = min(backoff * 2, 60.0)
@@ -372,6 +404,8 @@ index 000000000..dd0dadcfd
 +                backoff = 1.0
 +                for update in updates:
 +                    await self._handle_update(update)
++                if not updates and self.poll_idle_sleep > 0:
++                    await asyncio.sleep(self.poll_idle_sleep)
 +            except asyncio.CancelledError:
 +                break
 +            except Exception as exc:
@@ -379,8 +413,9 @@ index 000000000..dd0dadcfd
 +                await asyncio.sleep(backoff)
 +                backoff = min(backoff * 2, 60.0)
 +
-+    async def _poll_once(self, *, timeout: int = 30) -> Optional[list[Dict[str, Any]]]:
-+        params: Dict[str, Any] = {"timeout": timeout}
++    async def _poll_once(self, *, timeout: Optional[int] = None) -> Optional[list[Dict[str, Any]]]:
++        poll_timeout = self.poll_timeout if timeout is None else timeout
++        params: Dict[str, Any] = {"timeout": poll_timeout}
 +        if self._poll_marker is not None:
 +            params["marker"] = self._poll_marker
 +        response = await self._get_client().get(
@@ -667,7 +702,7 @@ index f5c1858db..27eb30f17 100644
  
          # Per-platform allow-all flag (e.g., DISCORD_ALLOW_ALL_USERS=true)
 diff --git a/hermes_cli/config.py b/hermes_cli/config.py
-index fe59e80f0..74e1004d6 100644
+index fe59e80f0..ef1d59525 100644
 --- a/hermes_cli/config.py
 +++ b/hermes_cli/config.py
 @@ -52,6 +52,11 @@ _EXTRA_ENV_KEYS = frozenset({
@@ -678,11 +713,11 @@ index fe59e80f0..74e1004d6 100644
 +    "MAX_ALLOWED_USERS", "MAX_GROUP_ALLOWED_USERS", "MAX_ALLOW_ALL_USERS",
 +    "MAX_HOME_CHANNEL", "MAX_HOME_CHANNEL_NAME", "MAX_WEBHOOK_PUBLIC_URL", "MAX_WEBHOOK_SECRET",
 +    "MAX_WEBHOOK_HOST", "MAX_WEBHOOK_PORT", "MAX_WEBHOOK_PATH", "MAX_UPDATE_TYPES", "MAX_AUTO_SUBSCRIBE",
-+    "MAX_TRANSPORT",
++    "MAX_TRANSPORT", "MAX_POLL_TIMEOUT", "MAX_POLL_IDLE_SLEEP",
      "TERMINAL_ENV", "TERMINAL_SSH_KEY", "TERMINAL_SSH_PORT",
      "WHATSAPP_MODE", "WHATSAPP_ENABLED",
      "MATTERMOST_HOME_CHANNEL", "MATTERMOST_REPLY_MODE",
-@@ -1792,6 +1797,91 @@ OPTIONAL_ENV_VARS = {
+@@ -1792,6 +1797,103 @@ OPTIONAL_ENV_VARS = {
          "prompt": "QQ Sandbox Mode",
          "category": "messaging",
      },
@@ -768,6 +803,18 @@ index fe59e80f0..74e1004d6 100644
 +    "MAX_TRANSPORT": {
 +        "description": "MAX inbound transport: webhook (production default) or polling (local development/testing fallback)",
 +        "prompt": "MAX Transport",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_POLL_TIMEOUT": {
++        "description": "MAX polling long-poll timeout in seconds when MAX_TRANSPORT=polling (default: 30)",
++        "prompt": "MAX Poll Timeout",
++        "category": "messaging",
++        "advanced": True,
++    },
++    "MAX_POLL_IDLE_SLEEP": {
++        "description": "Seconds to sleep after an empty MAX polling response to avoid hot loops (default: 1.0)",
++        "prompt": "MAX Poll Idle Sleep",
 +        "category": "messaging",
 +        "advanced": True,
 +    },
@@ -881,10 +928,10 @@ index 4cd4b7cd7..7f8a2a4a7 100644
          monkeypatch.setenv(env_var, chat_id)
 diff --git a/tests/gateway/test_max.py b/tests/gateway/test_max.py
 new file mode 100644
-index 000000000..02174b24a
+index 000000000..f2fca0384
 --- /dev/null
 +++ b/tests/gateway/test_max.py
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,392 @@
 +"""Tests for the MAX messenger gateway adapter."""
 +
 +from __future__ import annotations
@@ -995,6 +1042,8 @@ index 000000000..02174b24a
 +        monkeypatch.setenv("MAX_UPDATE_TYPES", "message_created,bot_started")
 +        monkeypatch.setenv("MAX_AUTO_SUBSCRIBE", "true")
 +        monkeypatch.setenv("MAX_TRANSPORT", "polling")
++        monkeypatch.setenv("MAX_POLL_TIMEOUT", "7")
++        monkeypatch.setenv("MAX_POLL_IDLE_SLEEP", "0.25")
 +
 +        config = GatewayConfig()
 +        _apply_env_overrides(config)
@@ -1012,6 +1061,8 @@ index 000000000..02174b24a
 +        assert platform_config.extra["update_types"] == "message_created,bot_started"
 +        assert platform_config.extra["auto_subscribe"] is True
 +        assert platform_config.extra["transport"] == "polling"
++        assert platform_config.extra["poll_timeout"] == 7
++        assert platform_config.extra["poll_idle_sleep"] == 0.25
 +        assert platform_config.home_channel == HomeChannel(Platform.MAX, "777", "MAX Home")
 +        assert config.get_connected_platforms() == [Platform.MAX]
 +
@@ -1131,6 +1182,23 @@ index 000000000..02174b24a
 +        await _drain_adapter_tasks(adapter)
 +
 +        assert calls == [("from polling", "777", "123")]
++
++    @pytest.mark.asyncio
++    async def test_poll_once_uses_configured_default_timeout(self):
++        adapter = _make_adapter(token="max-token", transport="polling", poll_timeout=7)
++        client = RecordingClient(get_responses=[FakeResponse({"marker": None, "updates": []})])
++        adapter._client = client
++
++        updates = await adapter._poll_once()
++
++        assert updates == []
++        assert client.gets == [
++            {
++                "url": "https://platform-api.max.ru/updates",
++                "params": {"timeout": 7},
++                "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            }
++        ]
 +
 +    @pytest.mark.asyncio
 +    async def test_send_posts_text_to_chat_id_query_with_modern_body_fields(self):
