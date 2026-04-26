@@ -244,6 +244,33 @@
           "tests/gateway/test_max.py"
         ]
       }
+    },
+    {
+      "id": "max-gateway-file-attachments",
+      "file": "patches/075-max-gateway-file-attachments.patch",
+      "title_en": "MAX messenger file attachments",
+      "title_ru": "Файловые вложения в MAX messenger",
+      "description_en": "Extends MAX media delivery beyond images: local MEDIA files are uploaded through MAX /uploads?type=file and inbound file attachments are cached as Hermes document events instead of leaking local paths as text.",
+      "description_ru": "Расширяет MAX media delivery за пределы изображений: локальные MEDIA-файлы загружаются через MAX /uploads?type=file, а входящие file attachments кешируются как Hermes document events вместо утечки локальных путей текстом.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-send-message-media-routing"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "ae00dd81d28646548cec9fbdd42b55dbc38a98ca",
+      "base_runtime": "a8937625974978d595e8f0aea583f8fae34a73ea",
+      "base_upstream": "e5647d7863d306c8f479e1da011ebe4a4848d56d",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py",
+          "tests/tools/test_send_message_missing_platforms.py"
+        ]
+      }
     }
   ]
 }
