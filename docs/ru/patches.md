@@ -13,7 +13,7 @@
 | `030-credential-pool-recovery` | exported | Улучшает credential-pool recovery: отслеживает active credential ID, не возвращает invalid credentials через cooldown recovery и откладывает round-robin rotation до release lease. | Перенесён из legacy fork commits `e17a823c` и `97fa2dbc`; зависит от `020-auth-profile-root-fallback`. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Держит Codex memory flush на Responses transport contract. | Конфликтует с текущим fetched upstream в `run_agent.py`; перед следующим live upstream merge нужно refresh или retire. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flatten unsupported transcript roles вроде `tool` перед auxiliary Codex Responses calls. | Чисто применяется в последнем live smoke check. |
-| `070-max-gateway-text-mvp` | exported | Добавляет text-only gateway для MAX messenger: inbound delivery через webhook-first и outbound text через `POST /messages`. | Local-overlay patch; следует official production-рекомендации MAX, `GET /updates` намеренно не используется как основной transport. |
+| `070-max-gateway-text-mvp` | exported | Добавляет text-only gateway для MAX messenger: production inbound delivery через webhook-first, явный `MAX_TRANSPORT=polling` для локального теста и outbound text через `POST /messages`. | Local-overlay patch; webhook остаётся production default, а `GET /updates` доступен только как opt-in dev/test fallback. |
 
 ## Workflow-фичи
 

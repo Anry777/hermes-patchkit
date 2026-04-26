@@ -7,7 +7,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Added
-- real exported local-overlay patch `070-max-gateway-text-mvp` for a webhook-first, text-only MAX messenger gateway
+- real exported local-overlay patch `070-max-gateway-text-mvp` for a webhook-first, text-only MAX messenger gateway with explicit `MAX_TRANSPORT=polling` local-test fallback
 - dedicated patch/feature catalog docs: `docs/en/patches.md` and `docs/ru/patches.md`
 - `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
 - `scripts/tui.py`, a small terminal UI/guide over the update checker
