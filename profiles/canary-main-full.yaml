@@ -1,0 +1,16 @@
+{
+  "name": "canary-main-full",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "codex-auxiliary-tool-role-flattening",
+    "max-gateway-text-mvp",
+    "max-gateway-image-input",
+    "max-gateway-oneme-url-safety",
+    "max-gateway-image-output",
+    "max-send-message-media-routing",
+    "max-gateway-file-attachments",
+    "max-media-directive-safety",
+    "max-markdown-formatting"
+  ]
+}

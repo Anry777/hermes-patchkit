@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "main-a1921c43c",
+    "commit": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+    "stability": "canary"
+  },
+  "patches": [
+    {
+      "id": "auth-profile-root-fallback",
+      "file": "patches/main-a1921c43c/020-auth-profile-root-fallback.patch",
+      "title_en": "Profile auth.json fallback to root store",
+      "title_ru": "Фолбэк profile auth.json на root auth store",
+      "description_en": "Let profiles reuse the root auth store when they do not have their own auth.json yet.",
+      "description_ru": "Позволяет профилям использовать root auth store, если у профиля ещё нет своего auth.json.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "transplanted_from_commit": "2fc930be",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_falls_back_to_root_when_profile_auth_missing",
+          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_keeps_two_profile_auth_stores_isolated",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_first_auth_write_forks_from_root_without_mutating_root",
+          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_falls_back_to_root_auth_when_profile_auth_missing",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
+          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_falls_back_to_root_auth_when_profile_missing"
+        ]
+      },
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
+    },
+    {
+      "id": "credential-pool-recovery",
+      "file": "patches/main-a1921c43c/030-credential-pool-recovery.patch",
+      "title_en": "Improve credential pool recovery",
+      "title_ru": "Улучшить recovery credential pool",
+      "description_en": "Track active credential IDs and separate exhausted credentials from invalid ones.",
+      "description_ru": "Отделяет exhausted credentials от invalid credentials и точнее ведёт recovery.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [
+        "auth-profile-root-fallback"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "transplanted_from_commit": "97fa2dbcc01b3561a9f14d1f132ab20310d440b5",
+      "transplanted_from_commits": [
+        "e17a823c073bf47f3d78116e0804e6082a20d7c1",
+        "97fa2dbcc01b3561a9f14d1f132ab20310d440b5"
+      ],
+      "verification": {
+        "focused_tests": [
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
+          "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
+          "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
+          "tests/run_agent/test_run_agent.py::TestRunConversation::test_successful_response_records_credential_pool_success",
+          "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
+        ]
+      },
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
+    },
+    {
+      "id": "codex-auxiliary-tool-role-flattening",
+      "file": "patches/main-a1921c43c/061-codex-auxiliary-tool-role-flattening.patch",
+      "title_en": "Flatten unsupported transcript roles for Codex auxiliary Responses calls",
+      "title_ru": "Flatten unsupported transcript roles в Codex auxiliary Responses calls",
+      "description_en": "Converts transcript-only roles such as tool into user-visible context before sending auxiliary Codex requests to the Responses API, and adds a focused regression test.",
+      "description_ru": "Преобразует transcript-only roles вроде tool в user-visible context перед auxiliary Codex вызовом к Responses API и добавляет focused regression test.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
+    },
+    {
+      "id": "max-gateway-text-mvp",
+      "file": "patches/main-a1921c43c/070-max-gateway-text-mvp.patch",
+      "title_en": "MAX messenger text gateway (webhook-first + dev polling)",
+      "title_ru": "Text gateway для MAX messenger (webhook-first + dev polling)",
+      "description_en": "Adds a text-only MAX messenger gateway adapter using MAX-recommended webhook delivery for production inbound updates, explicit MAX_TRANSPORT=polling for local testing, configurable polling cadence with HTTP timeout headroom, operator status diagnostics, and POST /messages for outbound text.",
+      "description_ru": "Добавляет text-only gateway adapter для MAX messenger: production inbound updates через рекомендованный MAX webhook, явный MAX_TRANSPORT=polling для локального теста, настраиваемый polling cadence с HTTP timeout headroom, operator status diagnostics и outbound text через POST /messages.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py",
+          "tests/hermes_cli/test_gateway.py",
+          "tests/hermes_cli/test_status.py",
+          "tests/cron/test_scheduler.py"
+        ]
+      }
+    },
+    {
+      "id": "max-gateway-image-input",
+      "file": "patches/main-a1921c43c/071-max-gateway-image-input.patch",
+      "title_en": "MAX messenger image input",
+      "title_ru": "Приём изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to accept inbound image attachments from MessageBody.attachments, map them to Hermes photo events, cache image URLs locally for stable vision input, and keep image-only messages instead of dropping them.",
+      "description_ru": "Расширяет MAX gateway: принимает входящие image attachments из MessageBody.attachments, преобразует их в Hermes photo events, кеширует image URLs локально для стабильного vision input и не отбрасывает сообщения только с изображением.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-text-mvp"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "7987c55d5",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py"
+        ]
+      }
+    },
+    {
+      "id": "max-gateway-oneme-url-safety",
+      "file": "patches/main-a1921c43c/072-max-gateway-oneme-url-safety.patch",
+      "title_en": "MAX OneMe image CDN URL safety allowlist",
+      "title_ru": "URL safety allowlist для MAX OneMe image CDN",
+      "description_en": "Allows the exact MAX image CDN host i.oneme.ru through URL safety when it resolves to benchmark/private-style 198.18.0.0/15 addresses, preserving SSRF protection for subdomains, HTTP, and unrelated hosts.",
+      "description_ru": "Разрешает точный MAX image CDN host i.oneme.ru в URL safety, когда он резолвится в benchmark/private-style адреса 198.18.0.0/15, сохраняя SSRF-защиту для subdomains, HTTP и несвязанных hosts.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-input"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "b1328cb46",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_url_safety.py",
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py"
+        ]
+      }
+    },
+    {
+      "id": "max-gateway-image-output",
+      "file": "patches/main-a1921c43c/073-max-gateway-image-output.patch",
+      "title_en": "MAX messenger image output",
+      "title_ru": "Отправка изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to upload outbound local and remote images, send them as MAX image attachments with captions, and retry attachment.not.ready responses without changing text-only delivery.",
+      "description_ru": "Расширяет MAX gateway: загружает исходящие локальные и remote изображения, отправляет их как MAX image attachments с caption и retry для attachment.not.ready без изменения text-only delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-oneme-url-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "bf335b47b",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py",
+          "tests/gateway/test_send_image_file.py"
+        ]
+      }
+    },
+    {
+      "id": "max-send-message-media-routing",
+      "file": "patches/main-a1921c43c/074-max-send-message-media-routing.patch",
+      "title_en": "MAX send_message media routing",
+      "title_ru": "Маршрутизация MAX media через send_message",
+      "description_en": "Routes send_message MEDIA image attachments for MAX through the native MAX adapter image upload path instead of dropping them as unsupported media, and steers agents away from SVG photo delivery.",
+      "description_ru": "Направляет MAX MEDIA image attachments из send_message в native путь MAX adapter для загрузки изображений вместо отбрасывания как unsupported media, а также явно запрещает SVG для photo delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-output"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "35c4c906fce23aa15aeb83de275397f3dd38d86b",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py"
+        ]
+      }
+    },
+    {
+      "id": "max-gateway-file-attachments",
+      "file": "patches/main-a1921c43c/075-max-gateway-file-attachments.patch",
+      "title_en": "MAX messenger file attachments",
+      "title_ru": "Файловые вложения в MAX messenger",
+      "description_en": "Extends MAX media delivery beyond images: local MEDIA files are uploaded through MAX /uploads?type=file and inbound file attachments are cached as Hermes document events instead of leaking local paths as text.",
+      "description_ru": "Расширяет MAX media delivery за пределы изображений: локальные MEDIA-файлы загружаются через MAX /uploads?type=file, а входящие file attachments кешируются как Hermes document events вместо утечки локальных путей текстом.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-send-message-media-routing"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "a8937625974978d595e8f0aea583f8fae34a73ea",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py",
+          "tests/tools/test_send_message_missing_platforms.py"
+        ]
+      }
+    },
+    {
+      "id": "max-media-directive-safety",
+      "file": "patches/main-a1921c43c/076-max-media-directive-safety.patch",
+      "title_en": "MAX media directive safety",
+      "title_ru": "Безопасная обработка MAX media directives",
+      "description_en": "Prevents documented MEDIA examples and markdown code snippets from being treated as real attachments, and updates the MAX prompt hint to require MEDIA directives as plain lines with real local paths.",
+      "description_ru": "Не даёт документационным примерам MEDIA и markdown code snippets запускать отправку вложений, а также уточняет MAX prompt hint: MEDIA directives должны быть plain lines с реальными локальными путями.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-file-attachments"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "ae00dd81d28646548cec9fbdd42b55dbc38a98ca",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_platform_base.py::TestExtractMedia",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      }
+    },
+    {
+      "id": "max-markdown-formatting",
+      "file": "patches/main-a1921c43c/077-max-markdown-formatting.patch",
+      "title_en": "MAX markdown text formatting",
+      "title_ru": "Markdown formatting для сообщений MAX",
+      "description_en": "Defaults MAX outgoing text and captions to official markdown formatting, adds MAX_TEXT_FORMAT configuration, and updates the MAX prompt hint to use concise MAX-safe Markdown.",
+      "description_ru": "По умолчанию отправляет MAX text/captions с official markdown formatting, добавляет настройку MAX_TEXT_FORMAT и обновляет MAX prompt hint под аккуратный MAX-safe Markdown.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-media-directive-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_runtime": "396d8ed3b8582b9e151d7afb68cff0c9620d4193",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      }
+    }
+  ]
+}

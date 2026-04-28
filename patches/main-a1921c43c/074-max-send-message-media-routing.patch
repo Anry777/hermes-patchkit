@@ -1,0 +1,215 @@
+diff --git a/agent/prompt_builder.py b/agent/prompt_builder.py
+index c56c8af38afce9b9b415a903d1dfae47cb36afff..f8294c0a7c15aa9930dcbbf8b2fb0b07d44bc055 100644
+--- a/agent/prompt_builder.py
++++ b/agent/prompt_builder.py
+@@ -325,6 +325,7 @@ PLATFORM_HINTS = {
+         "Keep responses chat-friendly and concise. You can send image files natively: "
+         "include MEDIA:/absolute/path/to/file in your response. Images "
+         "(.png, .jpg, .jpeg, .gif, .webp) are uploaded and delivered as native photos. "
++        "Do not use SVG for MAX photo delivery; create or convert to a raster image first. "
+         "You can also include image URLs in markdown format ![alt](url) and they will "
+         "be downloaded safely, uploaded, and sent as native image attachments."
+     ),
+diff --git a/tests/gateway/test_max.py b/tests/gateway/test_max.py
+index 963295b97678118387eb54d2a38371a9dad02dcc..4dbb373d92d237aa0392fb15595a5b7bed04a813 100644
+--- a/tests/gateway/test_max.py
++++ b/tests/gateway/test_max.py
+@@ -11,7 +11,7 @@ import pytest
+ 
+ from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig, _apply_env_overrides
+ from gateway.platforms.base import MessageType
+-from tools.send_message_tool import _parse_target_ref, _send_to_platform
++from tools.send_message_tool import _parse_target_ref, _send_max, _send_to_platform
+ 
+ 
+ class FakeResponse:
+@@ -653,6 +653,7 @@ class TestMaxPromptHints:
+         assert "MEDIA:/absolute/path/to/file" in hint
+         assert "Images" in hint
+         assert "native" in hint
++        assert "SVG" in hint
+ 
+ 
+ class TestMaxSendMessageToolIntegration:
+@@ -675,3 +676,65 @@ class TestMaxSendMessageToolIntegration:
+         assert result["success"] is True
+         assert send.await_count == 2
+         assert all(len(call.args[2]) <= 4000 for call in send.await_args_list)
++
++    def test_send_to_platform_routes_max_media_to_native_sender(self, tmp_path):
++        image_path = tmp_path / "photo.png"
++        image_path.write_bytes(b"fake-png")
++        send = AsyncMock(return_value={"success": True, "platform": "max", "message_id": "1"})
++
++        with patch("tools.send_message_tool._send_max", send):
++            result = asyncio.run(
++                _send_to_platform(
++                    Platform.MAX,
++                    SimpleNamespace(enabled=True, token="max-token", extra={}),
++                    "777",
++                    "caption",
++                    media_files=[(str(image_path), False)],
++                )
++            )
++
++        assert result["success"] is True
++        assert "warnings" not in result
++        send.assert_awaited_once_with(
++            SimpleNamespace(enabled=True, token="max-token", extra={}),
++            "777",
++            "caption",
++            media_files=[(str(image_path), False)],
++        )
++
++    def test_send_max_native_image_media_uses_adapter_send_image_file(self, tmp_path):
++        image_path = tmp_path / "photo.png"
++        image_path.write_bytes(b"fake-png")
++        calls = []
++
++        class FakeMaxAdapter:
++            def __init__(self, pconfig):
++                self.pconfig = pconfig
++
++            async def send(self, chat_id, message):
++                raise AssertionError("text send should not be used for native image media")
++
++            async def send_image_file(self, chat_id, media_path, caption=None):
++                calls.append((chat_id, media_path, caption))
++                return SimpleNamespace(success=True, message_id="img-1", error=None)
++
++            async def disconnect(self):
++                calls.append(("disconnect",))
++
++        with patch("gateway.platforms.max.MaxAdapter", FakeMaxAdapter):
++            result = asyncio.run(
++                _send_max(
++                    SimpleNamespace(enabled=True, token="max-token", extra={}),
++                    "777",
++                    "caption",
++                    media_files=[(str(image_path), False)],
++                )
++            )
++
++        assert result == {
++            "success": True,
++            "platform": "max",
++            "chat_id": "777",
++            "message_id": "img-1",
++        }
++        assert calls == [("777", str(image_path), "caption"), ("disconnect",)]
+diff --git a/tools/send_message_tool.py b/tools/send_message_tool.py
+index b92ea52bfb216200ac8e6e550ed83036a5faa966..01ea04eb05c15cd77a9c428acd51a59ba37dfbe4 100644
+--- a/tools/send_message_tool.py
++++ b/tools/send_message_tool.py
+@@ -566,6 +566,22 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
+             last_result = result
+         return last_result
+ 
++    # --- MAX: native image attachment support through the gateway adapter ---
++    if platform == Platform.MAX and media_files:
++        last_result = None
++        for i, chunk in enumerate(chunks):
++            is_last = (i == len(chunks) - 1)
++            result = await _send_max(
++                pconfig,
++                chat_id,
++                chunk,
++                media_files=media_files if is_last else [],
++            )
++            if isinstance(result, dict) and result.get("error"):
++                return result
++            last_result = result
++        return last_result
++
+     # --- Non-media platforms ---
+     if media_files and not message.strip():
+         return {
+@@ -1500,24 +1516,77 @@ def _check_send_message():
+         return False
+ 
+ 
+-async def _send_max(pconfig, chat_id, message):
+-    """Send via MAX Bot API directly."""
++async def _send_max(pconfig, chat_id, message, media_files=None):
++    """Send via MAX Bot API directly, including native image MEDIA attachments."""
+     try:
+         from gateway.platforms.max import MaxAdapter
+     except ImportError as exc:
+         return _error(f"MAX direct send requires gateway.platforms.max: {exc}")
+ 
++    media_files = media_files or []
+     adapter = MaxAdapter(pconfig)
++    warnings = []
+     try:
+-        result = await adapter.send(chat_id, message)
+-        if result.success:
+-            return {
+-                "success": True,
+-                "platform": "max",
+-                "chat_id": chat_id,
+-                "message_id": result.message_id,
+-            }
+-        return _error(f"MAX send failed: {result.error or 'unknown error'}")
++        if not media_files:
++            result = await adapter.send(chat_id, message)
++            if result.success:
++                return {
++                    "success": True,
++                    "platform": "max",
++                    "chat_id": chat_id,
++                    "message_id": result.message_id,
++                }
++            return _error(f"MAX send failed: {result.error or 'unknown error'}")
++
++        last_result = None
++        caption = message.strip() or None
++        for media_path, _is_voice in media_files:
++            if not os.path.exists(media_path):
++                warning = f"Media file not found, skipping: {media_path}"
++                logger.warning(warning)
++                warnings.append(warning)
++                continue
++
++            ext = os.path.splitext(media_path)[1].lower()
++            if ext not in _IMAGE_EXTS:
++                warning = f"MAX MEDIA file type not supported, skipping: {media_path}"
++                logger.warning(warning)
++                warnings.append(warning)
++                continue
++
++            last_result = await adapter.send_image_file(chat_id, media_path, caption=caption)
++            caption = None
++            if not last_result.success:
++                return _error(f"MAX image send failed: {last_result.error or 'unknown error'}")
++
++        if last_result is None:
++            if message.strip():
++                result = await adapter.send(chat_id, message)
++                if not result.success:
++                    return _error(f"MAX send failed: {result.error or 'unknown error'}")
++                payload = {
++                    "success": True,
++                    "platform": "max",
++                    "chat_id": chat_id,
++                    "message_id": result.message_id,
++                }
++                if warnings:
++                    payload["warnings"] = warnings
++                return payload
++            error = "No deliverable text or MAX image media remained after processing MEDIA tags"
++            if warnings:
++                return {"error": error, "warnings": warnings}
++            return {"error": error}
++
++        payload = {
++            "success": True,
++            "platform": "max",
++            "chat_id": chat_id,
++            "message_id": last_result.message_id,
++        }
++        if warnings:
++            payload["warnings"] = warnings
++        return payload
+     except Exception as exc:
+         return _error(f"MAX send failed: {exc}")
+     finally:

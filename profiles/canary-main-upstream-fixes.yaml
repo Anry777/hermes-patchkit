@@ -1,0 +1,8 @@
+{
+  "name": "canary-main-upstream-fixes",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "codex-auxiliary-tool-role-flattening"
+  ]
+}

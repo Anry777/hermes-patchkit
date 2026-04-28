@@ -1,0 +1,407 @@
+diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
+index a472ddbcfc95c15f0afbd991305da0cd7d198f91..cc5f5e47bec441817e7080932c1783db4426e6cd 100644
+--- a/agent/auxiliary_client.py
++++ b/agent/auxiliary_client.py
+@@ -94,8 +94,7 @@ class _OpenAIProxy:
+ OpenAI = _OpenAIProxy()  # module-level name, resolves lazily on call/isinstance
+ 
+ from agent.credential_pool import load_pool
+-from hermes_cli.config import get_hermes_home
+-from hermes_constants import OPENROUTER_BASE_URL
++from hermes_constants import OPENROUTER_BASE_URL, resolve_auth_store_path
+ from utils import base_url_host_matches, base_url_hostname, normalize_proxy_env_vars
+ 
+ logger = logging.getLogger(__name__)
+@@ -259,8 +258,6 @@ _OPENROUTER_MODEL = "google/gemini-3-flash-preview"
+ _NOUS_MODEL = "google/gemini-3-flash-preview"
+ _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
+ _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+-_AUTH_JSON_PATH = get_hermes_home() / "auth.json"
+-
+ # Codex fallback: uses the Responses API (the only endpoint the Codex
+ # OAuth token can access) with a fast model for auxiliary tasks.
+ # ChatGPT-backed Codex accounts currently reject gpt-5.3-codex for these
+@@ -902,7 +899,7 @@ def _maybe_wrap_anthropic(
+ 
+ 
+ def _read_nous_auth() -> Optional[dict]:
+-    """Read and validate ~/.hermes/auth.json for an active Nous provider.
++    """Read and validate the effective Hermes auth store for Nous.
+ 
+     Returns the provider state dict if Nous is active with tokens,
+     otherwise None.
+@@ -924,9 +921,10 @@ def _read_nous_auth() -> Optional[dict]:
+         }
+ 
+     try:
+-        if not _AUTH_JSON_PATH.is_file():
++        auth_path = resolve_auth_store_path()
++        if not auth_path.is_file():
+             return None
+-        data = json.loads(_AUTH_JSON_PATH.read_text())
++        data = json.loads(auth_path.read_text())
+         if data.get("active_provider") != "nous":
+             return None
+         provider = data.get("providers", {}).get("nous", {})
+@@ -977,33 +975,30 @@ def _resolve_nous_runtime_api(*, force_refresh: bool = False) -> Optional[tuple[
+ 
+ 
+ def _read_codex_access_token() -> Optional[str]:
+-    """Read a valid, non-expired Codex OAuth access token from Hermes auth store.
++    """Read a valid, non-expired Codex OAuth access token.
+ 
+-    If a credential pool exists but currently has no selectable runtime entry
+-    (for example all pool slots are marked exhausted), fall back to the
+-    profile's auth.json token instead of hard-failing. This keeps explicit
+-    fallback-to-Codex working when the pool state is stale but the stored OAuth
+-    token is still valid.
++    Prefer the selected credential-pool entry. If no usable runtime entry is
++    available, fall back to the persisted Hermes auth store. The auth helpers
++    already resolve profile -> root-store fallback when needed.
+     """
+-    pool_present, entry = _select_pool_entry("openai-codex")
+-    if pool_present:
+-        token = _pool_runtime_api_key(entry)
+-        if token:
+-            return token
++    _pool_present, entry = _select_pool_entry("openai-codex")
++    token = _pool_runtime_api_key(entry)
+ 
+     try:
+-        from hermes_cli.auth import _read_codex_tokens
+-        data = _read_codex_tokens()
+-        tokens = data.get("tokens", {})
+-        access_token = tokens.get("access_token")
+-        if not isinstance(access_token, str) or not access_token.strip():
++        if not token:
++            from hermes_cli.auth import _read_codex_tokens
++
++            data = _read_codex_tokens()
++            tokens = data.get("tokens", {}) if isinstance(data, dict) else {}
++            token = str(tokens.get("access_token", "") or "").strip()
++        if not token:
+             return None
+ 
+         # Check JWT expiry — expired tokens block the auto chain and
+         # prevent fallback to working providers (e.g. Anthropic).
+         try:
+             import base64
+-            payload = access_token.split(".")[1]
++            payload = token.split(".")[1]
+             payload += "=" * (-len(payload) % 4)
+             claims = json.loads(base64.urlsafe_b64decode(payload))
+             exp = claims.get("exp", 0)
+@@ -1013,7 +1008,7 @@ def _read_codex_access_token() -> Optional[str]:
+         except Exception:
+             pass  # Non-JWT token or decode error — use as-is
+ 
+-        return access_token.strip()
++        return token.strip()
+     except Exception as exc:
+         logger.debug("Could not read Codex auth for auxiliary client: %s", exc)
+         return None
+diff --git a/hermes_cli/auth.py b/hermes_cli/auth.py
+index 61a5760dcb5849317eaaa9aed45a4b9b904f670e..c6412fea9e49875388359f367929dd07c5a351c3 100644
+--- a/hermes_cli/auth.py
++++ b/hermes_cli/auth.py
+@@ -42,7 +42,7 @@ import httpx
+ import yaml
+ 
+ from hermes_cli.config import get_hermes_home, get_config_path, read_raw_config
+-from hermes_constants import OPENROUTER_BASE_URL
++from hermes_constants import OPENROUTER_BASE_URL, resolve_auth_store_path
+ from utils import atomic_replace
+ 
+ logger = logging.getLogger(__name__)
+@@ -713,6 +713,16 @@ def _auth_file_path() -> Path:
+     return path
+ 
+ 
++def _auth_read_file_path() -> Path:
++    """Return the effective auth store path for reads.
++
++    Profiles read their own ``auth.json`` when present. If they do not have
++    one yet, fall back to the root/default auth store so profiles can reuse
++    the main login state without copying credentials up front.
++    """
++    return resolve_auth_store_path()
++
++
+ def _auth_lock_path() -> Path:
+     return _auth_file_path().with_suffix(".lock")
+ 
+@@ -778,7 +788,7 @@ def _auth_store_lock(timeout_seconds: float = AUTH_LOCK_TIMEOUT_SECONDS):
+ 
+ 
+ def _load_auth_store(auth_file: Optional[Path] = None) -> Dict[str, Any]:
+-    auth_file = auth_file or _auth_file_path()
++    auth_file = auth_file or _auth_read_file_path()
+     if not auth_file.exists():
+         return {"version": AUTH_STORE_VERSION, "providers": {}}
+ 
+diff --git a/hermes_cli/main.py b/hermes_cli/main.py
+index 2ec8e444811a036cb0fe5027babdaa550e5b767d..e0cadd4aebabce534f91f094c376eb31f0146dbd 100644
+--- a/hermes_cli/main.py
++++ b/hermes_cli/main.py
+@@ -306,7 +306,9 @@ def _has_any_provider_configured() -> bool:
+         pass
+ 
+     # Check for Nous Portal OAuth credentials
+-    auth_file = get_hermes_home() / "auth.json"
++    from hermes_constants import resolve_auth_store_path
++
++    auth_file = resolve_auth_store_path()
+     if auth_file.exists():
+         try:
+             import json
+diff --git a/hermes_constants.py b/hermes_constants.py
+index 35dbf86ab229545b15effa9b57fe09ca5977a367..104d4b38edb88fc467d13978100a33b7e380a0ed 100644
+--- a/hermes_constants.py
++++ b/hermes_constants.py
+@@ -233,6 +233,28 @@ def get_config_path() -> Path:
+     return get_hermes_home() / "config.yaml"
+ 
+ 
++def resolve_auth_store_path() -> Path:
++    """Return the effective ``auth.json`` path for reads.
++
++    In profile mode, prefer ``{HERMES_HOME}/auth.json`` when it exists.
++    If the active profile has no dedicated auth store yet, fall back to the
++    root/default auth store so profiles can reuse the main login.
++
++    Writes should still target ``get_hermes_home() / "auth.json"`` so a
++    profile can fork its own auth state the first time it mutates it.
++    """
++    current = get_hermes_home() / "auth.json"
++    if current.exists():
++        return current
++
++    default_root = get_default_hermes_root()
++    fallback = default_root / "auth.json"
++    if fallback != current and fallback.exists():
++        return fallback
++
++    return current
++
++
+ def get_skills_dir() -> Path:
+     """Return the path to the skills directory under HERMES_HOME."""
+     return get_hermes_home() / "skills"
+diff --git a/tests/agent/test_auxiliary_client.py b/tests/agent/test_auxiliary_client.py
+index fb23a59bc4b41f14278db267b70b3b342b180070..b93e57c75c435851c0524ad3637541ca5f545ad0 100644
+--- a/tests/agent/test_auxiliary_client.py
++++ b/tests/agent/test_auxiliary_client.py
+@@ -22,6 +22,7 @@ from agent.auxiliary_client import (
+     _normalize_aux_provider,
+     _try_payment_fallback,
+     _resolve_auto,
++    _read_nous_auth,
+ )
+ 
+ 
+@@ -204,6 +205,32 @@ class TestReadCodexAccessToken:
+         assert result == "plain-token-no-jwt"
+ 
+ 
++class TestReadNousAuth:
++    def test_falls_back_to_root_auth_when_profile_auth_missing(self, tmp_path, monkeypatch):
++        root_home = tmp_path / ".hermes"
++        profile_home = root_home / "profiles" / "coder"
++        profile_home.mkdir(parents=True, exist_ok=True)
++        (root_home / "auth.json").write_text(json.dumps({
++            "active_provider": "nous",
++            "providers": {
++                "nous": {
++                    "access_token": "root-fallback-token",
++                    "agent_key": "root-agent-key",
++                    "inference_base_url": "https://inference.example/v1",
++                }
++            },
++        }))
++        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
++        monkeypatch.setenv("HERMES_HOME", str(profile_home))
++
++        with patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
++            provider = _read_nous_auth()
++
++        assert provider is not None
++        assert provider["access_token"] == "root-fallback-token"
++        assert provider["agent_key"] == "root-agent-key"
++
++
+ class TestAnthropicOAuthFlag:
+     """Test that OAuth tokens get is_oauth=True in auxiliary Anthropic client."""
+ 
+diff --git a/tests/hermes_cli/test_auth_commands.py b/tests/hermes_cli/test_auth_commands.py
+index 23602c9f01b4f9a3afdc0d63b071411bb675cb29..190b851d90c6239ab4223b35b6ba1c3338af5159 100644
+--- a/tests/hermes_cli/test_auth_commands.py
++++ b/tests/hermes_cli/test_auth_commands.py
+@@ -60,6 +60,111 @@ def test_auth_add_api_key_persists_manual_entry(tmp_path, monkeypatch):
+     assert entry["access_token"] == "sk-or-manual"
+ 
+ 
++def test_load_auth_store_falls_back_to_root_when_profile_auth_missing(tmp_path, monkeypatch):
++    root_home = tmp_path / ".hermes"
++    profile_home = root_home / "profiles" / "coder"
++    profile_home.mkdir(parents=True, exist_ok=True)
++    (root_home / "auth.json").write_text(json.dumps({
++        "version": 1,
++        "active_provider": "nous",
++        "providers": {
++            "nous": {"access_token": "root-fallback-token"},
++        },
++    }))
++    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(profile_home))
++
++    from hermes_cli.auth import _load_auth_store
++
++    payload = _load_auth_store()
++    assert payload["active_provider"] == "nous"
++    assert payload["providers"]["nous"]["access_token"] == "root-fallback-token"
++
++
++def test_load_auth_store_keeps_two_profile_auth_stores_isolated(tmp_path, monkeypatch):
++    root_home = tmp_path / ".hermes"
++    profile_alpha = root_home / "profiles" / "alpha"
++    profile_beta = root_home / "profiles" / "beta"
++    profile_alpha.mkdir(parents=True, exist_ok=True)
++    profile_beta.mkdir(parents=True, exist_ok=True)
++    (profile_alpha / "auth.json").write_text(json.dumps({
++        "version": 1,
++        "active_provider": "nous",
++        "providers": {
++            "nous": {"access_token": "alpha-profile-token"},
++        },
++    }))
++    (profile_beta / "auth.json").write_text(json.dumps({
++        "version": 1,
++        "active_provider": "nous",
++        "providers": {
++            "nous": {"access_token": "beta-profile-token"},
++        },
++    }))
++    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
++
++    from hermes_cli.auth import _load_auth_store
++
++    monkeypatch.setenv("HERMES_HOME", str(profile_alpha))
++    alpha_payload = _load_auth_store()
++    assert alpha_payload["providers"]["nous"]["access_token"] == "alpha-profile-token"
++
++    monkeypatch.setenv("HERMES_HOME", str(profile_beta))
++    beta_payload = _load_auth_store()
++    assert beta_payload["providers"]["nous"]["access_token"] == "beta-profile-token"
++
++
++def test_profile_first_auth_write_forks_from_root_without_mutating_root(tmp_path, monkeypatch):
++    root_home = tmp_path / ".hermes"
++    profile_home = root_home / "profiles" / "coder"
++    profile_home.mkdir(parents=True, exist_ok=True)
++    root_payload = {
++        "version": 1,
++        "active_provider": "anthropic",
++        "providers": {
++            "anthropic": {"access_token": "root-anthropic-token"},
++        },
++        "credential_pool": {
++            "anthropic": [
++                {
++                    "id": "cred-1",
++                    "label": "root-cred",
++                    "auth_type": "oauth",
++                    "priority": 0,
++                    "source": "manual:hermes_pkce",
++                    "access_token": "root-anthropic-pool-token",
++                }
++            ],
++            "openrouter": [
++                {
++                    "id": "cred-2",
++                    "label": "shared-other-provider",
++                    "auth_type": "api_key",
++                    "priority": 0,
++                    "source": "manual",
++                    "access_token": "root-openrouter-token",
++                }
++            ],
++        },
++    }
++    (root_home / "auth.json").write_text(json.dumps(root_payload, indent=2))
++    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(profile_home))
++
++    from hermes_cli.auth import clear_provider_auth
++
++    assert clear_provider_auth("anthropic") is True
++
++    profile_payload = json.loads((profile_home / "auth.json").read_text())
++    assert profile_payload["active_provider"] is None
++    assert "anthropic" not in profile_payload.get("providers", {})
++    assert "anthropic" not in profile_payload.get("credential_pool", {})
++    assert "openrouter" in profile_payload.get("credential_pool", {})
++
++    root_after = json.loads((root_home / "auth.json").read_text())
++    assert root_after == root_payload
++
++
+ def test_auth_add_anthropic_oauth_persists_pool_entry(tmp_path, monkeypatch):
+     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+diff --git a/tests/tools/test_web_tools_config.py b/tests/tools/test_web_tools_config.py
+index 25ef647f7c0d50bc3ab69c4f5934a2b2172c7c82..a7fb9164afd32671cc77f9b0645d902f465baad2 100644
+--- a/tests/tools/test_web_tools_config.py
++++ b/tests/tools/test_web_tools_config.py
+@@ -160,6 +160,28 @@ class TestFirecrawlClientConfig:
+             importlib.reload(tools.web_tools)
+             assert tools.web_tools._read_nous_access_token() == "nous-token"
+ 
++    def test_nous_auth_token_falls_back_to_root_auth_when_profile_missing(self, tmp_path):
++        """Profiles without auth.json should reuse the root/default auth store."""
++        root_home = tmp_path / ".hermes"
++        profile_home = root_home / "profiles" / "coder"
++        profile_home.mkdir(parents=True, exist_ok=True)
++        (root_home / "auth.json").write_text(json.dumps({
++            "active_provider": "nous",
++            "providers": {
++                "nous": {
++                    "access_token": "root-fallback-token",
++                    "expires_at": "2999-01-01T00:00:00Z",
++                }
++            }
++        }))
++
++        with patch("pathlib.Path.home", return_value=tmp_path), patch.dict(os.environ, {
++            "HERMES_HOME": str(profile_home),
++        }, clear=False):
++            import tools.web_tools
++            importlib.reload(tools.web_tools)
++            assert tools.web_tools._read_nous_access_token() == "root-fallback-token"
++
+     def test_check_auxiliary_model_re_resolves_backend_each_call(self):
+         """Availability checks should not be pinned to module import state."""
+         import tools.web_tools
+diff --git a/tools/managed_tool_gateway.py b/tools/managed_tool_gateway.py
+index cd27537fde2da04eaad88b78a765bf0c1f3d6202..06bf9100fd488750e0769fa74fa4ef65996ac74f 100644
+--- a/tools/managed_tool_gateway.py
++++ b/tools/managed_tool_gateway.py
+@@ -11,7 +11,7 @@ from typing import Callable, Optional
+ 
+ logger = logging.getLogger(__name__)
+ 
+-from hermes_constants import get_hermes_home
++from hermes_constants import resolve_auth_store_path
+ from tools.tool_backend_helpers import managed_nous_tools_enabled
+ 
+ _DEFAULT_TOOL_GATEWAY_DOMAIN = "nousresearch.com"
+@@ -28,8 +28,8 @@ class ManagedToolGatewayConfig:
+ 
+ 
+ def auth_json_path():
+-    """Return the Hermes auth store path, respecting HERMES_HOME overrides."""
+-    return get_hermes_home() / "auth.json"
++    """Return the effective Hermes auth store path for reads."""
++    return resolve_auth_store_path()
+ 
+ 
+ def _read_nous_provider_state() -> Optional[dict]:
