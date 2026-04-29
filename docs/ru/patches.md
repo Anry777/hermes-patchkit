@@ -27,7 +27,9 @@
 
 ### `080-api-server-provider-proxy`
 
-`080` превращает API Server в opt-in provider gateway, если включить `mode: provider_proxy` и задать allowlist `provider_proxy.models`. В этом режиме:
+Это сейчас флагманский feature patch в PatchKit. Это не очередная настройка “запусти того же Hermes agent на другой модели”. Patch добавляет отдельный режим API Server для случая, когда нужен стандартный OpenAI-compatible endpoint поверх нескольких provider models.
+
+Upstream Hermes сегодня не даёт такого разделения provider gateway и agent endpoint: его API Server path завязан на работающий Hermes agent/profile. `080` добавляет недостающую границу. Если включить `mode: provider_proxy` и задать allowlist `provider_proxy.models`, сервер становится catalog-routed provider proxy. В этом режиме:
 
 - `/v1/models` возвращает только configured public model IDs;
 - `/v1/chat/completions` маршрутизирует запрос по `body.model` к configured provider/model target;
@@ -36,7 +38,7 @@
 - `openai-codex` / Responses provider'ы идут через compatibility adapter;
 - streaming, `/v1/responses` и `/v1/runs` fail-closed до отдельных follow-up patch'ей.
 
-Если нужен только этот patch, используй отдельный profile:
+Если нужен только provider gateway patch, используй отдельный profile:
 
 ```bash
 python3 scripts/apply.py \

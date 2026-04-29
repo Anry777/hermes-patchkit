@@ -29,6 +29,7 @@ The format follows Keep a Changelog.
 - unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed
+- README/README.ru and patch catalog docs now position `080-api-server-provider-proxy` as the featured provider gateway patch, with first-screen install commands and a clearer agent-endpoint vs provider-proxy distinction
 - README/README.ru now link to the patch catalog instead of duplicating the patch list inline
 - removed unsupported placeholder patch ideas from manifests, profiles and patch files
 - README and update workflow docs now lead with the one-command update/TUI flow instead of maintainer-only manual steps

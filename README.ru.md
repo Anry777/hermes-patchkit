@@ -1,9 +1,29 @@
 # Hermes PatchKit
 
+Оставь official Hermes upstream базой. Нужные фиксы и фичи держи отдельными patch'ами.
+
 Ты пропатчил Hermes. Upstream обновился. Что теперь?
 
 Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
 Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
+
+## Главный patch сейчас: Provider Proxy Gateway
+
+`080-api-server-provider-proxy` — самый сильный patch в текущем наборе. Upstream Hermes API Server работает как agent endpoint, привязанный к профилю и его модели. PatchKit добавляет отдельный opt-in режим для другой задачи: один OpenAI-compatible gateway поверх explicit catalog моделей провайдера.
+
+В режиме `provider_proxy` `/v1/models` показывает только allowlisted model IDs, а `/v1/chat/completions` маршрутизирует запрос по `body.model` к настроенному provider/model target. Hermes не создаёт `AIAgent` для этих запросов: между клиентом и provider'ом нет SOUL prompt, tools, memory, sessions и agent run state. Для `openai-codex` patch держит OpenAI-compatible поверхность, а внутри использует Responses compatibility path.
+
+Если нужен локальный Hermes-hosted endpoint, который фронтит несколько provider models через стандартный OpenAI-compatible API, начинать нужно с этого patch'а.
+
+```bash
+python3 scripts/apply.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/provider-proxy.yaml \
+  --yes
+```
+
+## Безопасная проверка upstream
 
 ```bash
 python3 scripts/tui.py \
@@ -68,7 +88,7 @@ PatchKit возвращает эту границу:
 
 Свежие заметные patch'и:
 
-- `080-api-server-provider-proxy` — opt-in provider proxy для OpenAI-compatible API Server: `/v1/models` показывает explicit catalog, а `/v1/chat/completions` маршрутизирует запросы к configured provider/model без создания Hermes `AIAgent`.
+- `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов.
 - `070`–`077` — MAX local-overlay chain: от webhook-first text MVP до native images/files и Markdown formatting.
 
 ## Быстрый старт

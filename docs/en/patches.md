@@ -27,7 +27,9 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 
 ### `080-api-server-provider-proxy`
 
-`080` turns the API Server into an opt-in provider gateway when configured with `mode: provider_proxy` and a `provider_proxy.models` allowlist. In that mode:
+This is the current flagship PatchKit feature patch. It is not another “run the same Hermes agent on a different model” tweak. It adds a separate API Server mode for users who want Hermes to expose a standard OpenAI-compatible endpoint backed by multiple provider models.
+
+Upstream Hermes does not provide this provider-gateway split today: its API Server path is built around the running Hermes agent/profile. `080` adds the missing boundary. When configured with `mode: provider_proxy` and a `provider_proxy.models` allowlist, the server becomes a catalog-routed provider proxy. In that mode:
 
 - `/v1/models` returns only the configured public model IDs;
 - `/v1/chat/completions` routes by `body.model` to the configured provider/model target;
@@ -36,7 +38,7 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 - `openai-codex` / Responses providers use a compatibility adapter;
 - streaming, `/v1/responses`, and `/v1/runs` fail closed until separate patches add those surfaces.
 
-Use the dedicated profile when you only want this patch:
+Use the dedicated profile when you want to install just this provider gateway patch:
 
 ```bash
 python3 scripts/apply.py \

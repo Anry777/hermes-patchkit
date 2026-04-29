@@ -1,9 +1,29 @@
 # Hermes PatchKit
 
+Keep official Hermes upstream. Carry the fixes and feature patches you actually need.
+
 You patched Hermes. Upstream moved. Now what?
 
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
+
+## Featured patch: Provider Proxy Gateway
+
+`080-api-server-provider-proxy` is the big one right now. Upstream Hermes API Server behaves like an agent endpoint tied to the running profile/model. PatchKit adds a separate opt-in mode for a different job: one OpenAI-compatible gateway backed by an explicit catalog of provider models.
+
+In `provider_proxy` mode, `/v1/models` exposes only the allowlisted model IDs, and `/v1/chat/completions` routes by `body.model` to the configured provider/model target. Hermes does not create an `AIAgent` for these calls, so there is no SOUL prompt, tools, memory, sessions, or agent run state in the middle. For `openai-codex`, the patch uses a Responses compatibility path behind the OpenAI-compatible surface.
+
+If you want a local Hermes-hosted endpoint that can front multiple provider models, this is the patch to try first.
+
+```bash
+python3 scripts/apply.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/provider-proxy.yaml \
+  --yes
+```
+
+## Safe upstream check
 
 ```bash
 python3 scripts/tui.py \
@@ -68,7 +88,7 @@ This repository is still early, but it now has a working safety loop:
 
 Recent patch highlights:
 
-- `080-api-server-provider-proxy` — an opt-in OpenAI-compatible API Server provider proxy: `/v1/models` exposes an explicit catalog, and `/v1/chat/completions` routes to configured provider/model targets without creating a Hermes `AIAgent`.
+- `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls.
 - `070`–`077` — the MAX local-overlay chain, from webhook-first text MVP through native images/files and Markdown formatting.
 
 ## Quick start
