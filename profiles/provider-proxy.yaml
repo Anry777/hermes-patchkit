@@ -1,0 +1,6 @@
+{
+  "name": "provider-proxy",
+  "patches": [
+    "api-server-provider-proxy"
+  ]
+}

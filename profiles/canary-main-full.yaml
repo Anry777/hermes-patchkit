@@ -11,6 +11,7 @@
     "max-send-message-media-routing",
     "max-gateway-file-attachments",
     "max-media-directive-safety",
-    "max-markdown-formatting"
+    "max-markdown-formatting",
+    "api-server-provider-proxy"
   ]
 }

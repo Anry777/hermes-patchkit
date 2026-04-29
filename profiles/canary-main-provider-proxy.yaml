@@ -1,0 +1,6 @@
+{
+  "name": "canary-main-provider-proxy",
+  "patches": [
+    "api-server-provider-proxy"
+  ]
+}
