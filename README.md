@@ -66,6 +66,11 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/verify.py` — repo self-checks;
 - maintained patch and feature catalog: [docs/en/patches.md](docs/en/patches.md).
 
+Recent patch highlights:
+
+- `080-api-server-provider-proxy` — an opt-in OpenAI-compatible API Server provider proxy: `/v1/models` exposes an explicit catalog, and `/v1/chat/completions` routes to configured provider/model targets without creating a Hermes `AIAgent`.
+- `070`–`077` — the MAX local-overlay chain, from webhook-first text MVP through native images/files and Markdown formatting.
+
 ## Quick start
 
 ```bash

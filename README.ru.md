@@ -66,6 +66,11 @@ PatchKit возвращает эту границу:
 - `scripts/verify.py` — self-check репозитория;
 - поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md).
 
+Свежие заметные patch'и:
+
+- `080-api-server-provider-proxy` — opt-in provider proxy для OpenAI-compatible API Server: `/v1/models` показывает explicit catalog, а `/v1/chat/completions` маршрутизирует запросы к configured provider/model без создания Hermes `AIAgent`.
+- `070`–`077` — MAX local-overlay chain: от webhook-first text MVP до native images/files и Markdown formatting.
+
 ## Быстрый старт
 
 ```bash

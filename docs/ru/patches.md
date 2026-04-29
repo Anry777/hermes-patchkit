@@ -23,6 +23,31 @@
 | `077-max-markdown-formatting` | exported | Делает исходящие MAX-сообщения менее плоскими: text и captions по умолчанию уходят с official MAX Markdown formatting. | Зависит от `076-max-media-directive-safety`. Добавляет настройку `MAX_TEXT_FORMAT` (`markdown`, `html` или invalid/disabled values для отправки без formatting metadata), сохраняет explicit per-message metadata overrides и обновляет MAX prompt hint под аккуратный MAX-safe Markdown без code block вокруг `MEDIA:` lines. Fresh runtime live sends подтвердили, что MAX рендерит и Markdown, и HTML; если raw Markdown появится снова, сначала перезапустить gateway/tool process, а не менять payload logic. |
 | `080-api-server-provider-proxy` | exported | Добавляет opt-in `provider_proxy` mode для OpenAI-compatible API Server: `/v1/models` отдаёт explicit catalog, а `/v1/chat/completions` маршрутизирует запросы к configured provider/model без создания `AIAgent`. | Generic upstream-candidate patch. Поддерживает non-streaming Chat Completions passthrough для OpenAI-compatible provider'ов и compatibility path для `openai-codex`/Responses; streaming, `/v1/responses` и `/v1/runs` fail-closed как unsupported operation. |
 
+## Заметные patch'и
+
+### `080-api-server-provider-proxy`
+
+`080` превращает API Server в opt-in provider gateway, если включить `mode: provider_proxy` и задать allowlist `provider_proxy.models`. В этом режиме:
+
+- `/v1/models` возвращает только configured public model IDs;
+- `/v1/chat/completions` маршрутизирует запрос по `body.model` к configured provider/model target;
+- Hermes обходит `AIAgent`, поэтому нет Hermes tools, memory, sessions, SOUL/context injection и agent run semantics;
+- OpenAI-compatible provider'ы идут через non-streaming Chat Completions passthrough;
+- `openai-codex` / Responses provider'ы идут через compatibility adapter;
+- streaming, `/v1/responses` и `/v1/runs` fail-closed до отдельных follow-up patch'ей.
+
+Если нужен только этот patch, используй отдельный profile:
+
+```bash
+python3 scripts/apply.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/provider-proxy.yaml \
+  --yes
+```
+
+Для canary/main — `manifests/canary-main-a1921c43c.yaml` и `profiles/canary-main-provider-proxy.yaml`.
+
 ## Workflow-фичи
 
 | Фича | Entry point | Статус |

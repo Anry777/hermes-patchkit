@@ -23,6 +23,31 @@ Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.p
 | `077-max-markdown-formatting` | exported | Makes outgoing MAX text less flat by sending text and captions with official MAX Markdown formatting by default. | Depends on `076-max-media-directive-safety`. Adds configurable `MAX_TEXT_FORMAT` (`markdown`, `html`, or invalid/disabled values to omit formatting metadata), preserves explicit per-message metadata overrides, and updates the MAX prompt hint to use concise MAX-safe Markdown without wrapping `MEDIA:` lines in code blocks. Fresh runtime live sends confirmed that MAX renders both Markdown and HTML formatting; if raw Markdown appears again, restart the gateway/tool process before changing payload logic. |
 | `080-api-server-provider-proxy` | exported | Adds an opt-in `provider_proxy` mode to the OpenAI-compatible API Server: `/v1/models` returns an explicit catalog and `/v1/chat/completions` routes to configured provider/model targets without creating an `AIAgent`. | Generic upstream-candidate patch. Supports non-streaming Chat Completions passthrough for OpenAI-compatible providers and a compatibility path for `openai-codex`/Responses; streaming, `/v1/responses`, and `/v1/runs` fail closed as unsupported operations. |
 
+## Patch highlights
+
+### `080-api-server-provider-proxy`
+
+`080` turns the API Server into an opt-in provider gateway when configured with `mode: provider_proxy` and a `provider_proxy.models` allowlist. In that mode:
+
+- `/v1/models` returns only the configured public model IDs;
+- `/v1/chat/completions` routes by `body.model` to the configured provider/model target;
+- Hermes bypasses `AIAgent`, so there are no Hermes tools, memory, sessions, SOUL/context injection, or agent run semantics;
+- OpenAI-compatible providers use a non-streaming Chat Completions passthrough;
+- `openai-codex` / Responses providers use a compatibility adapter;
+- streaming, `/v1/responses`, and `/v1/runs` fail closed until separate patches add those surfaces.
+
+Use the dedicated profile when you only want this patch:
+
+```bash
+python3 scripts/apply.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23.yaml \
+  --profile profiles/provider-proxy.yaml \
+  --yes
+```
+
+Canary/main users should use `manifests/canary-main-a1921c43c.yaml` with `profiles/canary-main-provider-proxy.yaml`.
+
 ## Workflow features
 
 | Feature | Entry point | Status |
