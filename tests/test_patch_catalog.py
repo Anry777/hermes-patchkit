@@ -1,5 +1,10 @@
 import json
+import subprocess
+import sys
+import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
@@ -97,6 +102,8 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("render-config", script_text)
         self.assertIn("write-profile", script_text)
         self.assertIn("doctor", script_text)
+        self.assertIn("list-models", script_text)
+        self.assertIn("sync-models", script_text)
         self.assertIn("provider_proxy", script_text)
 
         doc_en = GROK2API_DOC_EN.read_text(encoding="utf-8")
@@ -114,6 +121,79 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("MIT License", notice)
         self.assertIn("ghcr.io/chenyme/grok2api:latest", compose)
         self.assertIn("127.0.0.1:8000", compose)
+
+    def test_grok2api_sync_models_discovers_and_filters_chat_catalog(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/v1/models":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                payload = {
+                    "object": "list",
+                    "data": [
+                        {"id": "grok-4.20-fast"},
+                        {"id": "grok-4.20-auto"},
+                        {"id": "grok-imagine-image"},
+                        {"id": "grok-imagine-video"},
+                    ],
+                }
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                profile_dir = Path(tmpdir) / "provider-proxy-grok2api"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(GROK2API_SCRIPT),
+                        "sync-models",
+                        "--base-url",
+                        f"http://127.0.0.1:{server.server_port}/v1",
+                        "--profile-dir",
+                        str(profile_dir),
+                        "--write",
+                    ],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                config_text = (profile_dir / "config.yaml").read_text(encoding="utf-8")
+                self.assertIn('id: "grok2api/grok-4.20-fast"', config_text)
+                self.assertIn('model: "grok-4.20-auto"', config_text)
+                self.assertNotIn("grok-imagine-image", config_text)
+                self.assertNotIn("grok-imagine-video", config_text)
+                self.assertIn("dry-run", subprocess.run(
+                    [
+                        sys.executable,
+                        str(GROK2API_SCRIPT),
+                        "sync-models",
+                        "--base-url",
+                        f"http://127.0.0.1:{server.server_port}/v1",
+                    ],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                ).stdout)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

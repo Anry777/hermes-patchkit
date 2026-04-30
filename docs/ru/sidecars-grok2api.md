@@ -72,6 +72,40 @@ API_SERVER_KEY=<Bearer key для клиентов Hermes API Server>
 
 Bridge использует `provider: openai` плюс `base_url: http://127.0.0.1:8000/v1`, поэтому provider_proxy path разговаривает с grok2api как с OpenAI-compatible endpoint.
 
+## Автоматически синхронизировать catalog моделей
+
+Когда grok2api уже запущен, model ids не нужно переносить руками. Helper может спросить у sidecar `/v1/models` и сгенерировать Hermes provider_proxy allowlist из ответа:
+
+```bash
+OPENAI_API_KEY=*** \
+python3 scripts/grok2api_bridge.py sync-models \
+  --profile-dir ~/.hermes/profiles/provider-proxy-grok2api \
+  --base-url http://127.0.0.1:8000/v1
+```
+
+Без `--write` это dry run: команда показывает найденные sidecar ids, отфильтрованные public ids, которые Hermes будет показывать наружу, и generated config. Default filter намеренно chat-only: include `^grok-`, exclude `imagine`, `image`, `video`, `edit`, потому что текущий provider_proxy patch обслуживает `/v1/chat/completions`, а не image/video endpoints grok2api.
+
+После проверки dry run можно записать dedicated profile config:
+
+```bash
+OPENAI_API_KEY=*** \
+python3 scripts/grok2api_bridge.py sync-models \
+  --profile-dir ~/.hermes/profiles/provider-proxy-grok2api \
+  --base-url http://127.0.0.1:8000/v1 \
+  --write \
+  --backup
+```
+
+Public ids по умолчанию получают prefix, например `grok2api/grok-4.20-auto` мапится на internal sidecar model `grok-4.20-auto`. Посмотреть raw sidecar ids без записи config можно так:
+
+```bash
+OPENAI_API_KEY=*** \
+python3 scripts/grok2api_bridge.py list-models \
+  --base-url http://127.0.0.1:8000/v1
+```
+
+Если catalog в grok2api поменялся, повтори `sync-models --write --backup` и перезапусти Hermes gateway для этого profile.
+
 ## Doctor checks
 
 Проверить только catalog endpoint:

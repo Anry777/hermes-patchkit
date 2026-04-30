@@ -89,7 +89,7 @@ PatchKit возвращает эту границу:
 
 Свежие заметные patch'и:
 
-- Grok2API sidecar bridge — protocol-level интеграция: grok2api остаётся снаружи Hermes, а наружу его выводит `080` provider_proxy gateway. См. [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md).
+- Grok2API sidecar bridge — protocol-level интеграция: grok2api остаётся снаружи Hermes, а наружу его выводит `080` provider_proxy gateway, включая автоматическую синхронизацию `/v1/models` → Hermes catalog. См. [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md).
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов.
 - `070`–`077` — MAX local-overlay chain: от webhook-first text MVP до native images/files и Markdown formatting.
 

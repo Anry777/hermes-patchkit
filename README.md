@@ -89,7 +89,7 @@ This repository is still early, but it now has a working safety loop:
 
 Recent patch highlights:
 
-- Grok2API sidecar bridge — a protocol-level integration that keeps grok2api outside Hermes while exposing it through the `080` provider_proxy gateway. See [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md).
+- Grok2API sidecar bridge — a protocol-level integration that keeps grok2api outside Hermes while exposing it through the `080` provider_proxy gateway, including automatic `/v1/models` → Hermes catalog sync. See [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md).
 - `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls.
 - `070`–`077` — the MAX local-overlay chain, from webhook-first text MVP through native images/files and Markdown formatting.
 
