@@ -1,0 +1,23 @@
+# Example local sidecar. Keep it bound to loopback unless you put it behind your own auth/proxy layer.
+services:
+  grok2api:
+    image: ${GROK2API_IMAGE:-ghcr.io/chenyme/grok2api:latest}
+    container_name: grok2api-sidecar
+    restart: unless-stopped
+    ports:
+      - "${GROK2API_BIND:-127.0.0.1:8000}:8000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      SERVER_WORKERS: ${SERVER_WORKERS:-1}
+      DATA_DIR: /app/data
+      LOG_DIR: /app/logs
+      ACCOUNT_STORAGE: ${ACCOUNT_STORAGE:-local}
+      ACCOUNT_LOCAL_PATH: /app/data/accounts.db
+      # Set runtime app.api_key/admin settings in grok2api's own config.toml after first start.
+      # Do not expose this container directly to the public internet.
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

@@ -84,10 +84,12 @@ PatchKit возвращает эту границу:
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
+- `scripts/grok2api_bridge.py` — helper для dedicated Grok2API sidecar bridge поверх provider_proxy mode;
 - поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md).
 
 Свежие заметные patch'и:
 
+- Grok2API sidecar bridge — protocol-level интеграция: grok2api остаётся снаружи Hermes, а наружу его выводит `080` provider_proxy gateway. См. [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md).
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов.
 - `070`–`077` — MAX local-overlay chain: от webhook-first text MVP до native images/files и Markdown formatting.
 
@@ -169,6 +171,7 @@ hermes-patchkit/
 
 - список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md)
 - English README: [README.md](README.md)
+- Grok2API sidecar bridge: [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md)
 - update workflow: [docs/ru/update-workflow.md](docs/ru/update-workflow.md)
 - rollback: [docs/ru/rollback.md](docs/ru/rollback.md)
 - roadmap: [ROADMAP.md](ROADMAP.md)

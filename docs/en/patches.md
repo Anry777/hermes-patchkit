@@ -50,6 +50,10 @@ python3 scripts/apply.py \
 
 Canary/main users should use `manifests/canary-main-a1921c43c.yaml` with `profiles/canary-main-provider-proxy.yaml`.
 
+### Grok2API sidecar bridge
+
+The first provider_proxy sidecar pack is documented in [sidecars-grok2api.md](sidecars-grok2api.md). It keeps grok2api deployed separately, adds PatchKit profiles that select only `080`, ships loopback Docker Compose/config examples, and provides `scripts/grok2api_bridge.py` for config rendering and endpoint smoke checks. This is intentionally an explicit sidecar integration, not a vendored Grok provider and not part of default profiles.
+
 ## Workflow features
 
 | Feature | Entry point | Status |
@@ -60,6 +64,7 @@ Canary/main users should use `manifests/canary-main-a1921c43c.yaml` with `profil
 | Patch/profile apply with backup state | `scripts/apply.py` | working for exported patches |
 | Rollback of PatchKit apply | `scripts/rollback.py` | working with regression coverage for tracked, untracked and ignored cleanup cases |
 | Repository self-check | `scripts/verify.py --self-check` | working |
+| Grok2API sidecar bridge helper | `scripts/grok2api_bridge.py` | working helper/docs layer over `080-api-server-provider-proxy` |
 
 ## Status meanings
 

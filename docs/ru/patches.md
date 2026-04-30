@@ -50,6 +50,10 @@ python3 scripts/apply.py \
 
 Для canary/main — `manifests/canary-main-a1921c43c.yaml` и `profiles/canary-main-provider-proxy.yaml`.
 
+### Grok2API sidecar bridge
+
+Первый sidecar pack поверх provider_proxy описан в [sidecars-grok2api.md](sidecars-grok2api.md). grok2api остаётся отдельным сервисом, PatchKit добавляет profiles, которые выбирают только `080`, кладёт loopback Docker Compose/config examples и даёт `scripts/grok2api_bridge.py` для render config и smoke checks endpoint'а. Это явно sidecar integration, не vendored Grok provider и не часть default profiles.
+
 ## Workflow-фичи
 
 | Фича | Entry point | Статус |
@@ -60,6 +64,7 @@ python3 scripts/apply.py \
 | Apply patch/profile с backup state | `scripts/apply.py` | работает для exported patches |
 | Rollback PatchKit apply | `scripts/rollback.py` | работает; есть regression coverage для tracked, untracked и ignored cleanup cases |
 | Self-check репозитория | `scripts/verify.py --self-check` | работает |
+| Grok2API sidecar bridge helper | `scripts/grok2api_bridge.py` | working helper/docs layer поверх `080-api-server-provider-proxy` |
 
 ## Что значат статусы
 

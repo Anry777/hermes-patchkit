@@ -1,0 +1,24 @@
+# Example Hermes profile config for connecting provider_proxy mode to a local grok2api sidecar.
+# Install patch 080 first through profiles/grok2api-sidecar.yaml, then place this file at:
+#   ~/.hermes/profiles/provider-proxy-grok2api/config.yaml
+# Put sidecar/client keys in that profile's .env, not in this file.
+
+platforms:
+  api_server:
+    enabled: true
+    host: 127.0.0.1
+    port: 8642
+
+extra:
+  mode: provider_proxy
+  provider_proxy:
+    enabled: true
+    require_explicit_model: true
+    allow_streaming: false
+    models:
+      - id: grok2api/grok-3
+        provider: openai
+        model: grok-3
+        base_url: http://127.0.0.1:8000/v1
+        api_mode: chat_completions
+        owned_by: grok2api

@@ -1,0 +1,6 @@
+{
+  "name": "canary-main-grok2api-sidecar",
+  "patches": [
+    "api-server-provider-proxy"
+  ]
+}

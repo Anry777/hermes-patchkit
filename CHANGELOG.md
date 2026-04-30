@@ -11,6 +11,7 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- Grok2API sidecar bridge pack on top of `080-api-server-provider-proxy`: dedicated profiles, EN/RU docs, loopback Docker Compose/config examples, third-party MIT notice, and `scripts/grok2api_bridge.py` for config rendering/profile skeletons/endpoint doctor checks
 - real exported upstream-candidate patch `080-api-server-provider-proxy`, adding an opt-in `provider_proxy` mode for the OpenAI-compatible API Server with explicit model catalog routing, OpenAI-compatible Chat Completions passthrough, Codex Responses compatibility, and fail-closed unsupported endpoints
 - real exported local-overlay patch `077-max-markdown-formatting`, defaulting MAX outgoing text/captions to official Markdown formatting with `MAX_TEXT_FORMAT` configuration, MAX-safe Markdown prompt guidance, and live MAX Markdown/HTML rendering confirmation from fresh runtime sends
 - real exported local-overlay patch `076-max-media-directive-safety`, preventing MAX `MEDIA:` documentation examples, placeholder paths, inline code, and fenced code blocks from being misrouted as native attachments

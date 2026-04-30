@@ -84,10 +84,12 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/apply.py` — apply a profile or explicit patch list with backup state;
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
+- `scripts/grok2api_bridge.py` — helper for a dedicated Grok2API sidecar bridge on top of provider_proxy mode;
 - maintained patch and feature catalog: [docs/en/patches.md](docs/en/patches.md).
 
 Recent patch highlights:
 
+- Grok2API sidecar bridge — a protocol-level integration that keeps grok2api outside Hermes while exposing it through the `080` provider_proxy gateway. See [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md).
 - `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls.
 - `070`–`077` — the MAX local-overlay chain, from webhook-first text MVP through native images/files and Markdown formatting.
 
@@ -169,6 +171,7 @@ hermes-patchkit/
 
 - patch catalog and features: [docs/en/patches.md](docs/en/patches.md)
 - Russian README: [README.ru.md](README.ru.md)
+- Grok2API sidecar bridge: [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md)
 - update workflow: [docs/en/update-workflow.md](docs/en/update-workflow.md)
 - rollback: [docs/en/rollback.md](docs/en/rollback.md)
 - roadmap: [ROADMAP.md](ROADMAP.md)
