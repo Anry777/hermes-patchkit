@@ -7,6 +7,8 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
+Latest news: the Grok2API sidecar bridge can now expose selected Grok-style chat models through Hermes Provider Proxy, with safe `/v1/models` discovery into an explicit allowlist. See [NEWS.md](NEWS.md).
+
 ## Featured patch: Provider Proxy Gateway
 
 `080-api-server-provider-proxy` is the big one right now. Upstream Hermes API Server behaves like an agent endpoint tied to the running profile/model. PatchKit adds a separate opt-in mode for a different job: one OpenAI-compatible gateway backed by an explicit catalog of provider models.

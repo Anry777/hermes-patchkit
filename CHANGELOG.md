@@ -31,6 +31,7 @@ The format follows Keep a Changelog.
 - unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed
+- added `NEWS.md` and first-screen README links for the Grok2API sidecar bridge announcement, with a more public-facing summary of provider_proxy + safe model discovery
 - README/README.ru and patch catalog docs now position `080-api-server-provider-proxy` as the featured provider gateway patch, with first-screen install commands and a clearer agent-endpoint vs provider-proxy distinction
 - README/README.ru now link to the patch catalog instead of duplicating the patch list inline
 - removed unsupported placeholder patch ideas from manifests, profiles and patch files
