@@ -4,6 +4,7 @@
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
     "credential-pool-recovery",
+    "telegram-free-response-target-gating",
     "max-gateway-text-mvp",
     "max-gateway-image-input",
     "max-gateway-oneme-url-safety",

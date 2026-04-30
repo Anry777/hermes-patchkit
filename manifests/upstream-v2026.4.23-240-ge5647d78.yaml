@@ -83,6 +83,28 @@
       }
     },
     {
+      "id": "telegram-free-response-target-gating",
+      "file": "patches/040-telegram-free-response-target-gating.patch",
+      "title_en": "Telegram free-response target gating",
+      "title_ru": "Target gating для Telegram free-response групп",
+      "description_en": "Prevents Telegram free-response group chats from hijacking messages explicitly addressed to another bot or user.",
+      "description_ru": "Не даёт Telegram free-response группам перехватывать сообщения, явно адресованные другому боту или пользователю.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "38b9de257",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_group_gating.py",
+          "tests/gateway/test_telegram_mention_boundaries.py"
+        ]
+      }
+    },
+    {
       "id": "codex-memory-flush-responses-contract",
       "file": "patches/060-codex-memory-flush-responses-contract.patch",
       "title_en": "Keep Codex flush fallback on the Responses transport contract",

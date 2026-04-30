@@ -11,6 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.23-240-ge5647d78.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
+TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
 MAX_MARKDOWN_FORMATTING_PATCH = REPO_ROOT / "patches" / "077-max-markdown-formatting.patch"
@@ -36,6 +37,26 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("diff --git", patch_text)
         self.assertIn("agent/credential_pool.py", patch_text)
         self.assertIn("tests/agent/test_credential_pool.py", patch_text)
+
+    def test_telegram_free_response_target_gating_is_exported_real_patch(self):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        entry = next(patch for patch in manifest["patches"] if patch["id"] == "telegram-free-response-target-gating")
+
+        self.assertEqual(entry["status"], "exported")
+        self.assertEqual(entry["track"], "upstream-fix")
+
+        patch_text = TELEGRAM_TARGET_GATING_PATCH.read_text(encoding="utf-8")
+        self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+        self.assertIn("diff --git", patch_text)
+        self.assertIn("gateway/platforms/telegram.py", patch_text)
+        self.assertIn("tests/gateway/test_telegram_group_gating.py", patch_text)
+        self.assertIn("_message_mentions_other_target", patch_text)
+        self.assertIn("_is_reply_to_other_bot", patch_text)
+        self.assertIn("_message_has_leading_vocative", patch_text)
+        self.assertIn("_message_looks_like_question", patch_text)
+        self.assertIn("test_free_response_chats_ignore_messages_addressed_to_other_bot", patch_text)
+        self.assertIn("test_reply_context_does_not_override_fresh_addressing_to_other_bot", patch_text)
+        self.assertIn("/status@other_bot", patch_text)
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

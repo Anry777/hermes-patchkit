@@ -4,6 +4,7 @@
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
     "credential-pool-recovery",
+    "telegram-free-response-target-gating",
     "codex-memory-flush-responses-contract",
     "codex-auxiliary-tool-role-flattening"
   ]

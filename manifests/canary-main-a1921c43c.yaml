@@ -70,6 +70,29 @@
       "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
     },
     {
+      "id": "telegram-free-response-target-gating",
+      "file": "patches/main-a1921c43c/040-telegram-free-response-target-gating.patch",
+      "title_en": "Telegram free-response target gating",
+      "title_ru": "Target gating для Telegram free-response групп",
+      "description_en": "Prevents Telegram free-response group chats from hijacking messages explicitly addressed to another bot or user.",
+      "description_ru": "Не даёт Telegram free-response группам перехватывать сообщения, явно адресованные другому боту или пользователю.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "38b9de257",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_group_gating.py",
+          "tests/gateway/test_telegram_mention_boundaries.py"
+        ]
+      },
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
+    },
+    {
       "id": "codex-auxiliary-tool-role-flattening",
       "file": "patches/main-a1921c43c/061-codex-auxiliary-tool-role-flattening.patch",
       "title_en": "Flatten unsupported transcript roles for Codex auxiliary Responses calls",
