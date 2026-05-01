@@ -1,0 +1,9 @@
+{
+  "name": "v2026.4.30-upstream-fixes",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "codex-auxiliary-tool-role-flattening"
+  ]
+}

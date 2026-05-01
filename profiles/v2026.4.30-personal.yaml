@@ -1,0 +1,10 @@
+{
+  "name": "v2026.4.30-personal",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "codex-auxiliary-tool-role-flattening",
+    "api-server-provider-proxy"
+  ]
+}

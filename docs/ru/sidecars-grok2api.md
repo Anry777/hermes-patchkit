@@ -9,7 +9,7 @@
 - локальный `/v1/models` catalog из Hermes provider_proxy mode;
 - routing по `body.model` к OpenAI-compatible grok2api endpoint;
 - без Hermes `AIAgent`, SOUL prompt, tools, memory, sessions и transcript state в proxy path;
-- обратимый PatchKit profile: `profiles/grok2api-sidecar.yaml`;
+- обратимый PatchKit profile: `profiles/v2026.4.30-grok2api-sidecar.yaml`;
 - маленький doctor script: `scripts/grok2api_bridge.py`.
 
 ## Лицензия и граница риска
@@ -23,8 +23,8 @@ MIT покрывает код. Она не меняет Grok/xAI terms, риск
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/grok2api-sidecar.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-grok2api-sidecar.yaml \
   --yes
 ```
 

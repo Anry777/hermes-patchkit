@@ -17,8 +17,8 @@ python3 scripts/verify.py --self-check
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --profile profiles/upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-upstream-fixes.yaml
 ```
 
 Для scripts/CI есть тот же checker без prompt'ов:
@@ -26,8 +26,8 @@ python3 scripts/tui.py \
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --profile profiles/upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-upstream-fixes.yaml
 ```
 
 Это проверяет patch'и на временном upstream clone и пишет report в `reports/`. Live checkout при этом не получает patch apply или upstream merge.
@@ -37,7 +37,7 @@ python3 scripts/update.py \
 ```bash
 python3 scripts/doctor.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
   --patch codex-auxiliary-tool-role-flattening
 ```
 
@@ -46,7 +46,7 @@ python3 scripts/doctor.py \
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
   --patch codex-auxiliary-tool-role-flattening \
   --dry-run
 ```
@@ -56,7 +56,7 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
   --patch codex-auxiliary-tool-role-flattening \
   --yes
 ```

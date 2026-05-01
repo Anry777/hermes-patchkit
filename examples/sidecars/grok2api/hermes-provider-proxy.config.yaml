@@ -1,5 +1,5 @@
 # Example Hermes profile config for connecting provider_proxy mode to a local grok2api sidecar.
-# Install patch 080 first through profiles/grok2api-sidecar.yaml, then place this file at:
+# Install patch 080 first through profiles/v2026.4.30-grok2api-sidecar.yaml, then place this file at:
 #   ~/.hermes/profiles/provider-proxy-grok2api/config.yaml
 # Put sidecar/client keys in that profile's .env, not in this file.
 

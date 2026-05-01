@@ -4,6 +4,8 @@ This file is the public catalog for supported PatchKit patch units and workflow 
 
 Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.py` against your Hermes checkout before applying anything.
 
+Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specific patch files live under `patches/v2026.4.30/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.4.30`, not post-release `main`.
+
 ## Available patch units
 
 | Patch | Status | What it does | Notes |
@@ -44,8 +46,8 @@ Use the dedicated profile when you want to install just this provider gateway pa
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-provider-proxy.yaml \
   --yes
 ```
 
@@ -54,6 +56,15 @@ Canary/main users should use `manifests/canary-main-a1921c43c.yaml` with `profil
 ### Grok2API sidecar bridge
 
 The first provider_proxy sidecar pack is documented in [sidecars-grok2api.md](sidecars-grok2api.md). It keeps grok2api deployed separately, adds PatchKit profiles that select only `080`, ships loopback Docker Compose/config examples, and provides `scripts/grok2api_bridge.py` for config rendering and endpoint smoke checks. This is intentionally an explicit sidecar integration, not a vendored Grok provider and not part of default profiles.
+
+## Release `v2026.4.30` compatibility
+
+The release manifest intentionally excludes patch units that no longer fit the official release cleanly:
+
+- `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
+- `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
+- MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `061`, and optional `080`.
 
 ## Workflow features
 

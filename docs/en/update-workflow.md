@@ -7,8 +7,8 @@ Start with the update checker:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --profile profiles/upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-upstream-fixes.yaml
 ```
 
 Or use the terminal UI:
@@ -16,8 +16,8 @@ Or use the terminal UI:
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --profile profiles/upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-upstream-fixes.yaml
 ```
 
 What happens:
@@ -72,8 +72,8 @@ If you want cleanup to run immediately after `scripts/apply.py`, add the flag:
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
-  --profile profiles/upstream-fixes.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-upstream-fixes.yaml \
   --clean-profile-config \
   --yes
 ```

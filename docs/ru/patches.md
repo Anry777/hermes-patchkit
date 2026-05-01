@@ -4,6 +4,8 @@
 
 Совместимость не статична. Перед apply нужно запускать `scripts/update.py` или `scripts/tui.py` против своего Hermes checkout.
 
+Текущий релизный якорь: `manifests/upstream-v2026.4.30.yaml`. Release-specific patch files лежат в `patches/v2026.4.30/` и проверяются против official tag `v2026.4.30` из `NousResearch/hermes-agent`, а не против post-release `main`.
+
 ## Доступные patch units
 
 | Patch | Статус | Что делает | Примечания |
@@ -44,8 +46,8 @@ Upstream Hermes сегодня не даёт такого разделения p
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-provider-proxy.yaml \
   --yes
 ```
 
@@ -54,6 +56,15 @@ python3 scripts/apply.py \
 ### Grok2API sidecar bridge
 
 Первый sidecar pack поверх provider_proxy описан в [sidecars-grok2api.md](sidecars-grok2api.md). grok2api остаётся отдельным сервисом, PatchKit добавляет profiles, которые выбирают только `080`, кладёт loopback Docker Compose/config examples и даёт `scripts/grok2api_bridge.py` для render config и smoke checks endpoint'а. Это явно sidecar integration, не vendored Grok provider и не часть default profiles.
+
+## Совместимость с релизом `v2026.4.30`
+
+Release manifest намеренно не включает patch units, которые больше не ложатся чисто на официальный релиз:
+
+- `010-cli-tui-idle-refresh-fix` superseded upstream-правками idle repaint в `v2026.4.30`.
+- `060-codex-memory-flush-responses-contract` obsolete, потому что старый `flush_memories` path upstream удалил/переработал.
+- MAX local-overlay patches `070`-`077` пока не входят в `v2026.4.30` release manifest; в official release нет MAX adapter, значит всю цепочку нужно свежо refresh'ить последовательно с `070`.
+- Активные `v2026.4.30` patches сейчас: `020`, `030`, `040`, `061` и optional `080`.
 
 ## Workflow-фичи
 

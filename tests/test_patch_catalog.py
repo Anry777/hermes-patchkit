@@ -10,13 +10,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.23-240-ge5647d78.yaml"
+RELEASE_2026_4_30_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.30.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
+RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
 MAX_MARKDOWN_FORMATTING_PATCH = REPO_ROOT / "patches" / "077-max-markdown-formatting.patch"
 GROK2API_PROFILE = REPO_ROOT / "profiles" / "grok2api-sidecar.yaml"
 GROK2API_CANARY_PROFILE = REPO_ROOT / "profiles" / "canary-main-grok2api-sidecar.yaml"
+GROK2API_RELEASE_PROFILE = REPO_ROOT / "profiles" / "v2026.4.30-grok2api-sidecar.yaml"
 GROK2API_SCRIPT = REPO_ROOT / "scripts" / "grok2api_bridge.py"
 GROK2API_DOC_EN = REPO_ROOT / "docs" / "en" / "sidecars-grok2api.md"
 GROK2API_DOC_RU = REPO_ROOT / "docs" / "ru" / "sidecars-grok2api.md"
@@ -57,6 +60,31 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("test_free_response_chats_ignore_messages_addressed_to_other_bot", patch_text)
         self.assertIn("test_reply_context_does_not_override_fresh_addressing_to_other_bot", patch_text)
         self.assertIn("/status@other_bot", patch_text)
+
+    def test_v2026_4_30_manifest_is_pinned_to_release_tag_and_refreshed_patches(self):
+        manifest = json.loads(RELEASE_2026_4_30_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.4.30")
+        self.assertEqual(manifest["upstream"]["commit"], "73bf3ab1b22314ed9dfecbb59242c03742fe72af")
+
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertEqual(
+            ids,
+            [
+                "auth-profile-root-fallback",
+                "credential-pool-recovery",
+                "telegram-free-response-target-gating",
+                "codex-auxiliary-tool-role-flattening",
+                "api-server-provider-proxy",
+            ],
+        )
+        self.assertNotIn("cli-tui-idle-refresh-fix", ids)
+        self.assertNotIn("codex-memory-flush-responses-contract", ids)
+        self.assertTrue((RELEASE_2026_4_30_PATCH_DIR / "040-telegram-free-response-target-gating.patch").exists())
+        for entry in manifest["patches"]:
+            self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
+            self.assertTrue(entry["file"].startswith("patches/v2026.4.30/"))
+            self.assertIn("diff --git", (REPO_ROOT / entry["file"]).read_text(encoding="utf-8"))
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -114,9 +142,11 @@ class PatchCatalogTests(unittest.TestCase):
     def test_grok2api_sidecar_bridge_assets_are_protocol_layer_not_vendored_patch(self):
         profile = json.loads(GROK2API_PROFILE.read_text(encoding="utf-8"))
         canary_profile = json.loads(GROK2API_CANARY_PROFILE.read_text(encoding="utf-8"))
+        release_profile = json.loads(GROK2API_RELEASE_PROFILE.read_text(encoding="utf-8"))
 
         self.assertEqual(profile["patches"], ["api-server-provider-proxy"])
         self.assertEqual(canary_profile["patches"], ["api-server-provider-proxy"])
+        self.assertEqual(release_profile["patches"], ["api-server-provider-proxy"])
 
         script_text = GROK2API_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("Grok2API sidecar bridge helper", script_text)
@@ -133,7 +163,7 @@ class PatchCatalogTests(unittest.TestCase):
         compose = GROK2API_COMPOSE.read_text(encoding="utf-8")
 
         for doc in (doc_en, doc_ru):
-            self.assertIn("profiles/grok2api-sidecar.yaml", doc)
+            self.assertIn("profiles/v2026.4.30-grok2api-sidecar.yaml", doc)
             self.assertIn("scripts/grok2api_bridge.py", doc)
             self.assertIn("MIT", doc)
             self.assertIn("official Grok API provider", doc)

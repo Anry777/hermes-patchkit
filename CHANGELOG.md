@@ -11,6 +11,8 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- release-pinned `v2026.4.30` manifest and profiles: `v2026.4.30-upstream-fixes`, `v2026.4.30-provider-proxy`, `v2026.4.30-grok2api-sidecar`, and `v2026.4.30-personal`.
+- refreshed `v2026.4.30` patch exports for `020`, `030`, `040`, `061`, and `080`; `040-telegram-free-response-target-gating` is now a first-class PatchKit patch for the clean official release.
 - `scripts/grok2api_bridge.py list-models` and `sync-models` can now discover `/v1/models` from a running grok2api sidecar, filter chat-compatible ids, and generate/write the Hermes provider_proxy catalog with optional config backup.
 - Grok2API sidecar bridge pack on top of `080-api-server-provider-proxy`: dedicated profiles, EN/RU docs, loopback Docker Compose/config examples, third-party MIT notice, and `scripts/grok2api_bridge.py` for config rendering/profile skeletons/endpoint doctor checks
 - real exported upstream-candidate patch `080-api-server-provider-proxy`, adding an opt-in `provider_proxy` mode for the OpenAI-compatible API Server with explicit model catalog routing, OpenAI-compatible Chat Completions passthrough, Codex Responses compatibility, and fail-closed unsupported endpoints
@@ -31,6 +33,7 @@ The format follows Keep a Changelog.
 - unittest coverage for update classification and rollback cleanup after patches add new files
 
 ### Changed
+- stable README/getting-started/update-workflow examples now point at the official `v2026.4.30` release manifest rather than post-release `origin/main` or the older `v2026.4.23` anchor.
 - added `NEWS.md` and first-screen README links for the Grok2API sidecar bridge announcement, with a more public-facing summary of provider_proxy + safe model discovery
 - README/README.ru and patch catalog docs now position `080-api-server-provider-proxy` as the featured provider gateway patch, with first-screen install commands and a clearer agent-endpoint vs provider-proxy distinction
 - README/README.ru now link to the patch catalog instead of duplicating the patch list inline

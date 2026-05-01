@@ -9,7 +9,7 @@ The point is not to copy grok2api into Hermes. Keep grok2api as a separate sidec
 - a local `/v1/models` catalog served by Hermes provider_proxy mode;
 - model routing by `body.model` to a grok2api OpenAI-compatible endpoint;
 - no Hermes `AIAgent`, SOUL prompt, tools, memory, sessions, or transcript state in the proxy path;
-- a reversible PatchKit profile: `profiles/grok2api-sidecar.yaml`;
+- a reversible PatchKit profile: `profiles/v2026.4.30-grok2api-sidecar.yaml`;
 - a small doctor script: `scripts/grok2api_bridge.py`.
 
 ## License and risk boundary
@@ -23,8 +23,8 @@ MIT covers the code. It does not change Grok/xAI terms, account-ban risk, Cloudf
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.23.yaml \
-  --profile profiles/grok2api-sidecar.yaml \
+  --manifest manifests/upstream-v2026.4.30.yaml \
+  --profile profiles/v2026.4.30-grok2api-sidecar.yaml \
   --yes
 ```
 

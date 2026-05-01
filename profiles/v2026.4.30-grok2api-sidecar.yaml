@@ -1,0 +1,6 @@
+{
+  "name": "v2026.4.30-grok2api-sidecar",
+  "patches": [
+    "api-server-provider-proxy"
+  ]
+}
