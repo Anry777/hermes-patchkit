@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import subprocess
+import sys
 
 from _common import (
     PatchKitError,
@@ -31,6 +32,9 @@ def main() -> int:
     parser.add_argument('--dry-run', action='store_true', help='Preview the resolved patch set without applying')
     parser.add_argument('--yes', action='store_true', help='Skip interactive confirmation')
     parser.add_argument('--force', action='store_true', help='Allow applying on a dirty repo')
+    parser.add_argument('--clean-profile-config', action='store_true', help='After patch apply, run scripts/clean_profile_config.py --write for the Hermes profile home')
+    parser.add_argument('--hermes-home', default='~/.hermes', help='Hermes profile home for --clean-profile-config, default: ~/.hermes')
+    parser.add_argument('--keep-env-only', action='store_true', help='With --clean-profile-config, keep known env-only non-secret compatibility variables active')
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
@@ -94,6 +98,13 @@ def main() -> int:
             print(f"Applied: {patch['id']}")
             state['apply_created_untracked'] = sorted(set(list_untracked_files(repo)) - baseline_cleanup_paths)
             write_backup_state(repo, backup_name, state)
+
+        if args.clean_profile_config:
+            cleaner = Path(__file__).resolve().parent / 'clean_profile_config.py'
+            cleaner_cmd = [sys.executable, str(cleaner), '--home', str(Path(args.hermes_home).expanduser()), '--write']
+            if args.keep_env_only:
+                cleaner_cmd.append('--keep-env-only')
+            subprocess.run(cleaner_cmd, check=True)
 
         print('Apply complete.')
         print(f'Rollback hint: python scripts/rollback.py --repo {repo} --backup {backup_name} --yes')

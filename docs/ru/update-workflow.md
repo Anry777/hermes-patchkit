@@ -59,6 +59,41 @@ git merge origin/main
 
 После этого запускаются focused Hermes tests по затронутым зонам. Если пришлось что-то решать вручную — runtime state коммитится в постоянную рабочую branch.
 
+## Post-update уборка профиля
+
+После обновления Hermes и apply/refresh patch'ей приведи локальный профиль к нормальной схеме источников истины:
+
+```bash
+python3 scripts/clean_profile_config.py --home ~/.hermes --write
+```
+
+Если хочешь, чтобы cleanup запускался сразу после `scripts/apply.py`, добавь флаг:
+
+```bash
+python3 scripts/apply.py \
+  --repo ~/.hermes/hermes-agent \
+  --manifest manifests/upstream-v2026.4.23-240-ge5647d78.yaml \
+  --profile profiles/upstream-fixes.yaml \
+  --clean-profile-config \
+  --yes
+```
+
+Что делает helper:
+
+1. Читает живой `config.yaml` профиля.
+2. Создаёт/обновляет `config.yaml.example` рядом с ним: secrets redacted, пустой/runtime-мусор вычищен.
+3. Пересобирает `.env` по платформам/интеграциям.
+4. Оставляет активными только credential-shaped secrets/tokens/API keys.
+5. Non-secret env settings комментирует с причиной: либо `use config.yaml ... instead`, либо `env-only exception`.
+
+Если конкретная интеграция пока реально читает non-secret значение только из env и должна продолжить работать до code-fix'а, используй временный режим:
+
+```bash
+python3 scripts/clean_profile_config.py --home ~/.hermes --write --keep-env-only
+```
+
+Но нормальная цель остаётся такой: `config.yaml` — поведение и non-secret настройки, `.env` — только secrets/tokens и редкие env-only исключения, которые надо отдельно устранять в коде.
+
 ## Если patch конфликтует
 
 Не force'ить его в live checkout.

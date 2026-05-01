@@ -86,6 +86,7 @@ PatchKit возвращает эту границу:
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
+- `scripts/clean_profile_config.py` — post-update уборка профиля: генерирует `config.yaml.example` из live `config.yaml` с redaction и оставляет в `.env` только secrets/tokens по умолчанию.
 - `scripts/grok2api_bridge.py` — helper для dedicated Grok2API sidecar bridge поверх provider_proxy mode;
 - поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md).
 

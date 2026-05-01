@@ -86,6 +86,7 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/apply.py` — apply a profile or explicit patch list with backup state;
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
+- `scripts/clean_profile_config.py` — post-update profile cleanup: generates `config.yaml.example` from live `config.yaml` with redaction and keeps only secrets/tokens active in `.env` by default.
 - `scripts/grok2api_bridge.py` — helper for a dedicated Grok2API sidecar bridge on top of provider_proxy mode;
 - maintained patch and feature catalog: [docs/en/patches.md](docs/en/patches.md).
 
