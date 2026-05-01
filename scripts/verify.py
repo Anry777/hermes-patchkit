@@ -20,6 +20,7 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'profiles/v2026.4.30-provider-proxy.yaml',
         repo_root / 'profiles/v2026.4.30-grok2api-sidecar.yaml',
         repo_root / 'scripts/apply.py',
+        repo_root / 'scripts/migrate_profile_config.py',
         repo_root / 'scripts/doctor.py',
     ]
     missing = [str(path.relative_to(repo_root)) for path in required if not path.exists()]

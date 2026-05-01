@@ -84,6 +84,7 @@ PatchKit возвращает эту границу:
 - `scripts/tui.py` — маленький terminal UI поверх update checker;
 - `scripts/doctor.py` — preflight target checkout и выбранных patch'ей;
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
+- `scripts/migrate_profile_config.py` — post-update миграция schema профиля через target Hermes runtime, с dry-run, backup, diff и secret redaction;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
 - `scripts/clean_profile_config.py` — post-update уборка профиля: генерирует `config.yaml.example` из live `config.yaml` с redaction и оставляет в `.env` только secrets/tokens по умолчанию.

@@ -67,18 +67,30 @@ After updating Hermes and applying/refreshing patches, normalize the local profi
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
 ```
 
-If you want cleanup to run immediately after `scripts/apply.py`, add the flag:
+If you want schema migration and cleanup to run immediately after `scripts/apply.py`, add both post-apply flags:
 
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.4.30.yaml \
   --profile profiles/v2026.4.30-upstream-fixes.yaml \
+  --migrate-profile-config \
   --clean-profile-config \
   --yes
 ```
 
-The helper:
+The migration helper:
+
+1. Runs the target checkout's own `hermes_cli.config.migrate_config(interactive=False)` instead of carrying copied defaults in PatchKit.
+2. Supports safe dry-run by default:
+   ```bash
+   python3 scripts/migrate_profile_config.py --repo ~/.hermes/hermes-agent --home ~/.hermes
+   ```
+3. In `--write` mode, creates `config.yaml.bak_migrate_profile_<timestamp>` before changing the live profile.
+4. Prints a redacted diff, so API keys/tokens do not leak into terminal output.
+5. Should run before `--clean-profile-config`, because cleanup generates examples/env hygiene from the final migrated config.
+
+The cleanup helper:
 
 1. Reads the live profile `config.yaml`.
 2. Creates/updates `config.yaml.example` next to it with secrets redacted and empty/runtime noise pruned.

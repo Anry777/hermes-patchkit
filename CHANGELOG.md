@@ -11,6 +11,7 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- `scripts/migrate_profile_config.py` runs the target Hermes checkout's own config schema migration for a profile with dry-run-by-default, backup, redacted diff output, and `apply.py --migrate-profile-config` integration before profile cleanup.
 - release-pinned `v2026.4.30` manifest and profiles: `v2026.4.30-upstream-fixes`, `v2026.4.30-provider-proxy`, `v2026.4.30-grok2api-sidecar`, and `v2026.4.30-personal`.
 - refreshed `v2026.4.30` patch exports for `020`, `030`, `040`, `061`, and `080`; `040-telegram-free-response-target-gating` is now a first-class PatchKit patch for the clean official release.
 - `scripts/grok2api_bridge.py list-models` and `sync-models` can now discover `/v1/models` from a running grok2api sidecar, filter chat-compatible ids, and generate/write the Hermes provider_proxy catalog with optional config backup.

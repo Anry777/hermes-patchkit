@@ -32,8 +32,9 @@ def main() -> int:
     parser.add_argument('--dry-run', action='store_true', help='Preview the resolved patch set without applying')
     parser.add_argument('--yes', action='store_true', help='Skip interactive confirmation')
     parser.add_argument('--force', action='store_true', help='Allow applying on a dirty repo')
+    parser.add_argument('--migrate-profile-config', action='store_true', help='After patch apply, migrate the Hermes profile config schema using the target checkout')
     parser.add_argument('--clean-profile-config', action='store_true', help='After patch apply, run scripts/clean_profile_config.py --write for the Hermes profile home')
-    parser.add_argument('--hermes-home', default='~/.hermes', help='Hermes profile home for --clean-profile-config, default: ~/.hermes')
+    parser.add_argument('--hermes-home', default='~/.hermes', help='Hermes profile home for config migration/cleanup, default: ~/.hermes')
     parser.add_argument('--keep-env-only', action='store_true', help='With --clean-profile-config, keep known env-only non-secret compatibility variables active')
     args = parser.parse_args()
 
@@ -98,6 +99,20 @@ def main() -> int:
             print(f"Applied: {patch['id']}")
             state['apply_created_untracked'] = sorted(set(list_untracked_files(repo)) - baseline_cleanup_paths)
             write_backup_state(repo, backup_name, state)
+
+        if args.migrate_profile_config:
+            migrator = Path(__file__).resolve().parent / 'migrate_profile_config.py'
+            migrator_cmd = [
+                sys.executable,
+                str(migrator),
+                '--repo',
+                str(repo),
+                '--home',
+                str(Path(args.hermes_home).expanduser()),
+                '--write',
+            ]
+            subprocess.run(migrator_cmd, check=True)
+            print('Profile config migration complete.')
 
         if args.clean_profile_config:
             cleaner = Path(__file__).resolve().parent / 'clean_profile_config.py'

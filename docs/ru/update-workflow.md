@@ -67,18 +67,30 @@ git merge origin/main
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
 ```
 
-Если хочешь, чтобы cleanup запускался сразу после `scripts/apply.py`, добавь флаг:
+Если хочешь, чтобы schema migration и cleanup запускались сразу после `scripts/apply.py`, добавь оба post-apply флага:
 
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.4.30.yaml \
   --profile profiles/v2026.4.30-upstream-fixes.yaml \
+  --migrate-profile-config \
   --clean-profile-config \
   --yes
 ```
 
-Что делает helper:
+Что делает migration helper:
+
+1. Запускает собственный `hermes_cli.config.migrate_config(interactive=False)` из target checkout, а не хранит копию defaults внутри PatchKit.
+2. По умолчанию работает как safe dry-run:
+   ```bash
+   python3 scripts/migrate_profile_config.py --repo ~/.hermes/hermes-agent --home ~/.hermes
+   ```
+3. В `--write` режиме создаёт `config.yaml.bak_migrate_profile_<timestamp>` перед изменением live profile.
+4. Печатает redacted diff, чтобы API keys/tokens не утекали в terminal output.
+5. Должен запускаться до `--clean-profile-config`, потому cleanup строит examples/env hygiene уже из финального migrated config.
+
+Что делает cleanup helper:
 
 1. Читает живой `config.yaml` профиля.
 2. Создаёт/обновляет `config.yaml.example` рядом с ним: secrets redacted, пустой/runtime-мусор вычищен.
