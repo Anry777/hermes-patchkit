@@ -5,6 +5,14 @@
     "credential-pool-recovery",
     "telegram-free-response-target-gating",
     "codex-auxiliary-tool-role-flattening",
-    "api-server-provider-proxy"
+    "api-server-provider-proxy",
+    "max-gateway-text-mvp",
+    "max-gateway-image-input",
+    "max-gateway-oneme-url-safety",
+    "max-gateway-image-output",
+    "max-send-message-media-routing",
+    "max-gateway-file-attachments",
+    "max-media-directive-safety",
+    "max-markdown-formatting"
   ]
 }

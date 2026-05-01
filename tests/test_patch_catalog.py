@@ -76,6 +76,14 @@ class PatchCatalogTests(unittest.TestCase):
                 "telegram-free-response-target-gating",
                 "codex-auxiliary-tool-role-flattening",
                 "api-server-provider-proxy",
+                "max-gateway-text-mvp",
+                "max-gateway-image-input",
+                "max-gateway-oneme-url-safety",
+                "max-gateway-image-output",
+                "max-send-message-media-routing",
+                "max-gateway-file-attachments",
+                "max-media-directive-safety",
+                "max-markdown-formatting",
             ],
         )
         self.assertNotIn("cli-tui-idle-refresh-fix", ids)

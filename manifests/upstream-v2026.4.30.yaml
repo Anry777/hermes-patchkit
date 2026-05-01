@@ -136,6 +136,230 @@
       },
       "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
       "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-gateway-text-mvp",
+      "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
+      "title_en": "MAX messenger text gateway (webhook-first + dev polling)",
+      "title_ru": "Text gateway для MAX messenger (webhook-first + dev polling)",
+      "description_en": "Adds a text-only MAX messenger gateway adapter using MAX-recommended webhook delivery for production inbound updates, explicit MAX_TRANSPORT=polling for local testing, configurable polling cadence with HTTP timeout headroom, operator status diagnostics, and POST /messages for outbound text.",
+      "description_ru": "Добавляет text-only gateway adapter для MAX messenger: production inbound updates через рекомендованный MAX webhook, явный MAX_TRANSPORT=polling для локального теста, настраиваемый polling cadence с HTTP timeout headroom, operator status diagnostics и outbound text через POST /messages.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "api-server-provider-proxy"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py",
+          "tests/hermes_cli/test_gateway.py",
+          "tests/hermes_cli/test_status.py",
+          "tests/cron/test_scheduler.py"
+        ]
+      },
+      "exported_from": "1c42fa577b1bd6698ad55fb02feef1ad4b1fb1e7",
+      "base_runtime": "1196d7fe9682",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-gateway-image-input",
+      "file": "patches/v2026.4.30/071-max-gateway-image-input.patch",
+      "title_en": "MAX messenger image input",
+      "title_ru": "Приём изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to accept inbound image attachments from MessageBody.attachments, map them to Hermes photo events, cache image URLs locally for stable vision input, and keep image-only messages instead of dropping them.",
+      "description_ru": "Расширяет MAX gateway: принимает входящие image attachments из MessageBody.attachments, преобразует их в Hermes photo events, кеширует image URLs локально для стабильного vision input и не отбрасывает сообщения только с изображением.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-text-mvp"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_allowlist_startup_check.py"
+        ]
+      },
+      "exported_from": "7f8f361bcd7b4d472f82b278f395ed5c0a5243ad",
+      "base_runtime": "1c42fa577b1bd6698ad55fb02feef1ad4b1fb1e7",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-gateway-oneme-url-safety",
+      "file": "patches/v2026.4.30/072-max-gateway-oneme-url-safety.patch",
+      "title_en": "MAX OneMe image CDN URL safety allowlist",
+      "title_ru": "URL safety allowlist для MAX OneMe image CDN",
+      "description_en": "Allows the exact MAX image CDN host i.oneme.ru through URL safety when it resolves to benchmark/private-style 198.18.0.0/15 addresses, preserving SSRF protection for subdomains, HTTP, and unrelated hosts.",
+      "description_ru": "Разрешает точный MAX image CDN host i.oneme.ru в URL safety, когда он резолвится в benchmark/private-style адреса 198.18.0.0/15, сохраняя SSRF-защиту для subdomains, HTTP и несвязанных hosts.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-input"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_url_safety.py",
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py"
+        ]
+      },
+      "exported_from": "4506e8b205f32eee890b37d5f6a1560bf9e78def",
+      "base_runtime": "7f8f361bcd7b4d472f82b278f395ed5c0a5243ad",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-gateway-image-output",
+      "file": "patches/v2026.4.30/073-max-gateway-image-output.patch",
+      "title_en": "MAX messenger image output",
+      "title_ru": "Отправка изображений в MAX messenger",
+      "description_en": "Extends the MAX gateway to upload outbound local and remote images, send them as MAX image attachments with captions, and retry attachment.not.ready responses without changing text-only delivery.",
+      "description_ru": "Расширяет MAX gateway: загружает исходящие локальные и remote изображения, отправляет их как MAX image attachments с caption и retry для attachment.not.ready без изменения text-only delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-oneme-url-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/gateway/test_media_download_retry.py",
+          "tests/gateway/test_send_image_file.py"
+        ]
+      },
+      "exported_from": "32e6bea94b02d2799fc428b890db6cb7ce0093dd",
+      "base_runtime": "4506e8b205f32eee890b37d5f6a1560bf9e78def",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-send-message-media-routing",
+      "file": "patches/v2026.4.30/074-max-send-message-media-routing.patch",
+      "title_en": "MAX send_message media routing",
+      "title_ru": "Маршрутизация MAX media через send_message",
+      "description_en": "Routes send_message MEDIA image attachments for MAX through the native MAX adapter image upload path instead of dropping them as unsupported media, and steers agents away from SVG photo delivery.",
+      "description_ru": "Направляет MAX MEDIA image attachments из send_message в native путь MAX adapter для загрузки изображений вместо отбрасывания как unsupported media, а также явно запрещает SVG для photo delivery.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-image-output"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py"
+        ]
+      },
+      "exported_from": "17c0380295d820d155c0d8b9f1ae61d8aadca0ef",
+      "base_runtime": "32e6bea94b02d2799fc428b890db6cb7ce0093dd",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-gateway-file-attachments",
+      "file": "patches/v2026.4.30/075-max-gateway-file-attachments.patch",
+      "title_en": "MAX messenger file attachments",
+      "title_ru": "Файловые вложения в MAX messenger",
+      "description_en": "Extends MAX media delivery beyond images: local MEDIA files are uploaded through MAX /uploads?type=file and inbound file attachments are cached as Hermes document events instead of leaking local paths as text.",
+      "description_ru": "Расширяет MAX media delivery за пределы изображений: локальные MEDIA-файлы загружаются через MAX /uploads?type=file, а входящие file attachments кешируются как Hermes document events вместо утечки локальных путей текстом.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-send-message-media-routing"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py",
+          "tests/tools/test_send_message_missing_platforms.py"
+        ]
+      },
+      "exported_from": "05e4c1a09c6180b52e6245624f9a7b2200c34fcd",
+      "base_runtime": "17c0380295d820d155c0d8b9f1ae61d8aadca0ef",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-media-directive-safety",
+      "file": "patches/v2026.4.30/076-max-media-directive-safety.patch",
+      "title_en": "MAX media directive safety",
+      "title_ru": "Безопасная обработка MAX media directives",
+      "description_en": "Prevents documented MEDIA examples and markdown code snippets from being treated as real attachments, and updates the MAX prompt hint to require MEDIA directives as plain lines with real local paths.",
+      "description_ru": "Не даёт документационным примерам MEDIA и markdown code snippets запускать отправку вложений, а также уточняет MAX prompt hint: MEDIA directives должны быть plain lines с реальными локальными путями.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-gateway-file-attachments"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_platform_base.py::TestExtractMedia",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/gateway/test_max.py",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      },
+      "exported_from": "e105f7d12fb844b8c6370187c618c142f4976a63",
+      "base_runtime": "05e4c1a09c6180b52e6245624f9a7b2200c34fcd",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "max-markdown-formatting",
+      "file": "patches/v2026.4.30/077-max-markdown-formatting.patch",
+      "title_en": "MAX markdown text formatting",
+      "title_ru": "Markdown formatting для сообщений MAX",
+      "description_en": "Defaults MAX outgoing text and captions to official markdown formatting, adds MAX_TEXT_FORMAT configuration, and updates the MAX prompt hint to use concise MAX-safe Markdown.",
+      "description_ru": "По умолчанию отправляет MAX text/captions с official markdown formatting, добавляет настройку MAX_TEXT_FORMAT и обновляет MAX prompt hint под аккуратный MAX-safe Markdown.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "max-media-directive-safety"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_max.py",
+          "tests/agent/test_prompt_builder.py::TestPromptBuilderConstants",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      },
+      "exported_from": "8185d39a5e4949a1d40c6472bd6f3ae0922d9fa9",
+      "base_runtime": "e105f7d12fb844b8c6370187c618c142f4976a63",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
     }
   ]
 }
