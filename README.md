@@ -85,6 +85,7 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/doctor.py` — inspect a target checkout and selected patch set;
 - `scripts/apply.py` — apply a profile or explicit patch list with backup state;
 - `scripts/migrate_profile_config.py` — post-update config schema migration through the target Hermes runtime, with dry-run, backup, diff, and secret redaction;
+- `scripts/pin_runtime_dependencies.py` — opt-in post-update runtime venv pins for dependency compatibility issues, currently `setuptools<80` to silence the `lark-oapi` / `pkg_resources` warning;
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
 - `scripts/clean_profile_config.py` — post-update profile cleanup: generates `config.yaml.example` from live `config.yaml` with redaction and keeps only secrets/tokens active in `.env` by default.

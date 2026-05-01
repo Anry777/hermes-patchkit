@@ -33,6 +33,7 @@ def main() -> int:
     parser.add_argument('--yes', action='store_true', help='Skip interactive confirmation')
     parser.add_argument('--force', action='store_true', help='Allow applying on a dirty repo')
     parser.add_argument('--migrate-profile-config', action='store_true', help='After patch apply, migrate the Hermes profile config schema using the target checkout')
+    parser.add_argument('--pin-runtime-dependencies', action='store_true', help='After patch apply, install PatchKit runtime dependency pins in the target checkout venv')
     parser.add_argument('--clean-profile-config', action='store_true', help='After patch apply, run scripts/clean_profile_config.py --write for the Hermes profile home')
     parser.add_argument('--hermes-home', default='~/.hermes', help='Hermes profile home for config migration/cleanup, default: ~/.hermes')
     parser.add_argument('--keep-env-only', action='store_true', help='With --clean-profile-config, keep known env-only non-secret compatibility variables active')
@@ -113,6 +114,11 @@ def main() -> int:
             ]
             subprocess.run(migrator_cmd, check=True)
             print('Profile config migration complete.')
+
+        if args.pin_runtime_dependencies:
+            pinner = Path(__file__).resolve().parent / 'pin_runtime_dependencies.py'
+            pinner_cmd = [sys.executable, str(pinner), '--repo', str(repo), '--write']
+            subprocess.run(pinner_cmd, check=True)
 
         if args.clean_profile_config:
             cleaner = Path(__file__).resolve().parent / 'clean_profile_config.py'

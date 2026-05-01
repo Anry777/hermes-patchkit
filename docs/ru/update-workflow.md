@@ -67,7 +67,7 @@ git merge origin/main
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
 ```
 
-Если хочешь, чтобы schema migration и cleanup запускались сразу после `scripts/apply.py`, добавь оба post-apply флага:
+Если хочешь, чтобы schema migration, runtime dependency pins и cleanup запускались сразу после `scripts/apply.py`, добавь post-apply флаги:
 
 ```bash
 python3 scripts/apply.py \
@@ -75,6 +75,7 @@ python3 scripts/apply.py \
   --manifest manifests/upstream-v2026.4.30.yaml \
   --profile profiles/v2026.4.30-upstream-fixes.yaml \
   --migrate-profile-config \
+  --pin-runtime-dependencies \
   --clean-profile-config \
   --yes
 ```
@@ -89,6 +90,16 @@ python3 scripts/apply.py \
 3. В `--write` режиме создаёт `config.yaml.bak_migrate_profile_<timestamp>` перед изменением live profile.
 4. Печатает redacted diff, чтобы API keys/tokens не утекали в terminal output.
 5. Должен запускаться до `--clean-profile-config`, потому cleanup строит examples/env hygiene уже из финального migrated config.
+
+Что делает dependency-pin helper:
+
+1. Находит Python target checkout в `venv/bin/python` или `.venv/bin/python`.
+2. По умолчанию делает dry-run:
+   ```bash
+   python3 scripts/pin_runtime_dependencies.py --repo ~/.hermes/hermes-agent
+   ```
+3. В `--write` режиме вызывает `uv pip install --python <runtime-python> setuptools<80`.
+4. Нужен для runtime compatibility pins, которые не являются patch'ами исходников. Текущий pin убирает warning `lark-oapi` / `pkg_resources` на современных setuptools releases.
 
 Что делает cleanup helper:
 

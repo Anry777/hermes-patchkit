@@ -85,6 +85,7 @@ PatchKit возвращает эту границу:
 - `scripts/doctor.py` — preflight target checkout и выбранных patch'ей;
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
 - `scripts/migrate_profile_config.py` — post-update миграция schema профиля через target Hermes runtime, с dry-run, backup, diff и secret redaction;
+- `scripts/pin_runtime_dependencies.py` — opt-in post-update pins для runtime venv при dependency compatibility issues; сейчас это `setuptools<80`, чтобы убрать warning `lark-oapi` / `pkg_resources`;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
 - `scripts/clean_profile_config.py` — post-update уборка профиля: генерирует `config.yaml.example` из live `config.yaml` с redaction и оставляет в `.env` только secrets/tokens по умолчанию.

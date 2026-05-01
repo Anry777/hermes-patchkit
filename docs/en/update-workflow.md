@@ -67,7 +67,7 @@ After updating Hermes and applying/refreshing patches, normalize the local profi
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
 ```
 
-If you want schema migration and cleanup to run immediately after `scripts/apply.py`, add both post-apply flags:
+If you want schema migration, runtime dependency pins, and cleanup to run immediately after `scripts/apply.py`, add the post-apply flags:
 
 ```bash
 python3 scripts/apply.py \
@@ -75,6 +75,7 @@ python3 scripts/apply.py \
   --manifest manifests/upstream-v2026.4.30.yaml \
   --profile profiles/v2026.4.30-upstream-fixes.yaml \
   --migrate-profile-config \
+  --pin-runtime-dependencies \
   --clean-profile-config \
   --yes
 ```
@@ -89,6 +90,16 @@ The migration helper:
 3. In `--write` mode, creates `config.yaml.bak_migrate_profile_<timestamp>` before changing the live profile.
 4. Prints a redacted diff, so API keys/tokens do not leak into terminal output.
 5. Should run before `--clean-profile-config`, because cleanup generates examples/env hygiene from the final migrated config.
+
+The dependency-pin helper:
+
+1. Finds the target checkout Python at `venv/bin/python` or `.venv/bin/python`.
+2. Defaults to dry-run:
+   ```bash
+   python3 scripts/pin_runtime_dependencies.py --repo ~/.hermes/hermes-agent
+   ```
+3. In `--write` mode, runs `uv pip install --python <runtime-python> setuptools<80`.
+4. Covers runtime compatibility pins that are not source-code patches. The current pin silences the `lark-oapi` / `pkg_resources` warning on modern setuptools releases.
 
 The cleanup helper:
 
