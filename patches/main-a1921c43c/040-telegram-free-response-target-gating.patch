@@ -1,8 +1,51 @@
+diff --git a/gateway/config.py b/gateway/config.py
+index 756ea28aa..82576cf25 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -600,6 +600,10 @@ def load_gateway_config() -> GatewayConfig:
+                     bridged["free_response_channels"] = platform_cfg["free_response_channels"]
+                 if "mention_patterns" in platform_cfg:
+                     bridged["mention_patterns"] = platform_cfg["mention_patterns"]
++                if "reply_triggers" in platform_cfg:
++                    bridged["reply_triggers"] = platform_cfg["reply_triggers"]
++                if "allow_reply_triggers" in platform_cfg:
++                    bridged["allow_reply_triggers"] = platform_cfg["allow_reply_triggers"]
+                 if "dm_policy" in platform_cfg:
+                     bridged["dm_policy"] = platform_cfg["dm_policy"]
+                 if "allow_from" in platform_cfg:
+@@ -704,6 +708,10 @@ def load_gateway_config() -> GatewayConfig:
+                     os.environ["TELEGRAM_REQUIRE_MENTION"] = str(telegram_cfg["require_mention"]).lower()
+                 if "mention_patterns" in telegram_cfg and not os.getenv("TELEGRAM_MENTION_PATTERNS"):
+                     os.environ["TELEGRAM_MENTION_PATTERNS"] = json.dumps(telegram_cfg["mention_patterns"])
++                if "reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["reply_triggers"]).lower()
++                if "allow_reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["allow_reply_triggers"]).lower()
+                 frc = telegram_cfg.get("free_response_chats")
+                 if frc is not None and not os.getenv("TELEGRAM_FREE_RESPONSE_CHATS"):
+                     if isinstance(frc, list):
 diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
-index 09a70ccf5..0d9e73eb6 100644
+index 09a70ccf5..61adb8f6d 100644
 --- a/gateway/platforms/telegram.py
 +++ b/gateway/platforms/telegram.py
-@@ -2349,11 +2349,10 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -2328,6 +2328,16 @@ class TelegramAdapter(BasePlatformAdapter):
+             return {str(part).strip() for part in raw if str(part).strip()}
+         return {part.strip() for part in str(raw).split(",") if part.strip()}
+ 
++    def _telegram_reply_triggers_enabled(self) -> bool:
++        configured = self.config.extra.get("reply_triggers")
++        if configured is None:
++            configured = self.config.extra.get("allow_reply_triggers")
++        if configured is None:
++            configured = os.getenv("TELEGRAM_REPLY_TRIGGERS", "true")
++        if isinstance(configured, bool):
++            return configured
++        return str(configured).strip().lower() in ("true", "1", "yes", "on")
++
+     def _telegram_ignored_threads(self) -> set[int]:
+         raw = self.config.extra.get("ignored_threads")
+         if raw is None:
+@@ -2349,11 +2359,10 @@ class TelegramAdapter(BasePlatformAdapter):
                  logger.warning("[%s] Ignoring invalid Telegram thread id: %r", self.name, value)
          return ignored
  
@@ -17,7 +60,7 @@ index 09a70ccf5..0d9e73eb6 100644
              if raw:
                  try:
                      loaded = json.loads(raw)
-@@ -2369,8 +2368,9 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -2369,8 +2378,9 @@ class TelegramAdapter(BasePlatformAdapter):
              patterns = [patterns]
          if not isinstance(patterns, list):
              logger.warning(
@@ -28,7 +71,7 @@ index 09a70ccf5..0d9e73eb6 100644
                  type(patterns).__name__,
              )
              return []
-@@ -2382,11 +2382,17 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -2382,11 +2392,17 @@ class TelegramAdapter(BasePlatformAdapter):
              try:
                  compiled.append(re.compile(pattern, re.IGNORECASE))
              except re.error as exc:
@@ -49,7 +92,7 @@ index 09a70ccf5..0d9e73eb6 100644
      def _is_group_chat(self, message: Message) -> bool:
          chat = getattr(message, "chat", None)
          if not chat:
-@@ -2454,17 +2460,130 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -2454,17 +2470,130 @@ class TelegramAdapter(BasePlatformAdapter):
                          return True
          return False
  
@@ -183,13 +226,13 @@ index 09a70ccf5..0d9e73eb6 100644
      def _clean_bot_trigger_text(self, text: Optional[str]) -> Optional[str]:
          if not text or not self._bot or not getattr(self._bot, "username", None):
              return text
-@@ -2498,15 +2617,39 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -2498,15 +2627,39 @@ class TelegramAdapter(BasePlatformAdapter):
                      return False
              except (TypeError, ValueError):
                  logger.warning("[%s] Ignoring non-numeric Telegram message_thread_id: %r", self.name, thread_id)
 -        if str(getattr(getattr(message, "chat", None), "id", "")) in self._telegram_free_response_chats():
 +        mentions_this_bot = self._message_mentions_bot(message)
-+        reply_to_this_bot = self._is_reply_to_bot(message)
++        reply_to_this_bot = self._is_reply_to_bot(message) and self._telegram_reply_triggers_enabled()
 +        wake_word_for_this_bot = self._message_matches_mention_patterns(message)
 +        mentions_other_target = self._message_mentions_other_target(message)
 +        reply_to_other_bot = self._is_reply_to_other_bot(message)
@@ -230,10 +273,28 @@ index 09a70ccf5..0d9e73eb6 100644
      async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          """Handle incoming text messages.
 diff --git a/tests/gateway/test_telegram_group_gating.py b/tests/gateway/test_telegram_group_gating.py
-index ababe5ec6..e2367dbbd 100644
+index ababe5ec6..21b665dc0 100644
 --- a/tests/gateway/test_telegram_group_gating.py
 +++ b/tests/gateway/test_telegram_group_gating.py
-@@ -36,13 +36,16 @@ def _group_message(
+@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
+ from gateway.config import Platform, PlatformConfig, load_gateway_config
+ 
+ 
+-def _make_adapter(require_mention=None, free_response_chats=None, mention_patterns=None, ignored_threads=None):
++def _make_adapter(require_mention=None, free_response_chats=None, mention_patterns=None, ignored_threads=None, reply_triggers=None):
+     from gateway.platforms.telegram import TelegramAdapter
+ 
+     extra = {}
+@@ -17,6 +17,8 @@ def _make_adapter(require_mention=None, free_response_chats=None, mention_patter
+         extra["mention_patterns"] = mention_patterns
+     if ignored_threads is not None:
+         extra["ignored_threads"] = ignored_threads
++    if reply_triggers is not None:
++        extra["reply_triggers"] = reply_triggers
+ 
+     adapter = object.__new__(TelegramAdapter)
+     adapter.platform = Platform.TELEGRAM
+@@ -36,13 +38,16 @@ def _group_message(
      chat_id=-100,
      thread_id=None,
      reply_to_bot=False,
@@ -251,7 +312,40 @@ index ababe5ec6..e2367dbbd 100644
      return SimpleNamespace(
          text=text,
          caption=caption,
-@@ -117,13 +120,120 @@ def test_group_messages_can_require_direct_trigger_via_config():
+@@ -76,6 +81,32 @@ def test_group_messages_can_be_opened_via_config():
+     assert adapter._should_process_message(_group_message("hello everyone")) is True
+ 
+ 
++
++
++def test_group_reply_trigger_can_be_disabled_for_noisy_multi_bot_chats():
++    adapter = _make_adapter(require_mention=True, reply_triggers=False)
++
++    assert adapter._should_process_message(_group_message("replying", reply_to_bot=True)) is False
++    assert adapter._should_process_message(
++        _group_message("hi @hermes_bot", entities=[_mention_entity("hi @hermes_bot")])
++    ) is True
++
++
++def test_direct_only_without_reply_trigger_ignores_plain_replies_in_target_group():
++    adapter = _make_adapter(
++        require_mention=True,
++        free_response_chats=[],
++        mention_patterns=[r"^\s*(Цезарь|Cesair)[,!:：]?\b"],
++        reply_triggers=False,
++    )
++
++    assert adapter._should_process_message(
++        _group_message("тебя не спрашивали", chat_id=-5283179051, reply_to_bot=True)
++    ) is False
++    assert adapter._should_process_message(
++        _group_message("Цезарь, ответь", chat_id=-5283179051)
++    ) is True
++
+ def test_group_messages_can_require_direct_trigger_via_config():
+     adapter = _make_adapter(require_mention=True)
+ 
+@@ -117,13 +148,120 @@ def test_group_messages_can_require_direct_trigger_via_config():
      assert adapter_no_mention._should_process_message(_group_message("/status"), is_command=True) is True
  
  
@@ -374,3 +468,11 @@ index ababe5ec6..e2367dbbd 100644
  def test_ignored_threads_drop_group_messages_before_other_gates():
      adapter = _make_adapter(require_mention=False, free_response_chats=["-200"], ignored_threads=[31, "42"])
  
+@@ -153,6 +291,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+     (hermes_home / "config.yaml").write_text(
+         "telegram:\n"
+         "  require_mention: true\n"
++        "  reply_triggers: false\n"
+         "  mention_patterns:\n"
+         "    - \"^\\\\s*chompy\\\\b\"\n"
+         "  free_response_chats:\n"
