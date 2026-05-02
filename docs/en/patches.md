@@ -14,6 +14,7 @@ Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specif
 | `020-auth-profile-root-fallback` | exported | Lets profile auth stores fall back to the root auth store when the profile has no `auth.json` yet. | Has focused auth/profile regression coverage. |
 | `030-credential-pool-recovery` | exported | Improves credential-pool recovery by tracking the active credential ID, keeping invalid credentials out of cooldown recovery, and rotating round-robin entries only after leases are released. | Transplanted from the legacy fork commits `e17a823c` and `97fa2dbc`; depends on `020-auth-profile-root-fallback`. |
 | `040-telegram-free-response-target-gating` | exported | Prevents Telegram free-response group chats from hijacking messages explicitly addressed to another bot or user. | Uses positive addressing: direct mentions/replies/wake words address this bot, but fresh explicit addressing to another target (`@other_bot`, `/cmd@other_bot`, `Name, ...`) wins over reply context; ambient free-response chat does not hijack unaddressed questions. |
+| `050-homeassistant-tool-config-url` | exported | Lets Home Assistant tools read `platforms.homeassistant.extra.url` from profile `config.yaml` when `HASS_URL` is absent. | Keeps env override compatibility and the existing `homeassistant.local` fallback; includes focused tool/config regression coverage plus a live read-only smoke check. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Keeps Codex memory flush on the Responses transport contract. | Conflicts with current fetched upstream in `run_agent.py`; refresh or retire before the next live upstream merge. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flattens unsupported transcript roles such as `tool` before auxiliary Codex Responses calls. | Applies cleanly in the latest live smoke check. |
 | `070-max-gateway-text-mvp` | exported | Adds a text-only MAX messenger gateway using webhook-first production inbound delivery, explicit `MAX_TRANSPORT=polling` for local testing, configurable polling cadence, operator status diagnostics, and `POST /messages` outbound text. | Local-overlay patch; webhook remains the default production transport, while `GET /updates` is available only as an opt-in dev/test fallback (`MAX_POLL_TIMEOUT`, `MAX_POLL_IDLE_SLEEP`). The polling request timeout now has headroom over MAX long-poll timeout so idle polls do not spam `ReadTimeout` stack traces. `hermes status` and gateway setup now spell out active MAX mode and missing webhook/public URL pieces without needing a live approved bot. |
@@ -64,7 +65,7 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
 - `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `061`, and optional `080`.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, and optional `080`.
 
 ## Workflow features
 

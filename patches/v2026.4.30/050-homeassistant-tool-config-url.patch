@@ -1,0 +1,140 @@
+diff --git a/tests/tools/test_homeassistant_tool.py b/tests/tools/test_homeassistant_tool.py
+index 654424a0a..715701d25 100644
+--- a/tests/tools/test_homeassistant_tool.py
++++ b/tests/tools/test_homeassistant_tool.py
+@@ -14,6 +14,7 @@ from tools.homeassistant_tool import (
+     _filter_and_summarize,
+     _build_service_payload,
+     _parse_service_response,
++    _get_config,
+     _get_headers,
+     _handle_get_state,
+     _handle_call_service,
+@@ -464,6 +465,50 @@ class TestCheckAvailable:
+         monkeypatch.setenv("HASS_TOKEN", "")
+         assert _check_ha_available() is False
+ 
++    def test_available_with_profile_config_token(self, tmp_path, monkeypatch):
++        home = tmp_path / ".hermes"
++        home.mkdir()
++        (home / "config.yaml").write_text(
++            "platforms:\n"
++            "  homeassistant:\n"
++            "    token: config-token\n",
++            encoding="utf-8",
++        )
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        monkeypatch.delenv("HASS_TOKEN", raising=False)
++        monkeypatch.setattr("tools.homeassistant_tool._HASS_TOKEN", "")
++
++        assert _check_ha_available() is True
++
++
++# ---------------------------------------------------------------------------
++# Config resolution
++# ---------------------------------------------------------------------------
++
++
++class TestGetConfig:
++    def test_hass_url_falls_back_to_profile_config(self, tmp_path, monkeypatch):
++        """Tools should use profile config URL when only HASS_TOKEN is in .env."""
++        home = tmp_path / ".hermes"
++        home.mkdir()
++        (home / "config.yaml").write_text(
++            "platforms:\n"
++            "  homeassistant:\n"
++            "    extra:\n"
++            "      url: http://ha-config.example:8123\n",
++            encoding="utf-8",
++        )
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        monkeypatch.setenv("HASS_TOKEN", "env-token")
++        monkeypatch.delenv("HASS_URL", raising=False)
++        monkeypatch.setattr("tools.homeassistant_tool._HASS_URL", "")
++        monkeypatch.setattr("tools.homeassistant_tool._HASS_TOKEN", "")
++
++        hass_url, hass_token = _get_config()
++
++        assert hass_url == "http://ha-config.example:8123"
++        assert hass_token == "env-token"
++
+ 
+ # ---------------------------------------------------------------------------
+ # Auth headers
+diff --git a/tools/homeassistant_tool.py b/tools/homeassistant_tool.py
+index 2e698a459..359e5a15c 100644
+--- a/tools/homeassistant_tool.py
++++ b/tools/homeassistant_tool.py
+@@ -7,7 +7,9 @@ Registers four LLM-callable tools:
+ - ``ha_call_service`` -- call a HA service (turn_on, turn_off, set_temperature, etc.)
+ 
+ Authentication uses a Long-Lived Access Token via ``HASS_TOKEN`` env var.
+-The HA instance URL is read from ``HASS_URL`` (default: http://homeassistant.local:8123).
++The HA instance URL is read from ``HASS_URL`` or profile ``config.yaml``
++(``platforms.homeassistant.extra.url``), falling back to
++``http://homeassistant.local:8123``.
+ """
+ 
+ import asyncio
+@@ -28,11 +30,46 @@ _HASS_URL: str = ""
+ _HASS_TOKEN: str = ""
+ 
+ 
++def _get_profile_homeassistant_config() -> tuple[str, str]:
++    """Return (url, token) from profile config.yaml when present."""
++    try:
++        import yaml
++        from hermes_constants import get_hermes_home
++
++        config_path = get_hermes_home() / "config.yaml"
++        if not config_path.exists():
++            return "", ""
++
++        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
++        if not isinstance(raw, dict):
++            return "", ""
++
++        platforms = raw.get("platforms") or {}
++        platform_cfg = (
++            platforms.get("homeassistant") if isinstance(platforms, dict) else None
++        )
++        if not isinstance(platform_cfg, dict):
++            homeassistant_cfg = raw.get("homeassistant")
++            platform_cfg = homeassistant_cfg if isinstance(homeassistant_cfg, dict) else {}
++
++        extra = platform_cfg.get("extra") if isinstance(platform_cfg, dict) else {}
++        if not isinstance(extra, dict):
++            extra = {}
++
++        url = extra.get("url") or platform_cfg.get("url") or ""
++        token = platform_cfg.get("token") or ""
++        return str(url), str(token)
++    except Exception:
++        logger.debug("Failed to load Home Assistant settings from profile config", exc_info=True)
++        return "", ""
++
++
+ def _get_config():
+-    """Return (hass_url, hass_token) from env vars at call time."""
++    """Return (hass_url, hass_token) from overrides, env vars, or profile config."""
++    config_url, config_token = _get_profile_homeassistant_config()
+     return (
+-        (_HASS_URL or os.getenv("HASS_URL", "http://homeassistant.local:8123")).rstrip("/"),
+-        _HASS_TOKEN or os.getenv("HASS_TOKEN", ""),
++        (_HASS_URL or os.getenv("HASS_URL", "") or config_url or "http://homeassistant.local:8123").rstrip("/"),
++        _HASS_TOKEN or os.getenv("HASS_TOKEN", "") or config_token,
+     )
+ 
+ # Regex for valid HA entity_id format (e.g. "light.living_room", "sensor.temperature_1")
+@@ -342,8 +379,9 @@ def _handle_list_services(args: dict, **kw) -> str:
+ # ---------------------------------------------------------------------------
+ 
+ def _check_ha_available() -> bool:
+-    """Tool is only available when HASS_TOKEN is set."""
+-    return bool(os.getenv("HASS_TOKEN"))
++    """Tool is only available when a Home Assistant token is configured."""
++    _, token = _get_config()
++    return bool(token)
+ 
+ 
+ # ---------------------------------------------------------------------------

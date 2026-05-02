@@ -74,6 +74,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "auth-profile-root-fallback",
                 "credential-pool-recovery",
                 "telegram-free-response-target-gating",
+                "homeassistant-tool-config-url",
                 "codex-auxiliary-tool-role-flattening",
                 "api-server-provider-proxy",
                 "max-gateway-text-mvp",

@@ -95,6 +95,31 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "homeassistant-tool-config-url",
+      "file": "patches/v2026.4.30/050-homeassistant-tool-config-url.patch",
+      "title_en": "Home Assistant tools use profile config URL",
+      "title_ru": "Home Assistant tools берут URL из profile config",
+      "description_en": "Lets LLM-callable Home Assistant tools resolve platforms.homeassistant.extra.url from profile config.yaml when HASS_URL is not set, keeping env overrides and the existing local fallback.",
+      "description_ru": "Позволяет LLM-callable Home Assistant tools брать platforms.homeassistant.extra.url из profile config.yaml, если HASS_URL не задан, сохраняя env overrides и прежний local fallback.",
+      "category": "tools",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_homeassistant_tool.py",
+          "tests/integration/test_ha_integration.py",
+          "tests/gateway/test_homeassistant.py"
+        ],
+        "live_smoke": "ha_list_entities with HASS_URL absent and platforms.homeassistant.extra.url from profile config.yaml resolved the configured Home Assistant URL and returned success"
+      },
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "codex-auxiliary-tool-role-flattening",
       "file": "patches/v2026.4.30/061-codex-auxiliary-tool-role-flattening.patch",
       "title_en": "Flatten unsupported transcript roles for Codex auxiliary Responses calls",
