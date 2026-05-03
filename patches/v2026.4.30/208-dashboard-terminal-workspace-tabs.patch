@@ -1,0 +1,425 @@
+From ead849a5e04cc480ae09bcf7e611db5584d14aa5 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 20:39:59 +0300
+Subject: [PATCH] feat: add dashboard terminal workspace tabs
+
+---
+ ...est_dashboard_profile_selector_frontend.py |  41 +++-
+ .../test_web_server_runtime_registry.py       |  10 +
+ web/src/App.tsx                               | 213 +++++++++++++++++-
+ web/src/pages/ChatPage.tsx                    |  37 ++-
+ 4 files changed, 292 insertions(+), 9 deletions(-)
+
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index c255ac17c..a45a545a5 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -81,8 +81,8 @@ def test_chat_page_forwards_live_profile_and_terminal_query_to_pty_websocket():
+ 
+     assert "profile: string | null" in page
+     assert 'if (profile) qs.set("profile", profile);' in page
+-    assert 'const profile = searchParams.get("profile");' in page
+-    assert 'const terminalQueryId = searchParams.get("terminal");' in page
++    assert 'const profile = profileOverride !== undefined ? profileOverride : searchParams.get("profile");' in page
++    assert 'const terminalQueryId = terminalId ?? searchParams.get("terminal");' in page
+     assert "buildWsUrl(token, resume, channel, profile)" in page
+     assert "}, [channel, profile, resume, terminalClosed]);" in page
+ 
+@@ -93,3 +93,40 @@ def test_chat_page_exposes_close_terminal_action():
+     assert "handleCloseTerminal" in page
+     assert "data-close-profile-terminal" in page
+     assert "close terminal" in page.lower()
++
++
++def test_dashboard_uses_multi_terminal_workspace_tabs():
++    app = _read("App.tsx")
++
++    assert "interface ChatTerminalTab" in app
++    assert "chatTerminalTabs" in app
++    assert "activeChatTerminalId" in app
++    assert "TerminalWorkspaceTabs" in app
++    assert "data-dashboard-terminal-tabs" in app
++    assert "data-dashboard-terminal-pane" in app
++    assert "<ChatPage" in app and "terminalId={tab.id}" in app
++    assert "profile={tab.profile}" in app
++    assert "resume={tab.resume}" in app
++
++
++def test_dashboard_close_terminal_tab_requires_confirmation_and_deletes_specific_pty():
++    app = _read("App.tsx")
++
++    assert "confirmDashboardTerminalClose" in app
++    assert "window.confirm" in app
++    assert "This will terminate the PTY process" in app
++    assert "closeDashboardTerminalTab" in app
++    assert "DELETE" in app
++    assert "/api/dashboard/runtimes/pty/" in app
++    assert "encodeURIComponent(tab.id)" in app
++
++
++def test_chat_page_accepts_workspace_terminal_props():
++    page = _read("pages/ChatPage.tsx")
++
++    assert "interface ChatPageProps" in page
++    assert "terminalId?: string" in page
++    assert "profile?: string | null" in page
++    assert "resume?: string | null" in page
++    assert "onRequestClose?: () => void" in page
++    assert "onRequestClose();" in page
+diff --git a/tests/hermes_cli/test_web_server_runtime_registry.py b/tests/hermes_cli/test_web_server_runtime_registry.py
+index 71c29b3d1..e19059d73 100644
+--- a/tests/hermes_cli/test_web_server_runtime_registry.py
++++ b/tests/hermes_cli/test_web_server_runtime_registry.py
+@@ -126,6 +126,7 @@ class TestDashboardRuntimeRegistryApi:
+                 self.closed = True
+ 
+         bridge = _FakeBridge()
++        sibling_bridge = _FakeBridge()
+         with ws._PTY_SESSIONS_LOCK:
+             ws._PTY_SESSIONS.clear()
+             ws._PTY_SESSIONS["terminal-hermesfix-123"] = {
+@@ -135,6 +136,13 @@ class TestDashboardRuntimeRegistryApi:
+                 "profile": "hermesfix",
+                 "bridge": bridge,
+             }
++            ws._PTY_SESSIONS["terminal-default"] = {
++                "id": "terminal-default",
++                "channel": "terminal-default",
++                "pid": 1234,
++                "profile": "default",
++                "bridge": sibling_bridge,
++            }
+ 
+         response = _client_with_dashboard_token().delete(
+             "/api/dashboard/runtimes/pty/terminal-hermesfix-123"
+@@ -149,8 +157,10 @@ class TestDashboardRuntimeRegistryApi:
+                 "pid": 4321,
+             }
+             assert bridge.closed is True
++            assert sibling_bridge.closed is False
+             with ws._PTY_SESSIONS_LOCK:
+                 assert "terminal-hermesfix-123" not in ws._PTY_SESSIONS
++                assert "terminal-default" in ws._PTY_SESSIONS
+         finally:
+             with ws._PTY_SESSIONS_LOCK:
+                 ws._PTY_SESSIONS.clear()
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index 84f586652..38eec7fd0 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -280,10 +280,131 @@ function buildRoutes(
+   return routes;
+ }
+ 
++interface ChatTerminalTab {
++  id: string;
++  profile: string | null;
++  resume: string | null;
++  label: string;
++  createdAt: number;
++}
++
++const TERMINAL_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
++
++function sanitizeTerminalPart(value: string): string {
++  return value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 48) || "terminal";
++}
++
++function generateDashboardTerminalId(profile: string | null): string {
++  const safeProfile = sanitizeTerminalPart(profile ?? "default");
++  const suffix =
++    typeof crypto !== "undefined" && "randomUUID" in crypto
++      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
++      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
++  return `terminal-${safeProfile}-${suffix}`.slice(0, 128);
++}
++
++function chatTerminalFromSearch(search: string, defaultTerminalId: string): ChatTerminalTab {
++  const params = new URLSearchParams(search);
++  const profile = params.get("profile");
++  const resume = params.get("resume");
++  const requestedId = params.get("terminal");
++  const isDefaultChat = !profile && !resume && !requestedId;
++  const id = isDefaultChat
++    ? defaultTerminalId
++    : requestedId && TERMINAL_ID_RE.test(requestedId)
++      ? requestedId
++      : generateDashboardTerminalId(profile);
++  const label = profile ?? "default";
++  return { id, profile, resume, label, createdAt: Date.now() };
++}
++
++function confirmDashboardTerminalClose(tab: ChatTerminalTab): boolean {
++  return window.confirm(
++    `Close terminal ${tab.label}? This will terminate the PTY process, not just hide the tab.`,
++  );
++}
++
++function TerminalWorkspaceTabs({
++  tabs,
++  activeId,
++  onSelect,
++  onClose,
++}: {
++  tabs: ChatTerminalTab[];
++  activeId: string | null;
++  onSelect: (id: string) => void;
++  onClose: (id: string) => void;
++}) {
++  if (tabs.length === 0) return null;
++  return (
++    <div
++      data-dashboard-terminal-tabs
++      className="mb-2 flex min-h-0 shrink-0 items-center gap-1 overflow-x-auto border border-current/15 bg-background-base/30 p-1"
++    >
++      {tabs.map((tab) => {
++        const active = tab.id === activeId;
++        return (
++          <div
++            key={tab.id}
++            className={cn(
++              "group flex max-w-[16rem] shrink-0 items-center gap-1 border px-2 py-1",
++              active
++                ? "border-primary/70 bg-primary/10 text-midground"
++                : "border-current/15 text-muted-foreground hover:text-midground",
++            )}
++            data-dashboard-terminal-tab={tab.id}
++          >
++            <button
++              type="button"
++              onClick={() => onSelect(tab.id)}
++              className="min-w-0 truncate text-left text-[0.7rem] tracking-[0.12em]"
++              title={`${tab.label} (${tab.id})`}
++            >
++              <span className="inline-flex items-center gap-1.5">
++                <Terminal className="h-3 w-3 shrink-0" />
++                <span className="truncate">{tab.label}</span>
++              </span>
++            </button>
++            <button
++              type="button"
++              aria-label={`Close terminal ${tab.label}`}
++              title="Close terminal"
++              onClick={() => onClose(tab.id)}
++              className="rounded-sm p-0.5 opacity-60 transition-opacity hover:bg-midground/10 hover:opacity-100"
++              data-close-dashboard-terminal-tab={tab.id}
++            >
++              <X className="h-3 w-3" />
++            </button>
++          </div>
++        );
++      })}
++    </div>
++  );
++}
++
++function EmptyTerminalWorkspace({ onOpenDefault }: { onOpenDefault: () => void }) {
++  return (
++    <div className="flex min-h-0 flex-1 items-center justify-center border border-current/15 bg-background-base/30 p-6">
++      <div className="max-w-md text-center">
++        <Terminal className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
++        <h3 className="font-expanded text-sm font-bold tracking-[0.12em] text-midground">No terminal open</h3>
++        <p className="mt-2 text-sm text-muted-foreground">
++          Open the default chat terminal or launch profile terminals from Profiles. Closing a tab terminates its PTY process.
++        </p>
++        <Button className="mt-4" onClick={onOpenDefault}>
++          Open default terminal
++        </Button>
++      </div>
++    </div>
++  );
++}
++
+ export default function App() {
+   const { t } = useI18n();
+-  const { pathname } = useLocation();
++  const location = useLocation();
++  const { pathname, search } = location;
+   const { manifests, loading: pluginsLoading } = usePlugins();
++  const navigate = useNavigate();
+   const { theme } = useTheme();
+   const [mobileOpen, setMobileOpen] = useState(false);
+   const closeMobile = useCallback(() => setMobileOpen(false), []);
+@@ -291,6 +412,9 @@ export default function App() {
+   const normalizedPath = pathname.replace(/\/$/, "") || "/";
+   const isChatRoute = normalizedPath === "/chat";
+   const embeddedChat = isDashboardEmbeddedChatEnabled();
++  const [chatTerminalTabs, setChatTerminalTabs] = useState<ChatTerminalTab[]>([]);
++  const [activeChatTerminalId, setActiveChatTerminalId] = useState<string | null>(null);
++  const [defaultChatTerminalId] = useState(() => generateDashboardTerminalId(null));
+ 
+   // A plugin can replace the built-in /chat page via `tab.override: "/chat"`
+   // in its manifest.  When one does, `buildRoutes` already swaps the route
+@@ -347,6 +471,57 @@ export default function App() {
+     [manifests],
+   );
+ 
++  useEffect(() => {
++    if (!embeddedChat || chatOverriddenByPlugin || !isChatRoute || pluginsLoading) return;
++    let cancelled = false;
++    void Promise.resolve().then(() => {
++      if (cancelled) return;
++      const tab = chatTerminalFromSearch(search, defaultChatTerminalId);
++      setChatTerminalTabs((current) => {
++        if (current.some((existing) => existing.id === tab.id)) return current;
++        return [...current, tab];
++      });
++      setActiveChatTerminalId(tab.id);
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [chatOverriddenByPlugin, defaultChatTerminalId, embeddedChat, isChatRoute, pluginsLoading, search]);
++
++  const openDefaultTerminal = useCallback(() => {
++    navigate("/chat");
++  }, [navigate]);
++
++  const selectDashboardTerminalTab = useCallback((id: string) => {
++    setActiveChatTerminalId(id);
++  }, []);
++
++  const closeDashboardTerminalTab = useCallback((id: string) => {
++    const tab = chatTerminalTabs.find((candidate) => candidate.id === id);
++    if (!tab) return;
++    if (!confirmDashboardTerminalClose(tab)) return;
++
++    const idx = chatTerminalTabs.findIndex((candidate) => candidate.id === id);
++    const remainingTabs = chatTerminalTabs.filter((candidate) => candidate.id !== id);
++    const selectedNextId =
++      activeChatTerminalId === id
++        ? remainingTabs[Math.min(idx, remainingTabs.length - 1)]?.id ?? null
++        : activeChatTerminalId;
++
++    const token = window.__HERMES_SESSION_TOKEN__;
++    if (token) {
++      fetch(`/api/dashboard/runtimes/pty/${encodeURIComponent(tab.id)}`, {
++        method: "DELETE",
++        headers: { "X-Hermes-Session-Token": token },
++      }).catch((err: unknown) => {
++        console.warn("[hermes-dashboard] close terminal tab request failed", err);
++      });
++    }
++
++    setChatTerminalTabs(remainingTabs);
++    setActiveChatTerminalId(selectedNextId);
++  }, [activeChatTerminalId, chatTerminalTabs]);
++
+   const layoutVariant = theme.layoutVariant ?? "standard";
+ 
+   useEffect(() => {
+@@ -608,7 +783,41 @@ export default function App() {
+                       )}
+                       aria-hidden={!isChatRoute}
+                     >
+-                      <ChatPage isActive={isChatRoute} />
++                      <TerminalWorkspaceTabs
++                        tabs={chatTerminalTabs}
++                        activeId={activeChatTerminalId}
++                        onSelect={selectDashboardTerminalTab}
++                        onClose={closeDashboardTerminalTab}
++                      />
++                      {chatTerminalTabs.length === 0 ? (
++                        <EmptyTerminalWorkspace onOpenDefault={openDefaultTerminal} />
++                      ) : (
++                        <div className="min-h-0 min-w-0 flex flex-1 flex-col">
++                          {chatTerminalTabs.map((tab) => {
++                            const tabActive = tab.id === activeChatTerminalId;
++                            return (
++                              <div
++                                key={tab.id}
++                                data-dashboard-terminal-pane={tab.id}
++                                className={cn(
++                                  "min-h-0 min-w-0 flex-1 flex-col",
++                                  tabActive ? "flex" : "hidden",
++                                )}
++                                aria-hidden={!tabActive}
++                              >
++                                <ChatPage
++                                  isActive={isChatRoute && tabActive}
++                                  terminalId={tab.id}
++                                  profile={tab.profile}
++                                  resume={tab.resume}
++                                  terminalLabel={tab.label}
++                                  onRequestClose={() => closeDashboardTerminalTab(tab.id)}
++                                />
++                              </div>
++                            );
++                          })}
++                        </div>
++                      )}
+                     </div>
+                   ))}
+               </div>
+diff --git a/web/src/pages/ChatPage.tsx b/web/src/pages/ChatPage.tsx
+index d3889a28a..2f71c1cf1 100644
+--- a/web/src/pages/ChatPage.tsx
++++ b/web/src/pages/ChatPage.tsx
+@@ -103,7 +103,23 @@ function terminalLineHeightForWidth(layoutWidthPx: number): number {
+   return layoutWidthPx < 1024 ? 1.02 : 1.15;
+ }
+ 
+-export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
++interface ChatPageProps {
++  isActive?: boolean;
++  terminalId?: string;
++  profile?: string | null;
++  resume?: string | null;
++  terminalLabel?: string;
++  onRequestClose?: () => void;
++}
++
++export default function ChatPage({
++  isActive = true,
++  terminalId,
++  profile: profileOverride,
++  resume: resumeOverride,
++  terminalLabel,
++  onRequestClose,
++}: ChatPageProps) {
+   const hostRef = useRef<HTMLDivElement | null>(null);
+   const termRef = useRef<Terminal | null>(null);
+   const fitRef = useRef<FitAddon | null>(null);
+@@ -148,9 +164,9 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+       : false,
+   );
+ 
+-  const resume = searchParams.get("resume");
+-  const profile = searchParams.get("profile");
+-  const terminalQueryId = searchParams.get("terminal");
++  const resume = resumeOverride !== undefined ? resumeOverride : searchParams.get("resume");
++  const profile = profileOverride !== undefined ? profileOverride : searchParams.get("profile");
++  const terminalQueryId = terminalId ?? searchParams.get("terminal");
+   const channel = useMemo(
+     () =>
+       terminalQueryId && /^[A-Za-z0-9._-]{1,128}$/.test(terminalQueryId)
+@@ -247,6 +263,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+   };
+ 
+   const handleCloseTerminal = useCallback(() => {
++    if (onRequestClose) {
++      onRequestClose();
++      return;
++    }
++
++    const label = terminalLabel ?? profile ?? "default";
++    const confirmed = window.confirm(
++      `Close terminal ${label}? This will terminate the PTY process, not just hide the tab.`,
++    );
++    if (!confirmed) return;
++
+     manualCloseRef.current = true;
+     setClosedTerminalKey(terminalKey);
+ 
+@@ -266,7 +293,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+     }
+     wsRef.current = null;
+     termRef.current?.write("\r\n\x1b[90m[terminal closed]\x1b[0m\r\n");
+-  }, [channel, terminalKey]);
++  }, [channel, onRequestClose, profile, terminalKey, terminalLabel]);
+ 
+   useEffect(() => {
+     const host = hostRef.current;
+-- 
+2.39.5
+

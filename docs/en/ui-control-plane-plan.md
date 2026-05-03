@@ -208,7 +208,22 @@ Reference: admin-ui pages plus the workspace chat-reader idea, implemented throu
 
 Status: exported as PatchKit unit `207-dashboard-session-log-inspector`; runtime commit `2205eb455`, depends on `200`–`206`. The implementation adds authenticated read-only `/api/dashboard/profiles/{name}/sessions`, `/sessions/{session_id}` and `/logs`, plus API client/Profile page wiring for `Session inspector` and `Log inspector`. Endpoints expose safe metadata only: session counts, token/cost/api-call metadata, message/tool-call summaries and log-file stats; they do not expose message bodies, raw tool args, system prompts, log contents, env or secrets. Validation: profile inspector focused tests `5 passed`, broader dashboard focused tests `41 passed`, `npm run build` passed, focused eslint passed; live dashboard smoke on `http://10.50.50.28:9119/profiles?profile=hermesfix` confirmed `200` for sessions/logs and no `API_KEY`/`SECRET` payload leaks.
 
-### `208-dashboard-assembly-analytics`
+### `208-dashboard-terminal-workspace-tabs`
+
+Follow-up fix for terminal UX after `206`: the dashboard Chat surface is now an App-level multi-terminal workspace.
+
+Scope:
+
+- tab bar for live embedded terminals;
+- default Chat terminal and profile terminals remain mounted as separate PTY panes;
+- switching tabs changes the active visible terminal without killing hidden terminals;
+- profile `Open terminal` adds a unique tab and keeps the existing default/profile tabs alive;
+- closing a tab requires confirmation because it really terminates the PTY process;
+- confirmed close calls `DELETE /api/dashboard/runtimes/pty/{id}` and removes only that terminal tab/session.
+
+Status: exported as PatchKit unit `208-dashboard-terminal-workspace-tabs`; runtime commit `ead849a5e`, depends on `200`–`207`. Validation: focused tests `44 passed`, `npm run build`, focused ESLint, live smoke on `10.50.50.28:9119` confirmed default + `hermesfix` tabs remain separate, cancel keeps PTYs, confirm close removes only selected PTY.
+
+### `209-dashboard-assembly-analytics`
 
 Profile-aware analytics and whole-assembly summary.
 
@@ -223,7 +238,7 @@ Scope:
 
 Why before controlled actions: first we need visibility into load, cost and activity across the whole assembly; otherwise stop/restart/mutation decisions are blind.
 
-### `209-dashboard-controlled-actions`
+### `210-dashboard-controlled-actions`
 
 Careful mutation layer after read-only UI is proven.
 
@@ -270,4 +285,4 @@ For every UI patch:
 - Where should long-lived worker roster metadata live: profile config, project `.hermes/`, or dashboard runtime DB?
 - How much subagent/delegate_task activity can be exposed from existing process/session state without invasive core changes?
 - Should tmux be an optional integration or a first-class supported backend?
-- Which parts are upstream-candidate vs local-overlay? Current read: `200`–`204` can be upstream-candidate; `205`–`207` may start as local-overlay until the product shape stabilizes.
+- Which parts are upstream-candidate vs local-overlay? Current read: `200`–`204` can be upstream-candidate; `205`–`208` may start as local-overlay until the product shape stabilizes.

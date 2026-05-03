@@ -435,6 +435,49 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-terminal-workspace-tabs",
+      "file": "patches/v2026.4.30/208-dashboard-terminal-workspace-tabs.patch",
+      "title_en": "Dashboard terminal workspace tabs",
+      "title_ru": "Terminal workspace tabs в dashboard",
+      "description_en": "Adds App-level multi-terminal workspace tabs for the embedded dashboard Chat terminal. The default Chat terminal and profile terminals now remain mounted as separate PTY panes; selecting a tab switches without killing other terminals, and closing a tab requires confirmation because it calls DELETE /api/dashboard/runtimes/pty/{id} and terminates exactly that PTY process.",
+      "description_ru": "Добавляет App-level multi-terminal workspace tabs для embedded Chat terminal в dashboard. Default Chat terminal и profile terminals теперь остаются отдельными mounted PTY panes; выбор tab переключает активный terminal без убийства остальных, а закрытие tab требует confirmation, потому что вызывает DELETE /api/dashboard/runtimes/pty/{id} и завершает ровно этот PTY process.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle",
+        "dashboard-session-log-inspector"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py",
+          "tests/hermes_cli/test_web_server_runtime_registry.py",
+          "tests/hermes_cli/test_web_server_profile_inspector.py",
+          "tests/hermes_cli/test_web_server_worker_roster.py",
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/App.tsx src/pages/ChatPage.tsx src/pages/ProfilesPage.tsx src/lib/api.ts"
+        ],
+        "live_smoke": "Live dashboard systemd service on http://10.50.50.28:9119 restarted from runtime commit ead849a5e; SPA navigation from /chat to /profiles and Open terminal for hermesfix kept the default terminal tab mounted while opening a hermesfix tab, /api/dashboard/runtimes showed separate default/hermesfix PTYs with correct profiles, canceling the close confirmation kept both PTYs, and confirming close on hermesfix removed only that PTY while default remained running."
+      },
+      "exported_from": "ead849a5e",
+      "base_runtime": "2205eb455",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

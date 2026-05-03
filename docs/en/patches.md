@@ -90,8 +90,9 @@ Initial sequence:
 | `205-dashboard-worker-roster` | exported | Authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers from `dashboard/worker_roster.json` plus live PTY runtime workers from `204`, with safe role/lane/mission/model/capability/process metadata and no secrets/env/output/session/log/memory bodies. |
 | `206-dashboard-terminal-profile-lifecycle` | exported | Bugfix/control slice: Open terminal from a profile creates a unique `/chat?profile=<name>&terminal=<id>` channel instead of reusing the default Chat terminal; Chat now has Close terminal backed by `DELETE /api/dashboard/runtimes/pty/{id}`. |
 | `207-dashboard-session-log-inspector` | exported | Profile-aware read-only session/log inspector: `/api/dashboard/profiles/{name}/sessions`, `/sessions/{session_id}` and `/logs` expose safe session counts, token/cost metadata, message/tool-call summaries and log-file metadata without message bodies, raw tool args, system prompts, log contents, env or secrets. |
-| `208-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
-| `209-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
+| `208-dashboard-terminal-workspace-tabs` | exported | App-level multi-terminal workspace tabs: default Chat and profile terminals remain separate mounted PTY panes, switching tabs does not kill other terminals, and closing a tab requires confirmation before terminating exactly that PTY via `DELETE /api/dashboard/runtimes/pty/{id}`. |
+| `209-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
+| `210-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
 
 ## Workflow features
 

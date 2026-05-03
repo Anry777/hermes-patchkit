@@ -8,6 +8,7 @@
     "dashboard-runtime-registry",
     "dashboard-worker-roster",
     "dashboard-terminal-profile-lifecycle",
-    "dashboard-session-log-inspector"
+    "dashboard-session-log-inspector",
+    "dashboard-terminal-workspace-tabs"
   ]
 }
