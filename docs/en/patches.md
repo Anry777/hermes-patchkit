@@ -25,7 +25,7 @@ Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specif
 | `075-max-gateway-file-attachments` | exported | Adds native MAX file/document delivery and inbound document caching: non-image `MEDIA:/path` files are uploaded through `/uploads?type=file`, and inbound file attachments become Hermes document events. | Depends on `074-max-send-message-media-routing`. Keeps raster images on the existing native image path, routes files such as `.txt`, `.md`, `.csv`, `.pdf`, `.docx`, and `.xlsx` through file attachments, and avoids exposing local filesystem paths as chat text. |
 | `076-max-media-directive-safety` | exported | Stops documented `MEDIA:` examples and markdown/code snippets from being parsed as real attachments. | Depends on `075-max-gateway-file-attachments`. `MEDIA:` directives for MAX must be real local paths on their own plain line, not placeholder paths, inline code, or fenced code blocks. |
 | `077-max-markdown-formatting` | exported | Makes outgoing MAX text less flat by sending text and captions with official MAX Markdown formatting by default. | Depends on `076-max-media-directive-safety`. Adds configurable `MAX_TEXT_FORMAT` (`markdown`, `html`, or invalid/disabled values to omit formatting metadata), preserves explicit per-message metadata overrides, and updates the MAX prompt hint to use concise MAX-safe Markdown without wrapping `MEDIA:` lines in code blocks. Fresh runtime live sends confirmed that MAX renders both Markdown and HTML formatting; if raw Markdown appears again, restart the gateway/tool process before changing payload logic. |
-| `080-api-server-provider-proxy` | exported | Adds an opt-in `provider_proxy` mode to the OpenAI-compatible API Server: `/v1/models` returns an explicit catalog and `/v1/chat/completions` routes to configured provider/model targets without creating an `AIAgent`. | Generic upstream-candidate patch. Supports non-streaming Chat Completions passthrough for OpenAI-compatible providers and a compatibility path for `openai-codex`/Responses; streaming, `/v1/responses`, and `/v1/runs` fail closed as unsupported operations. |
+| `080-api-server-provider-proxy` | exported | Adds an opt-in `provider_proxy` mode to the OpenAI-compatible API Server: `/v1/models` returns an explicit catalog and `/v1/chat/completions` routes to configured provider/model targets without creating an `AIAgent`. | Generic upstream-candidate patch. Supports non-streaming and streaming Chat Completions for OpenAI-compatible providers, plus a compatibility path for `openai-codex`/Responses that adapts Responses streams into OpenAI Chat Completion SSE chunks. `/v1/responses` and `/v1/runs` still fail closed as unsupported operations. |
 
 ## Patch highlights
 
@@ -38,9 +38,10 @@ Upstream Hermes does not provide this provider-gateway split today: its API Serv
 - `/v1/models` returns only the configured public model IDs;
 - `/v1/chat/completions` routes by `body.model` to the configured provider/model target;
 - Hermes bypasses `AIAgent`, so there are no Hermes tools, memory, sessions, SOUL/context injection, or agent run semantics;
-- OpenAI-compatible providers use a non-streaming Chat Completions passthrough;
+- OpenAI-compatible providers use a Chat Completions passthrough;
 - `openai-codex` / Responses providers use a compatibility adapter;
-- streaming, `/v1/responses`, and `/v1/runs` fail closed until separate patches add those surfaces.
+- `stream: true` returns OpenAI-compatible `text/event-stream` chunks when `allow_streaming: true` is configured;
+- `/v1/responses` and `/v1/runs` fail closed until separate patches add those agent-style surfaces.
 
 Use the dedicated profile when you want to install just this provider gateway patch:
 
