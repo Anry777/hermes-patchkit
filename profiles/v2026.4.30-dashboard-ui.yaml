@@ -2,6 +2,7 @@
   "name": "v2026.4.30-dashboard-ui",
   "patches": [
     "dashboard-profile-api",
-    "dashboard-profile-selector"
+    "dashboard-profile-selector",
+    "dashboard-profile-aware-pty"
   ]
 }

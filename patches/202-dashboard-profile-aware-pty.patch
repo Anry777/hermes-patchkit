@@ -1,0 +1,329 @@
+From 4c6a0e63155b64e58e66260e494bbb7f032e1f29 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 16:28:31 +0300
+Subject: [PATCH] feat: add dashboard profile-aware PTY
+
+---
+ hermes_cli/web_server.py                      | 50 ++++++++++++-
+ ...est_dashboard_profile_selector_frontend.py | 18 +++++
+ tests/hermes_cli/test_web_server.py           | 74 +++++++++++++++++++
+ web/src/pages/ChatPage.tsx                    | 15 +++-
+ web/src/pages/ProfilesPage.tsx                | 23 +++++-
+ 5 files changed, 175 insertions(+), 5 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 2e542a16b..9db632fe4 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -2798,6 +2798,7 @@ _event_lock = asyncio.Lock()
+ def _resolve_chat_argv(
+     resume: Optional[str] = None,
+     sidecar_url: Optional[str] = None,
++    profile: Optional[str] = None,
+ ) -> tuple[list[str], Optional[str], Optional[dict]]:
+     """Resolve the argv + cwd + env for the chat PTY.
+ 
+@@ -2813,6 +2814,11 @@ def _resolve_chat_argv(
+     `sidecar_url` (when set) is forwarded as ``HERMES_TUI_SIDECAR_URL`` so
+     the spawned ``tui_gateway.entry`` can mirror dispatcher emits to the
+     dashboard's ``/api/pub`` endpoint (see :func:`pub_ws`).
++
++    `profile` selects a Hermes profile for this PTY child only.  The dashboard
++    server process keeps its own HERMES_HOME; only the spawned TUI receives the
++    profile-scoped environment, so opening a profile terminal does not mutate
++    the sticky active profile or leak profile state across tabs.
+     """
+     from hermes_cli.main import PROJECT_ROOT, _make_tui_argv
+ 
+@@ -2820,6 +2826,12 @@ def _resolve_chat_argv(
+     env = os.environ.copy()
+     env.setdefault("NODE_ENV", "production")
+ 
++    if profile:
++        from hermes_cli.profiles import resolve_profile_env
++
++        env["HERMES_HOME"] = resolve_profile_env(profile)
++        env["HERMES_DASHBOARD_PROFILE"] = profile
++
+     if resume:
+         env["HERMES_TUI_RESUME"] = resume
+ 
+@@ -2829,6 +2841,30 @@ def _resolve_chat_argv(
+     return list(argv), str(cwd) if cwd else None, env
+ 
+ 
++def _dashboard_pty_profile_or_close_code(profile: Optional[str]) -> tuple[Optional[str], Optional[int]]:
++    """Validate an optional /api/pty profile query parameter.
++
++    Returns ``(profile, None)`` when the query is absent or valid.  Returns
++    ``(None, close_code)`` when the WebSocket should be rejected before accept.
++    """
++    if not profile:
++        return None, None
++
++    try:
++        from hermes_cli.profiles import profile_exists, validate_profile_name
++
++        validate_profile_name(profile)
++        if not profile_exists(profile):
++            return None, 4404
++    except ValueError:
++        return None, 4400
++    except Exception:
++        _log.exception("Failed to validate dashboard PTY profile %r", profile)
++        return None, 1011
++
++    return profile, None
++
++
+ def _build_sidecar_url(channel: str) -> Optional[str]:
+     """ws:// URL the PTY child should publish events to, or None when unbound."""
+     host = getattr(app.state, "bound_host", None)
+@@ -2882,6 +2918,13 @@ async def pty_ws(ws: WebSocket) -> None:
+         await ws.close(code=4403)
+         return
+ 
++    profile, profile_close_code = _dashboard_pty_profile_or_close_code(
++        ws.query_params.get("profile") or None
++    )
++    if profile_close_code is not None:
++        await ws.close(code=profile_close_code)
++        return
++
+     await ws.accept()
+ 
+     # --- spawn PTY ------------------------------------------------------
+@@ -2890,7 +2933,12 @@ async def pty_ws(ws: WebSocket) -> None:
+     sidecar_url = _build_sidecar_url(channel) if channel else None
+ 
+     try:
+-        argv, cwd, env = _resolve_chat_argv(resume=resume, sidecar_url=sidecar_url)
++        if profile:
++            argv, cwd, env = _resolve_chat_argv(
++                resume=resume, sidecar_url=sidecar_url, profile=profile
++            )
++        else:
++            argv, cwd, env = _resolve_chat_argv(resume=resume, sidecar_url=sidecar_url)
+     except SystemExit as exc:
+         # _make_tui_argv calls sys.exit(1) when node/npm is missing.
+         await ws.send_text(f"\r\n\x1b[31mChat unavailable: {exc}\x1b[0m\r\n")
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index 5b52b7d88..81a9fe71f 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -48,3 +48,21 @@ def test_profiles_page_uses_profile_inventory_api():
+     assert "api.getDashboardProfile" in page
+     assert "active_profile" in page
+     assert "gateway_running" in page
++
++
++def test_profiles_page_links_selected_profile_to_chat_terminal():
++    page = _read("pages/ProfilesPage.tsx")
++
++    assert "function profileChatHref" in page
++    assert "new URLSearchParams({ profile: name })" in page
++    assert 'to={profileChatHref(selectedName)}' in page
++    assert "data-open-profile-terminal" in page
++
++
++def test_chat_page_forwards_profile_query_to_pty_websocket():
++    page = _read("pages/ChatPage.tsx")
++
++    assert "profile: string | null" in page
++    assert 'if (profile) qs.set("profile", profile);' in page
++    assert 'const profileRef = useRef<string | null>(searchParams.get("profile"));' in page
++    assert "buildWsUrl(token, resumeRef.current, channel, profileRef.current)" in page
+diff --git a/tests/hermes_cli/test_web_server.py b/tests/hermes_cli/test_web_server.py
+index 0093dfb97..eea972645 100644
+--- a/tests/hermes_cli/test_web_server.py
++++ b/tests/hermes_cli/test_web_server.py
+@@ -1954,6 +1954,80 @@ class TestPtyWebSocket:
+         assert "channel=abc-123" in url
+         assert "token=" in url
+ 
++    def test_profile_query_is_validated_and_forwarded_to_pty_resolver(self, monkeypatch):
++        root = Path(os.environ["HERMES_HOME"])
++        profile_dir = root / "profiles" / "coder"
++        profile_dir.mkdir(parents=True)
++        (profile_dir / "config.yaml").write_text("model: coder-model\n", encoding="utf-8")
++        captured: dict = {}
++
++        def fake_resolve(resume=None, sidecar_url=None, profile=None):
++            captured["profile"] = profile
++            return (["/bin/sh", "-c", "printf profile-ok"], None, None)
++
++        monkeypatch.setattr(self.ws_module, "_resolve_chat_argv", fake_resolve)
++
++        with self.client.websocket_connect(self._url(profile="coder")) as conn:
++            try:
++                conn.receive_bytes()
++            except Exception:
++                pass
++
++        assert captured.get("profile") == "coder"
++
++    def test_profile_query_rejects_invalid_or_missing_profile(self, monkeypatch):
++        from starlette.websockets import WebSocketDisconnect
++
++        called = False
++
++        def fake_resolve(*args, **kwargs):
++            nonlocal called
++            called = True
++            return (["/bin/cat"], None, None)
++
++        monkeypatch.setattr(self.ws_module, "_resolve_chat_argv", fake_resolve)
++
++        with pytest.raises(WebSocketDisconnect) as invalid_exc:
++            with self.client.websocket_connect(self._url(profile="../bad")):
++                pass
++        assert invalid_exc.value.code == 4400
++
++        with pytest.raises(WebSocketDisconnect) as missing_exc:
++            with self.client.websocket_connect(self._url(profile="missing")):
++                pass
++        assert missing_exc.value.code == 4404
++        assert called is False
++
++    def test_resolve_chat_argv_sets_profile_scoped_env_without_global_switch(self, monkeypatch):
++        import hermes_cli.main as main_mod
++        import hermes_cli.web_server as ws_mod
++
++        root = Path(os.environ["HERMES_HOME"])
++        profile_dir = root / "profiles" / "coder"
++        profile_dir.mkdir(parents=True)
++        (profile_dir / "config.yaml").write_text("model: coder-model\n", encoding="utf-8")
++        (root / "active_profile").write_text("default\n", encoding="utf-8")
++
++        monkeypatch.setattr(
++            main_mod,
++            "_make_tui_argv",
++            lambda tui_dir, tui_dev: (["/bin/true"], root / "ui-tui"),
++        )
++
++        argv, cwd, env = ws_mod._resolve_chat_argv(
++            resume="sess-42",
++            sidecar_url="ws://127.0.0.1:9119/api/pub?token=t&channel=c",
++            profile="coder",
++        )
++
++        assert argv == ["/bin/true"]
++        assert cwd == str(root / "ui-tui")
++        assert env["HERMES_HOME"] == str(profile_dir)
++        assert env["HERMES_DASHBOARD_PROFILE"] == "coder"
++        assert env["HERMES_TUI_RESUME"] == "sess-42"
++        assert env["HERMES_TUI_SIDECAR_URL"].startswith("ws://127.0.0.1:9119/api/pub?")
++        assert (root / "active_profile").read_text(encoding="utf-8").strip() == "default"
++
+     def test_pub_broadcasts_to_events_subscribers(self, monkeypatch):
+         """Frame written to /api/pub is rebroadcast verbatim to every
+         /api/events subscriber on the same channel."""
+diff --git a/web/src/pages/ChatPage.tsx b/web/src/pages/ChatPage.tsx
+index a38116faf..da8ac8d2a 100644
+--- a/web/src/pages/ChatPage.tsx
++++ b/web/src/pages/ChatPage.tsx
+@@ -38,10 +38,12 @@ function buildWsUrl(
+   token: string,
+   resume: string | null,
+   channel: string,
++  profile: string | null,
+ ): string {
+   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+   const qs = new URLSearchParams({ token, channel });
+   if (resume) qs.set("resume", resume);
++  if (profile) qs.set("profile", profile);
+   return `${proto}//${window.location.host}/api/pty?${qs.toString()}`;
+ }
+ 
+@@ -147,6 +149,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+   );
+ 
+   const resumeRef = useRef<string | null>(searchParams.get("resume"));
++  const profileRef = useRef<string | null>(searchParams.get("profile"));
+   const channel = useMemo(() => generateChannelId(), []);
+ 
+   useEffect(() => {
+@@ -297,7 +300,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+           // original keydown event's activation. Log to aid debugging.
+           console.warn("[dashboard clipboard] OSC 52 write failed:", err.message);
+         });
+-      } catch (e) {
++      } catch {
+         console.warn("[dashboard clipboard] malformed OSC 52 payload");
+       }
+       return true;
+@@ -483,7 +486,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+     });
+ 
+     // WebSocket
+-    const url = buildWsUrl(token, resumeRef.current, channel);
++    const url = buildWsUrl(token, resumeRef.current, channel, profileRef.current);
+     const ws = new WebSocket(url);
+     ws.binaryType = "arraybuffer";
+     wsRef.current = ws;
+@@ -522,6 +525,14 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+         setBanner("Chat is only reachable from localhost.");
+         return;
+       }
++      if (ev.code === 4404) {
++        setBanner("Selected profile was not found. Open /profiles and choose an existing profile.");
++        return;
++      }
++      if (ev.code === 4400) {
++        setBanner("Selected profile is not valid. Open /profiles and choose an existing profile.");
++        return;
++      }
+       if (ev.code === 1011) {
+         // Server already wrote an ANSI error frame.
+         return;
+diff --git a/web/src/pages/ProfilesPage.tsx b/web/src/pages/ProfilesPage.tsx
+index 5b51bd8e0..3ceed012e 100644
+--- a/web/src/pages/ProfilesPage.tsx
++++ b/web/src/pages/ProfilesPage.tsx
+@@ -6,7 +6,7 @@ import {
+   useState,
+   type ComponentType,
+ } from "react";
+-import { useSearchParams } from "react-router-dom";
++import { Link, useSearchParams } from "react-router-dom";
+ import {
+   Bot,
+   CheckCircle2,
+@@ -232,6 +232,11 @@ function ProfileCard({
+   );
+ }
+ 
++function profileChatHref(name: string): string {
++  const params = new URLSearchParams({ profile: name });
++  return `/chat?${params.toString()}`;
++}
++
+ function ProfileDetailCard({
+   detail,
+   loading,
+@@ -251,7 +256,21 @@ function ProfileDetailCard({
+             <CardTitle>{selectedName}</CardTitle>
+             <CardDescription>Profile paths, sessions, and log-file metadata.</CardDescription>
+           </div>
+-          {loading && <Spinner className="text-primary" />}
++          <div className="flex shrink-0 items-center gap-2">
++            {loading && <Spinner className="text-primary" />}
++            <Link
++              to={profileChatHref(selectedName)}
++              data-open-profile-terminal={selectedName}
++              className={cn(
++                "inline-flex items-center gap-1.5 border border-current/20 px-3 py-1.5",
++                "text-xs font-medium text-midground transition-colors",
++                "hover:border-current/40 hover:bg-midground/5",
++              )}
++            >
++              <Terminal className="h-3.5 w-3.5" />
++              Open terminal
++            </Link>
++          </div>
+         </div>
+       </CardHeader>
+       <CardContent>
+-- 
+2.39.5
+

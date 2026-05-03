@@ -220,6 +220,40 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-profile-aware-pty",
+      "file": "patches/v2026.4.30/202-dashboard-profile-aware-pty.patch",
+      "title_en": "Dashboard profile-aware embedded PTY",
+      "title_ru": "Profile-aware embedded PTY для dashboard",
+      "description_en": "Extends the built-in dashboard PTY bridge and Chat page so /api/pty and /chat can open embedded Hermes TUI sessions for a selected profile via profile=<name>, validating profile names and spawning with profile-scoped HERMES_HOME without mutating the global active profile.",
+      "description_ru": "Расширяет built-in dashboard PTY bridge и страницу Chat: /api/pty и /chat могут открывать embedded Hermes TUI для выбранного profile через profile=<name>, с validation profile names и profile-scoped HERMES_HOME без изменения global active profile.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/ChatPage.tsx src/pages/ProfilesPage.tsx"
+        ],
+        "live_smoke": "Temporary dashboard PTY smoke on 127.0.0.1:9138 opened /api/pty with profile=hermesfix and returned profile=hermesfix, HERMES_HOME=/root/.hermes/profiles/hermesfix, and resume=smoke-js without using a global profile switch."
+      },
+      "exported_from": "4c6a0e631",
+      "base_runtime": "36471e3b1",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

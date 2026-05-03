@@ -126,6 +126,8 @@ Profile-aware embedded TUI terminal.
 
 Почему важно: это первый реально полезный milestone — можно открыть живой Hermes TUI под разными profiles.
 
+Статус: exported как PatchKit unit `202-dashboard-profile-aware-pty`; runtime commit `4c6a0e631`, зависит от `200-dashboard-profile-api` и `201-dashboard-profile-selector`. Реализация добавляет validation `profile=<name>` в `/api/pty`, profile-scoped `HERMES_HOME` для PTY child без global active-profile switch, forwarding `resume`/sidecar параметров, Chat page URL propagation и кнопку “Open terminal” на Profiles page. Validation: focused runtime tests `24 passed`, frontend `npm run build` passed, focused eslint on touched files passed, live PTY smoke on `127.0.0.1:9138` confirmed `profile=hermesfix`, `HERMES_HOME=/root/.hermes/profiles/hermesfix` и `resume=smoke-js`.
+
 ### `203-dashboard-terminal-workspace`
 
 Multi-terminal manager in dashboard.
@@ -217,7 +219,7 @@ Careful mutation layer after read-only UI is proven.
 
 - dashboard lists all Hermes profiles correctly;
 - user can choose profile without changing global active profile;
-- user can open embedded TUI terminal for at least two different profiles at once;
+- user can open embedded TUI terminal for at least two different profiles via profile-aware `/chat`/`/api/pty` URLs;
 - default old dashboard chat path still works when no profile is selected;
 - profile path traversal attempts fail closed;
 - terminal spawn does not leak secrets in frontend-visible metadata;
