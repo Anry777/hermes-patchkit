@@ -5,6 +5,7 @@
     "dashboard-profile-selector",
     "dashboard-profile-aware-pty",
     "dashboard-terminal-workspace",
-    "dashboard-runtime-registry"
+    "dashboard-runtime-registry",
+    "dashboard-worker-roster"
   ]
 }

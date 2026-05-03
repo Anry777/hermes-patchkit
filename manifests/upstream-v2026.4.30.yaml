@@ -318,6 +318,41 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-worker-roster",
+      "file": "patches/v2026.4.30/205-dashboard-worker-roster.patch",
+      "title_en": "Dashboard worker roster API",
+      "title_ru": "Worker roster API для dashboard",
+      "description_en": "Adds authenticated read-only /api/dashboard/worker-roster metadata for the dashboard control plane, combining profile-local configured workers from dashboard/worker_roster.json with live runtime PTY workers from the runtime registry while exposing only safe role/lane/mission/model/capability/process metadata and excluding secrets, environment variables, terminal output, session messages, logs, and memory bodies.",
+      "description_ru": "Добавляет authenticated read-only /api/dashboard/worker-roster metadata для dashboard control plane: объединяет profile-local configured workers из dashboard/worker_roster.json с live runtime PTY workers из runtime registry и отдаёт только безопасные role/lane/mission/model/capability/process metadata без secrets, environment variables, terminal output, session messages, logs и memory bodies.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_worker_roster.py",
+          "tests/hermes_cli/test_web_server_runtime_registry.py",
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "live_smoke": "Live dashboard systemd service on http://10.50.50.28:9119 restarted from runtime commit 9ea912604; authenticated GET /api/dashboard/worker-roster returned 200 with counts configured_workers=0, runtime_workers=2, workers=2 and live runtime worker rows without secrets. Tests cover configured roster entries and invalid profile-local roster files."
+      },
+      "exported_from": "9ea912604",
+      "base_runtime": "671b540cc",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

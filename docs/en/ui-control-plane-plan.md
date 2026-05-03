@@ -176,6 +176,8 @@ Scope:
 
 Reference: `hermes-workspace` Swarm2 ideas, but without Claude naming and without a global active-profile model.
 
+Status: exported as PatchKit unit `205-dashboard-worker-roster`; runtime commit `9ea912604`, depends on `200`–`204`. The implementation adds authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers from `dashboard/worker_roster.json` plus live PTY runtime workers from `204`, exposing only safe role/lane/mission/model/capability/process metadata. Validation: focused worker roster tests `3 passed`, broader dashboard focused tests `32 passed`; live dashboard smoke returned `200` with counts `configured_workers=0`, `runtime_workers=2`, `workers=2` and no secrets.
+
 ### `206-dashboard-session-log-inspector`
 
 Profile-aware sessions/logs/tools inspector.
