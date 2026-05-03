@@ -15,6 +15,8 @@ Latest news: the Grok2API sidecar bridge can now expose selected Grok-style chat
 
 In `provider_proxy` mode, `/v1/models` exposes only the allowlisted model IDs, and `/v1/chat/completions` routes by `body.model` to the configured provider/model target. Hermes does not create an `AIAgent` for these calls, so there is no SOUL prompt, tools, memory, sessions, or agent run state in the middle. For `openai-codex`, the patch uses a Responses compatibility path behind the OpenAI-compatible surface.
 
+The current `080` surface is aimed at real IDE clients such as RooCode: Chat Completions streaming emits OpenAI-style SSE chunks, Codex Responses streams are bridged back into `chat.completion.chunk`, function/tool calls round-trip as OpenAI `tool_calls`, inline image parts are accepted, and RooCode-style `reasoning_effort` is mapped while unsupported Codex sampling fields such as `temperature` are filtered before they can trigger upstream 400s.
+
 If you want a local Hermes-hosted endpoint that can front multiple provider models, this is the patch to try first.
 
 ```bash
@@ -95,7 +97,7 @@ This repository is still early, but it now has a working safety loop:
 Recent patch highlights:
 
 - Grok2API sidecar bridge — a protocol-level integration that keeps grok2api outside Hermes while exposing it through the `080` provider_proxy gateway, including automatic `/v1/models` → Hermes catalog sync. See [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md).
-- `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls.
+- `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls. The IDE path covers streaming, tool calls, inline images, RooCode `reasoning_effort`, and Codex sampling-parameter filtering.
 - `070`–`077` — the MAX local-overlay chain, from webhook-first text MVP through native images/files and Markdown formatting.
 
 ## Quick start
