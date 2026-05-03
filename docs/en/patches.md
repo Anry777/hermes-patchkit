@@ -88,7 +88,8 @@ Initial sequence:
 | `204-dashboard-runtime-registry` | planned | Read-only registry for live Hermes/TUI/gateway/worker processes. |
 | `205-dashboard-worker-roster` | planned | Worker cards/roster: role, lane, mission, active task/tool and blocked reason. |
 | `206-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
-| `207-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
+| `207-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
+| `208-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
 
 ## Workflow features
 

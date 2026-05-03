@@ -182,7 +182,22 @@ Profile-aware sessions/logs/tools inspector.
 
 Reference: admin-ui pages + workspace chat reader idea, но реализовать через Hermes-native Python APIs.
 
-### `207-dashboard-controlled-actions`
+### `207-dashboard-assembly-analytics`
+
+Profile-aware analytics and whole-assembly summary.
+
+Состав:
+
+- reuse existing `/api/analytics/usage` semantics for the default/current dashboard scope, but add profile-safe aggregation across all Hermes profiles;
+- per-profile analytics cards: sessions, active/recent sessions, input/output/cache/reasoning tokens, estimated/actual cost when available, API calls, tool calls, top models and top skills;
+- whole-assembly summary: totals across default + named profiles, top profiles by activity/cost, inactive/stale profiles, gateway-running profiles, models/providers distribution;
+- compare mode: selected profile vs all profiles for the same period (`7d`, `30d`, `90d`);
+- preserve safety boundaries: no session messages, prompts, memory bodies, `.env`, auth files or raw log contents in analytics payloads;
+- degraded profiles must not break the assembly summary; return per-profile error metadata instead.
+
+Почему до controlled actions: сначала нужно видеть нагрузку, стоимость и активность всей сборки, иначе stop/restart/mutation decisions будут слепыми.
+
+### `208-dashboard-controlled-actions`
 
 Careful mutation layer after read-only UI is proven.
 
