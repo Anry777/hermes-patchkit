@@ -478,6 +478,89 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-assembly-analytics",
+      "file": "patches/v2026.4.30/209-dashboard-assembly-analytics.patch",
+      "title_en": "Dashboard assembly analytics",
+      "title_ru": "Assembly analytics для dashboard",
+      "description_en": "Adds authenticated safe whole-assembly dashboard analytics across all Hermes profiles: profile activity/staleness, token and cost totals, API/tool-call counts, top profiles, and model/provider distribution without exposing session IDs, message bodies, tool arguments, logs, environment variables, or secrets.",
+      "description_ru": "Добавляет authenticated safe whole-assembly analytics в dashboard по всем Hermes profiles: активность/staleness профилей, totals по tokens/cost, API/tool-call counts, top profiles и model/provider distribution без раскрытия session IDs, message bodies, tool arguments, logs, env или secrets.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle",
+        "dashboard-session-log-inspector",
+        "dashboard-terminal-workspace-tabs"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_assembly_analytics.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/AnalyticsPage.tsx src/lib/api.ts"
+        ],
+        "regression_tests": "53 passed across dashboard assembly analytics, controlled actions, profile selector source contracts, profile inspector, runtime registry, worker roster, PTY websocket, and profile API focused suites.",
+        "live_smoke": "Temporary live FastAPI smoke on 127.0.0.1:9140 returned 200 for authenticated /api/dashboard/analytics/assembly?days=30 with 4 profiles and 385 sessions in the observed runtime, and unauthenticated dashboard actions returned 401."
+      },
+      "exported_from": "042f10871",
+      "base_runtime": "ead849a5e",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
+      "id": "dashboard-controlled-actions",
+      "file": "patches/v2026.4.30/210-dashboard-controlled-actions.patch",
+      "title_en": "Dashboard controlled actions",
+      "title_ru": "Controlled actions для dashboard",
+      "description_en": "Adds a constrained dashboard mutation layer: authenticated allowlisted actions are listed at /api/dashboard/actions and can be run only through /api/dashboard/actions/{id}/run with an exact confirmation string, currently covering gateway restart and Hermes update while preserving existing detached action status logs.",
+      "description_ru": "Добавляет constrained mutation layer в dashboard: authenticated allowlisted actions доступны через /api/dashboard/actions и запускаются только через /api/dashboard/actions/{id}/run с exact confirmation string; текущий набор покрывает gateway restart и Hermes update, сохраняя существующие detached action status logs.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle",
+        "dashboard-session-log-inspector",
+        "dashboard-terminal-workspace-tabs",
+        "dashboard-assembly-analytics"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_controlled_actions.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/contexts/SystemActions.tsx src/lib/api.ts"
+        ],
+        "regression_tests": "53 passed across dashboard assembly analytics, controlled actions, profile selector source contracts, profile inspector, runtime registry, worker roster, PTY websocket, and profile API focused suites.",
+        "live_smoke": "Temporary live FastAPI smoke on 127.0.0.1:9140 returned 200 for authenticated /api/dashboard/actions with allowlisted ids gateway-restart and hermes-update plus exact confirmation strings; unauthenticated access returned 401. No mutation action was executed during smoke."
+      },
+      "exported_from": "efcb158cb",
+      "base_runtime": "042f10871",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

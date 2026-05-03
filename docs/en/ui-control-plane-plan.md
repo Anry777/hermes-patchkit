@@ -227,14 +227,16 @@ Status: exported as PatchKit unit `208-dashboard-terminal-workspace-tabs`; runti
 
 Profile-aware analytics and whole-assembly summary.
 
-Scope:
+Implemented scope:
 
-- reuse existing `/api/analytics/usage` semantics for the default/current dashboard scope, then add profile-safe aggregation across all Hermes profiles;
-- per-profile analytics cards: sessions, active/recent sessions, input/output/cache/reasoning tokens, estimated/actual cost when available, API calls, tool calls, top models and top skills;
-- whole-assembly summary: totals across default + named profiles, top profiles by activity/cost, inactive/stale profiles, gateway-running profiles, model/provider distribution;
-- compare mode: selected profile vs all profiles for the same period (`7d`, `30d`, `90d`);
-- preserve safety boundaries: no session messages, prompts, memory bodies, `.env`, auth files or raw log contents in analytics payloads;
-- degraded profiles must not break the assembly summary; return per-profile error metadata instead.
+- authenticated `/api/dashboard/analytics/assembly?days=<n>` across default + named profiles;
+- per-profile safe rollup: sessions, active sessions, input/output/cache/reasoning tokens, estimated/actual cost, API calls, tool calls, provider/model, last activity and stale flag;
+- whole-assembly summary: totals, top profiles by activity, stale profiles, model distribution and provider distribution;
+- dashboard Analytics page now loads the assembly rollup alongside existing usage analytics and renders a safe per-profile table;
+- degraded profiles return per-profile error metadata instead of breaking the whole summary;
+- safety boundary: no session IDs, message bodies, prompts, tool arguments, memory bodies, `.env`, auth files, raw log contents or secrets in the analytics payload.
+
+Status: exported as PatchKit unit `209-dashboard-assembly-analytics`; runtime commit `042f10871`, depends on `200`–`208`. Validation: `scripts/run_tests.sh` focused dashboard suite returned `53 passed`; `npm run build`; focused ESLint for `AnalyticsPage.tsx` and `api.ts`; temporary live smoke on `127.0.0.1:9140` returned analytics totals for 4 observed profiles and authenticated/unauthenticated gates behaved correctly.
 
 Why before controlled actions: first we need visibility into load, cost and activity across the whole assembly; otherwise stop/restart/mutation decisions are blind.
 
@@ -242,13 +244,15 @@ Why before controlled actions: first we need visibility into load, cost and acti
 
 Careful mutation layer after read-only UI is proven.
 
-Scope:
+Implemented scope:
 
-- start/stop/restart selected PTY or worker;
-- optional gateway status/restart per profile;
-- explicit confirmations for destructive actions;
-- audit labels in logs;
-- no profile deletion until a later dedicated patch.
+- authenticated `/api/dashboard/actions` lists allowlisted dashboard mutation actions with labels, descriptions, danger level and exact confirmation string;
+- authenticated `/api/dashboard/actions/{id}/run` runs only allowlisted actions after an exact confirmation match;
+- current actions are `gateway-restart` and `hermes-update`, reusing the existing detached Hermes action runner and status logs;
+- dashboard SystemActions now goes through the controlled action API instead of directly calling the older restart/update endpoints;
+- no profile deletion, arbitrary shell, raw argv editor or unlisted action execution.
+
+Status: exported as PatchKit unit `210-dashboard-controlled-actions`; runtime commit `efcb158cb`, depends on `200`–`209`. Validation: `scripts/run_tests.sh` focused dashboard suite returned `53 passed`; `npm run build`; focused ESLint for `SystemActions.tsx` and `api.ts`; temporary live smoke on `127.0.0.1:9140` listed allowlisted `gateway-restart`/`hermes-update` actions and returned 401 without token. No mutation action was executed during smoke.
 
 Why last in the first wave: mutation without observability is dangerous.
 

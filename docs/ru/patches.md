@@ -91,8 +91,8 @@ Release manifest намеренно не включает patch units, кото�
 | `206-dashboard-terminal-profile-lifecycle` | exported | Bugfix/control slice: Open terminal из profile создаёт уникальный `/chat?profile=<name>&terminal=<id>` channel вместо reuse default Chat terminal; Chat page получила Close terminal поверх `DELETE /api/dashboard/runtimes/pty/{id}`. |
 | `207-dashboard-session-log-inspector` | exported | Profile-aware read-only session/log inspector: `/api/dashboard/profiles/{name}/sessions`, `/sessions/{session_id}` and `/logs` expose safe session counts, token/cost metadata, message/tool-call summaries and log-file metadata without message bodies, raw tool args, system prompts, log contents, env or secrets. |
 | `208-dashboard-terminal-workspace-tabs` | exported | App-level multi-terminal workspace tabs: default Chat and profile terminals remain separate mounted PTY panes, switching tabs does not kill other terminals, and closing a tab requires confirmation before terminating exactly that PTY via `DELETE /api/dashboard/runtimes/pty/{id}`. |
-| `209-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
-| `210-dashboard-controlled-actions` | planned | Auth-gated controlled actions после read-only observability: stop/restart selected terminal/worker/gateway. |
+| `209-dashboard-assembly-analytics` | exported | Authenticated safe whole-assembly analytics across all profiles: profile activity/staleness, token and cost totals, API/tool-call counts, top profiles и model/provider distribution без session IDs, message bodies, tool args, logs, env или secrets. |
+| `210-dashboard-controlled-actions` | exported | Auth-gated allowlisted dashboard mutation layer: `/api/dashboard/actions` lists exact-confirmation actions, а `/api/dashboard/actions/{id}/run` запускает только confirmed gateway restart / Hermes update actions с existing detached action status logs. |
 
 ## Workflow-фичи
 

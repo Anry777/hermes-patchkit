@@ -9,6 +9,8 @@
     "dashboard-worker-roster",
     "dashboard-terminal-profile-lifecycle",
     "dashboard-session-log-inspector",
-    "dashboard-terminal-workspace-tabs"
+    "dashboard-terminal-workspace-tabs",
+    "dashboard-assembly-analytics",
+    "dashboard-controlled-actions"
   ]
 }

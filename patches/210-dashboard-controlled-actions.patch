@@ -1,0 +1,310 @@
+From efcb158cb17c7eed764d92b089a50d81c26b3036 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 22:17:03 +0300
+Subject: [PATCH] feat: add dashboard controlled actions
+
+---
+ hermes_cli/web_server.py                      | 77 +++++++++++++++
+ ...est_dashboard_profile_selector_frontend.py | 15 +++
+ .../test_web_server_controlled_actions.py     | 96 +++++++++++++++++++
+ web/src/contexts/SystemActions.tsx            | 25 ++++-
+ web/src/lib/api.ts                            | 25 +++++
+ 5 files changed, 234 insertions(+), 4 deletions(-)
+ create mode 100644 tests/hermes_cli/test_web_server_controlled_actions.py
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index bc1c75859..9412cd61f 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -1390,6 +1390,83 @@ _ACTION_LOG_FILES: Dict[str, str] = {
+ _ACTION_PROCS: Dict[str, subprocess.Popen] = {}
+ 
+ 
++_CONTROLLED_DASHBOARD_ACTIONS: Dict[str, Dict[str, Any]] = {
++    "gateway-restart": {
++        "id": "gateway-restart",
++        "label": "Restart gateway",
++        "description": "Restart the Hermes messaging gateway in a detached non-interactive process.",
++        "subcommand": ["gateway", "restart"],
++        "confirmation": "RUN gateway-restart",
++        "danger_level": "medium",
++    },
++    "hermes-update": {
++        "id": "hermes-update",
++        "label": "Update Hermes",
++        "description": "Run hermes update in the current checkout/venv. Review logs after it finishes.",
++        "subcommand": ["update"],
++        "confirmation": "RUN hermes-update",
++        "danger_level": "high",
++    },
++}
++
++
++def _serialize_dashboard_action(action: Dict[str, Any]) -> Dict[str, Any]:
++    return {
++        "id": action["id"],
++        "label": action["label"],
++        "description": action["description"],
++        "confirmation": action["confirmation"],
++        "requires_confirmation": True,
++        "danger_level": action["danger_level"],
++        "status_name": action["id"],
++    }
++
++
++def _run_controlled_dashboard_action(action_id: str, confirmation: str) -> Dict[str, Any]:
++    action = _CONTROLLED_DASHBOARD_ACTIONS.get(action_id)
++    if action is None:
++        raise HTTPException(status_code=404, detail=f"Unknown dashboard action: {action_id}")
++    expected = action["confirmation"]
++    if not confirmation or not hmac.compare_digest(str(confirmation), expected):
++        raise HTTPException(
++            status_code=400,
++            detail=f"Invalid confirmation. Type exactly: {expected}",
++        )
++    try:
++        proc = _spawn_hermes_action(list(action["subcommand"]), action_id)
++    except Exception as exc:
++        _log.exception("Failed to spawn controlled dashboard action %s", action_id)
++        raise HTTPException(status_code=500, detail=f"Failed to start action: {exc}")
++    return {
++        "ok": True,
++        "pid": proc.pid,
++        "name": action_id,
++        "action_id": action_id,
++    }
++
++
++@app.get("/api/dashboard/actions")
++async def list_dashboard_actions():
++    """List allowlisted mutation actions exposed by the dashboard."""
++    return {
++        "actions": [
++            _serialize_dashboard_action(action)
++            for action in _CONTROLLED_DASHBOARD_ACTIONS.values()
++        ]
++    }
++
++
++@app.post("/api/dashboard/actions/{action_id}/run")
++async def run_dashboard_action(action_id: str, request: Request):
++    """Run a single allowlisted dashboard action after exact confirmation."""
++    try:
++        body = await request.json()
++    except Exception:
++        body = {}
++    confirmation = body.get("confirmation", "") if isinstance(body, dict) else ""
++    return _run_controlled_dashboard_action(action_id, confirmation)
++
++
+ def _spawn_hermes_action(subcommand: List[str], name: str) -> subprocess.Popen:
+     """Spawn ``hermes <subcommand>`` detached and record the Popen handle.
+ 
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index e37f5ae1e..b9f6a85ce 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -144,3 +144,18 @@ def test_analytics_page_loads_dashboard_assembly_rollup():
+     assert "api.getDashboardAssemblyAnalytics(days)" in page
+     assert "data-dashboard-assembly-analytics" in page
+     assert "Safe per-profile rollup" in page
++
++def test_system_actions_use_controlled_dashboard_action_api():
++    api = _read("lib/api.ts")
++    context = _read("contexts/SystemActions.tsx")
++
++    assert "DashboardActionsResponse" in api
++    assert "DashboardActionInfo" in api
++    assert "getDashboardActions" in api
++    assert "runDashboardAction" in api
++    assert '"/api/dashboard/actions"' in api
++    assert '`/api/dashboard/actions/${encodeURIComponent(actionId)}/run`' in api
++    assert "api.getDashboardActions()" in context
++    assert "window.prompt" in context
++    assert "api.runDashboardAction(actionId, confirmation)" in context
++    assert "Confirmation did not match" in context
+diff --git a/tests/hermes_cli/test_web_server_controlled_actions.py b/tests/hermes_cli/test_web_server_controlled_actions.py
+new file mode 100644
+index 000000000..d69551710
+--- /dev/null
++++ b/tests/hermes_cli/test_web_server_controlled_actions.py
+@@ -0,0 +1,96 @@
++"""Tests for dashboard controlled action endpoints."""
++
++from __future__ import annotations
++
++import pytest
++
++
++def _client_with_dashboard_token():
++    try:
++        from starlette.testclient import TestClient
++    except ImportError:
++        pytest.skip("fastapi/starlette not installed")
++
++    from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
++
++    client = TestClient(app)
++    client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
++    return client
++
++
++class TestDashboardControlledActionsApi:
++    def test_controlled_actions_requires_dashboard_session_token(self):
++        try:
++            from starlette.testclient import TestClient
++        except ImportError:
++            pytest.skip("fastapi/starlette not installed")
++
++        from hermes_cli.web_server import app
++
++        assert TestClient(app).get("/api/dashboard/actions").status_code == 401
++        assert (
++            TestClient(app)
++            .post("/api/dashboard/actions/gateway-restart/run", json={"confirmation": "RUN gateway-restart"})
++            .status_code
++            == 401
++        )
++
++    def test_controlled_actions_list_is_allowlisted_and_safe(self):
++        response = _client_with_dashboard_token().get("/api/dashboard/actions")
++
++        assert response.status_code == 200
++        payload = response.json()
++        actions = {item["id"]: item for item in payload["actions"]}
++        assert set(actions) == {"gateway-restart", "hermes-update"}
++        assert actions["gateway-restart"]["confirmation"] == "RUN gateway-restart"
++        assert actions["hermes-update"]["requires_confirmation"] is True
++        assert actions["hermes-update"]["danger_level"] == "high"
++        assert "api_key" not in str(payload).lower()
++        assert ".env" not in str(payload)
++
++    def test_controlled_action_rejects_missing_confirmation_and_unknown_action(self):
++        client = _client_with_dashboard_token()
++
++        missing = client.post("/api/dashboard/actions/gateway-restart/run", json={})
++        assert missing.status_code == 400
++        assert "confirmation" in missing.json()["detail"].lower()
++
++        wrong = client.post(
++            "/api/dashboard/actions/gateway-restart/run",
++            json={"confirmation": "gateway-restart"},
++        )
++        assert wrong.status_code == 400
++
++        unknown = client.post(
++            "/api/dashboard/actions/rm-rf/run",
++            json={"confirmation": "RUN rm-rf"},
++        )
++        assert unknown.status_code == 404
++
++    def test_controlled_action_spawns_only_allowlisted_command(self, monkeypatch):
++        from hermes_cli import web_server
++
++        calls = []
++
++        class FakeProc:
++            pid = 4242
++
++        def fake_spawn(subcommand, name):
++            calls.append((subcommand, name))
++            return FakeProc()
++
++        monkeypatch.setattr(web_server, "_spawn_hermes_action", fake_spawn)
++
++        response = _client_with_dashboard_token().post(
++            "/api/dashboard/actions/gateway-restart/run",
++            json={"confirmation": "RUN gateway-restart"},
++        )
++
++        assert response.status_code == 200
++        assert response.json() == {
++            "ok": True,
++            "pid": 4242,
++            "name": "gateway-restart",
++            "action_id": "gateway-restart",
++        }
++        assert calls == [(["gateway", "restart"], "gateway-restart")]
+diff --git a/web/src/contexts/SystemActions.tsx b/web/src/contexts/SystemActions.tsx
+index 65321c6f0..8c9e3647b 100644
+--- a/web/src/contexts/SystemActions.tsx
++++ b/web/src/contexts/SystemActions.tsx
+@@ -69,11 +69,28 @@ export function SystemActionsProvider({
+       setPendingAction(action);
+       setActionStatus(null);
+       try {
+-        if (action === "restart") {
+-          await api.restartGateway();
+-        } else {
+-          await api.updateHermes();
++        const actionId = ACTION_NAMES[action];
++        const actions = await api.getDashboardActions();
++        const info = actions.actions.find((item) => item.id === actionId);
++        if (!info) {
++          throw new Error(`Unknown dashboard action: ${actionId}`);
+         }
++        const confirmation = window.prompt(
++          `${info.label}
++
++${info.description}
++
++Type exactly: ${info.confirmation}`,
++        );
++        if (confirmation === null) return;
++        if (confirmation !== info.confirmation) {
++          setToast({
++            type: "error",
++            message: `Confirmation did not match: ${info.confirmation}`,
++          });
++          return;
++        }
++        await api.runDashboardAction(actionId, confirmation);
+         setActiveAction(action);
+       } catch (err) {
+         const detail = err instanceof Error ? err.message : String(err);
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index 3716d3aed..6a873461d 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -229,6 +229,17 @@ export const api = {
+     fetchJSON<ActionResponse>("/api/gateway/restart", { method: "POST" }),
+   updateHermes: () =>
+     fetchJSON<ActionResponse>("/api/hermes/update", { method: "POST" }),
++  getDashboardActions: () =>
++    fetchJSON<DashboardActionsResponse>("/api/dashboard/actions"),
++  runDashboardAction: (actionId: string, confirmation: string) =>
++    fetchJSON<ActionResponse & { action_id: string }>(
++      `/api/dashboard/actions/${encodeURIComponent(actionId)}/run`,
++      {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ confirmation }),
++      },
++    ),
+   getActionStatus: (name: string, lines = 200) =>
+     fetchJSON<ActionStatusResponse>(
+       `/api/actions/${encodeURIComponent(name)}/status?lines=${lines}`,
+@@ -257,6 +268,20 @@ export interface ActionResponse {
+   pid: number;
+ }
+ 
++export interface DashboardActionInfo {
++  id: string;
++  label: string;
++  description: string;
++  confirmation: string;
++  requires_confirmation: boolean;
++  danger_level: "low" | "medium" | "high";
++  status_name: string;
++}
++
++export interface DashboardActionsResponse {
++  actions: DashboardActionInfo[];
++}
++
+ export interface ActionStatusResponse {
+   exit_code: number | null;
+   lines: string[];
+-- 
+2.39.5
+

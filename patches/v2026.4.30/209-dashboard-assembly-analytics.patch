@@ -1,0 +1,747 @@
+From 042f10871980973bdce003f25f33b1ac3a533e78 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 22:14:45 +0300
+Subject: [PATCH] feat: add dashboard assembly analytics
+
+---
+ hermes_cli/web_server.py                      | 202 ++++++++++++++++++
+ ...est_dashboard_profile_selector_frontend.py |  14 ++
+ .../test_web_server_assembly_analytics.py     | 170 +++++++++++++++
+ web/src/lib/api.ts                            | 102 +++++++++
+ web/src/pages/AnalyticsPage.tsx               | 157 +++++++++++++-
+ 5 files changed, 642 insertions(+), 3 deletions(-)
+ create mode 100644 tests/hermes_cli/test_web_server_assembly_analytics.py
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index cf0ff38c3..bc1c75859 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -718,6 +718,208 @@ def _profile_session_summary(profile_dir: Path, limit: int = 5) -> Dict[str, Any
+     return {"total": summary["total"], "active": active, "recent": summary["sessions"]}
+ 
+ 
++def _empty_dashboard_profile_analytics(profile: str, provider: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
++    return {
++        "profile": profile,
++        "provider": provider,
++        "model": model,
++        "sessions": 0,
++        "active_sessions": 0,
++        "input_tokens": 0,
++        "output_tokens": 0,
++        "cache_read_tokens": 0,
++        "cache_write_tokens": 0,
++        "reasoning_tokens": 0,
++        "estimated_cost_usd": 0.0,
++        "actual_cost_usd": 0.0,
++        "api_calls": 0,
++        "tool_calls": 0,
++        "last_active": None,
++        "stale": True,
++    }
++
++
++def _profile_analytics_snapshot(
++    profile: str,
++    profile_dir: Path,
++    *,
++    cutoff: float,
++    now: float,
++    provider: Optional[str] = None,
++    model: Optional[str] = None,
++) -> Dict[str, Any]:
++    """Summarize safe profile activity metadata for the assembly dashboard."""
++    db_path = profile_dir / "state.db"
++    summary = _empty_dashboard_profile_analytics(profile, provider=provider, model=model)
++    if not db_path.exists():
++        return summary
++
++    from hermes_state import SessionDB
++
++    db = SessionDB(db_path=db_path)
++    try:
++        total = db.session_count()
++        sessions = db.list_sessions_rich(
++            limit=max(total, 1),
++            offset=0,
++            include_children=True,
++            project_compression_tips=False,
++        )
++    finally:
++        db.close()
++
++    active_rows = []
++    for row in sessions:
++        started_at = row.get("started_at") or 0
++        last_active = row.get("last_active") or started_at
++        if last_active < cutoff and started_at < cutoff:
++            continue
++        active_rows.append(row)
++
++    for row in active_rows:
++        started_at = row.get("started_at") or 0
++        last_active = row.get("last_active") or started_at
++        summary["sessions"] += 1
++        summary["input_tokens"] += int(row.get("input_tokens") or 0)
++        summary["output_tokens"] += int(row.get("output_tokens") or 0)
++        summary["cache_read_tokens"] += int(row.get("cache_read_tokens") or 0)
++        summary["cache_write_tokens"] += int(row.get("cache_write_tokens") or 0)
++        summary["reasoning_tokens"] += int(row.get("reasoning_tokens") or 0)
++        summary["estimated_cost_usd"] += float(row.get("estimated_cost_usd") or 0)
++        summary["actual_cost_usd"] += float(row.get("actual_cost_usd") or 0)
++        summary["api_calls"] += int(row.get("api_call_count") or 0)
++        summary["tool_calls"] += int(row.get("tool_call_count") or 0)
++        if row.get("ended_at") is None and (now - last_active) < 300:
++            summary["active_sessions"] += 1
++        if summary["last_active"] is None or last_active > summary["last_active"]:
++            summary["last_active"] = last_active
++        if not summary.get("model") and row.get("model"):
++            summary["model"] = row.get("model")
++        if not summary.get("provider") and row.get("billing_provider"):
++            summary["provider"] = row.get("billing_provider")
++
++    summary["estimated_cost_usd"] = round(summary["estimated_cost_usd"], 8)
++    summary["actual_cost_usd"] = round(summary["actual_cost_usd"], 8)
++    summary["stale"] = not active_rows
++    return summary
++
++
++def _aggregate_distribution(items: List[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
++    buckets: Dict[str, Dict[str, Any]] = {}
++    for item in items:
++        name = str(item.get(key) or "unknown")
++        bucket = buckets.setdefault(name, {
++            key: name,
++            "sessions": 0,
++            "input_tokens": 0,
++            "output_tokens": 0,
++            "estimated_cost_usd": 0.0,
++            "api_calls": 0,
++        })
++        bucket["sessions"] += int(item.get("sessions") or 0)
++        bucket["input_tokens"] += int(item.get("input_tokens") or 0)
++        bucket["output_tokens"] += int(item.get("output_tokens") or 0)
++        bucket["estimated_cost_usd"] += float(item.get("estimated_cost_usd") or 0)
++        bucket["api_calls"] += int(item.get("api_calls") or 0)
++    for bucket in buckets.values():
++        bucket["estimated_cost_usd"] = round(bucket["estimated_cost_usd"], 8)
++    return sorted(
++        buckets.values(),
++        key=lambda item: (
++            int(item.get("sessions") or 0),
++            int(item.get("input_tokens") or 0) + int(item.get("output_tokens") or 0),
++            str(item.get(key) or ""),
++        ),
++        reverse=True,
++    )
++
++
++def _serialize_dashboard_assembly_analytics(days: int) -> Dict[str, Any]:
++    """Return safe per-profile and whole-assembly usage/activity analytics."""
++    from hermes_cli.profiles import get_active_profile, get_profile_dir, list_profiles
++
++    now = time.time()
++    cutoff = now - (days * 86400)
++    active_profile = get_active_profile()
++    profiles = list_profiles()
++    profile_rows: List[Dict[str, Any]] = []
++    errors: List[Dict[str, str]] = []
++
++    for profile in profiles:
++        try:
++            row = _profile_analytics_snapshot(
++                profile.name,
++                get_profile_dir(profile.name),
++                cutoff=cutoff,
++                now=now,
++                provider=profile.provider,
++                model=profile.model,
++            )
++        except Exception:
++            _log.exception("Failed to build dashboard analytics for profile %s", profile.name)
++            row = _empty_dashboard_profile_analytics(
++                profile.name,
++                provider=getattr(profile, "provider", None),
++                model=getattr(profile, "model", None),
++            )
++            row["error"] = "analytics unavailable"
++            errors.append({"profile": profile.name, "error": "analytics unavailable"})
++        profile_rows.append(row)
++
++    totals = {
++        "profiles": len(profile_rows),
++        "active_profiles": sum(1 for row in profile_rows if not row.get("stale")),
++        "stale_profiles": sum(1 for row in profile_rows if row.get("stale")),
++        "active_sessions": sum(int(row.get("active_sessions") or 0) for row in profile_rows),
++        "total_sessions": sum(int(row.get("sessions") or 0) for row in profile_rows),
++        "input_tokens": sum(int(row.get("input_tokens") or 0) for row in profile_rows),
++        "output_tokens": sum(int(row.get("output_tokens") or 0) for row in profile_rows),
++        "cache_read_tokens": sum(int(row.get("cache_read_tokens") or 0) for row in profile_rows),
++        "cache_write_tokens": sum(int(row.get("cache_write_tokens") or 0) for row in profile_rows),
++        "reasoning_tokens": sum(int(row.get("reasoning_tokens") or 0) for row in profile_rows),
++        "estimated_cost_usd": round(sum(float(row.get("estimated_cost_usd") or 0) for row in profile_rows), 8),
++        "actual_cost_usd": round(sum(float(row.get("actual_cost_usd") or 0) for row in profile_rows), 8),
++        "api_calls": sum(int(row.get("api_calls") or 0) for row in profile_rows),
++        "tool_calls": sum(int(row.get("tool_calls") or 0) for row in profile_rows),
++    }
++
++    return {
++        "period_days": days,
++        "generated_at": now,
++        "active_profile": active_profile,
++        "totals": totals,
++        "profiles": sorted(profile_rows, key=lambda row: str(row.get("profile") or "")),
++        "top_profiles_by_activity": sorted(
++            profile_rows,
++            key=lambda row: (
++                int(row.get("sessions") or 0),
++                int(row.get("api_calls") or 0),
++                int(row.get("input_tokens") or 0) + int(row.get("output_tokens") or 0),
++                str(row.get("profile") or ""),
++            ),
++            reverse=True,
++        )[:10],
++        "stale_profiles": [str(row.get("profile")) for row in profile_rows if row.get("stale")],
++        "model_distribution": _aggregate_distribution(profile_rows, "model"),
++        "provider_distribution": _aggregate_distribution(profile_rows, "provider"),
++        "errors": errors,
++    }
++
++
++@app.get("/api/dashboard/analytics/assembly")
++async def get_dashboard_assembly_analytics(days: int = 30):
++    """Return safe aggregate analytics across all Hermes profiles."""
++    if days < 1 or days > 3650:
++        raise HTTPException(status_code=400, detail="days must be between 1 and 3650")
++    try:
++        return _serialize_dashboard_assembly_analytics(days)
++    except HTTPException:
++        raise
++    except Exception:
++        _log.exception("GET /api/dashboard/analytics/assembly failed")
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
+ def _dashboard_pty_sessions_snapshot() -> List[Dict[str, Any]]:
+     """Return a sanitized snapshot of active dashboard PTY sessions."""
+     with _PTY_SESSIONS_LOCK:
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index a45a545a5..e37f5ae1e 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -130,3 +130,17 @@ def test_chat_page_accepts_workspace_terminal_props():
+     assert "resume?: string | null" in page
+     assert "onRequestClose?: () => void" in page
+     assert "onRequestClose();" in page
++
++
++def test_analytics_page_loads_dashboard_assembly_rollup():
++    api = _read("lib/api.ts")
++    page = _read("pages/AnalyticsPage.tsx")
++
++    assert "DashboardAssemblyAnalyticsResponse" in api
++    assert "DashboardAssemblyProfileAnalytics" in api
++    assert "getDashboardAssemblyAnalytics" in api
++    assert '`/api/dashboard/analytics/assembly?days=${days}`' in api
++    assert "AssemblyProfileTable" in page
++    assert "api.getDashboardAssemblyAnalytics(days)" in page
++    assert "data-dashboard-assembly-analytics" in page
++    assert "Safe per-profile rollup" in page
+diff --git a/tests/hermes_cli/test_web_server_assembly_analytics.py b/tests/hermes_cli/test_web_server_assembly_analytics.py
+new file mode 100644
+index 000000000..cba906571
+--- /dev/null
++++ b/tests/hermes_cli/test_web_server_assembly_analytics.py
+@@ -0,0 +1,170 @@
++"""Tests for dashboard whole-assembly analytics endpoints."""
++
++from __future__ import annotations
++
++import os
++import time
++from pathlib import Path
++
++import pytest
++
++
++def _client_with_dashboard_token():
++    try:
++        from starlette.testclient import TestClient
++    except ImportError:  # pragma: no cover
++        pytest.skip("starlette TestClient not installed")
++
++    from hermes_cli import web_server
++
++    web_server._SESSION_TOKEN = "assembly-token"
++    web_server.app.state.session_token = "assembly-token"
++    return TestClient(web_server.app), web_server
++
++
++def _write_profile(home: Path, name: str, provider: str, model: str) -> Path:
++    profiles = home / "profiles"
++    profile_dir = profiles / name
++    profile_dir.mkdir(parents=True, exist_ok=True)
++    (profile_dir / "config.yaml").write_text(
++        f"default_provider: {provider}\ndefault_model: {model}\n",
++        encoding="utf-8",
++    )
++    return profile_dir
++
++
++def _seed_session(profile_dir: Path, session_id: str, *, last_active: float, provider: str, model: str, input_tokens: int, output_tokens: int) -> None:
++    from hermes_state import SessionDB
++
++    db = SessionDB(db_path=profile_dir / "state.db")
++    try:
++        db.create_session(
++            session_id=session_id,
++            source="cli",
++            model=model,
++        )
++        db.update_token_counts(
++            session_id,
++            input_tokens=input_tokens,
++            output_tokens=output_tokens,
++            model=model,
++            cache_read_tokens=11,
++            cache_write_tokens=7,
++            reasoning_tokens=5,
++            estimated_cost_usd=0.0123,
++            actual_cost_usd=0.0101,
++            billing_provider=provider,
++            api_call_count=3,
++            absolute=True,
++        )
++        with db._lock:
++            db._conn.execute(
++                """
++                UPDATE sessions
++                   SET started_at = ?,
++                       ended_at = ?,
++                       tool_call_count = ?
++                 WHERE id = ?
++                """,
++                (
++                    last_active - 30,
++                    last_active + 10,
++                    4,
++                    session_id,
++                ),
++            )
++    finally:
++        db.close()
++
++
++@pytest.fixture()
++def assembly_home(tmp_path, monkeypatch):
++    home = tmp_path / ".hermes"
++    home.mkdir()
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(home))
++    monkeypatch.setenv("HERMES_ACTIVE_PROFILE", "alpha")
++    (home / "config.yaml").write_text("active_profile: alpha\n", encoding="utf-8")
++    return home
++
++
++def test_dashboard_assembly_analytics_summarizes_profiles_without_session_content(assembly_home):
++    now = time.time()
++    alpha = _write_profile(assembly_home, "alpha", "openai", "gpt-5.4")
++    beta = _write_profile(assembly_home, "beta", "anthropic", "claude-sonnet-4")
++    _seed_session(
++        alpha,
++        "alpha-recent",
++        last_active=now - 60,
++        provider="openai",
++        model="gpt-5.4",
++        input_tokens=100,
++        output_tokens=50,
++    )
++    _seed_session(
++        beta,
++        "beta-old",
++        last_active=now - 60 * 60 * 24 * 90,
++        provider="anthropic",
++        model="claude-sonnet-4",
++        input_tokens=999,
++        output_tokens=999,
++    )
++
++    client, _web_server = _client_with_dashboard_token()
++    response = client.get(
++        "/api/dashboard/analytics/assembly?days=30",
++        headers={"X-Hermes-Session-Token": "assembly-token"},
++    )
++
++    assert response.status_code == 200
++    data = response.json()
++    assert data["period_days"] == 30
++    assert isinstance(data["active_profile"], str)
++    assert data["totals"]["profiles"] >= 2
++    assert data["totals"]["active_profiles"] >= 1
++    assert data["totals"]["stale_profiles"] >= 1
++    assert data["totals"]["total_sessions"] == 1
++    assert data["totals"]["input_tokens"] == 100
++    assert data["totals"]["output_tokens"] == 50
++    assert data["totals"]["api_calls"] == 3
++    assert data["totals"]["tool_calls"] == 4
++
++    profiles = {row["profile"]: row for row in data["profiles"]}
++    assert profiles["alpha"]["sessions"] == 1
++    assert profiles["alpha"]["provider"] == "openai"
++    assert profiles["alpha"]["model"] == "gpt-5.4"
++    assert profiles["alpha"]["stale"] is False
++    assert profiles["beta"]["sessions"] == 0
++    assert profiles["beta"]["stale"] is True
++    assert "beta" in data["stale_profiles"]
++    assert data["top_profiles_by_activity"][0]["profile"] == "alpha"
++    assert data["model_distribution"][0]["model"] == "gpt-5.4"
++    assert data["provider_distribution"][0]["provider"] == "openai"
++
++    serialized = str(data)
++    assert "alpha-recent" not in serialized
++    assert "beta-old" not in serialized
++    assert "messages" not in serialized
++
++
++def test_dashboard_assembly_analytics_validates_period(assembly_home):
++    _write_profile(assembly_home, "alpha", "openai", "gpt-5.4")
++    client, _web_server = _client_with_dashboard_token()
++
++    response = client.get(
++        "/api/dashboard/analytics/assembly?days=0",
++        headers={"X-Hermes-Session-Token": "assembly-token"},
++    )
++
++    assert response.status_code == 400
++    assert "days" in response.json()["detail"]
++
++
++def test_dashboard_assembly_analytics_requires_dashboard_token(assembly_home):
++    _write_profile(assembly_home, "alpha", "openai", "gpt-5.4")
++    client, _web_server = _client_with_dashboard_token()
++
++    response = client.get("/api/dashboard/analytics/assembly?days=30")
++
++    assert response.status_code == 401
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index c3b55da84..3716d3aed 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -81,6 +81,10 @@ export const api = {
+   },
+   getAnalytics: (days: number) =>
+     fetchJSON<AnalyticsResponse>(`/api/analytics/usage?days=${days}`),
++  getDashboardAssemblyAnalytics: (days: number) =>
++    fetchJSON<DashboardAssemblyAnalyticsResponse>(
++      `/api/dashboard/analytics/assembly?days=${days}`,
++    ),
+   getModelsAnalytics: (days: number) =>
+     fetchJSON<ModelsAnalyticsResponse>(`/api/analytics/models?days=${days}`),
+   getConfig: () => fetchJSON<Record<string, unknown>>("/api/config"),
+@@ -548,6 +552,104 @@ export interface ModelsAnalyticsResponse {
+   period_days: number;
+ }
+ 
++export interface DashboardAssemblyProfileAnalytics {
++  profile: string;
++  provider: string | null;
++  model: string | null;
++  sessions: number;
++  active_sessions: number;
++  input_tokens: number;
++  output_tokens: number;
++  cache_read_tokens: number;
++  cache_write_tokens: number;
++  reasoning_tokens: number;
++  estimated_cost_usd: number;
++  actual_cost_usd: number;
++  api_calls: number;
++  tool_calls: number;
++  last_active: number | null;
++  stale: boolean;
++  error?: string;
++}
++
++export interface DashboardAssemblyDistributionEntry {
++  model?: string;
++  provider?: string;
++  sessions: number;
++  input_tokens: number;
++  output_tokens: number;
++  estimated_cost_usd: number;
++  api_calls: number;
++}
++
++export interface DashboardAssemblyAnalyticsResponse {
++  period_days: number;
++  generated_at: number;
++  active_profile: string;
++  totals: {
++    profiles: number;
++    active_profiles: number;
++    stale_profiles: number;
++    active_sessions: number;
++    total_sessions: number;
++    input_tokens: number;
++    output_tokens: number;
++    cache_read_tokens: number;
++    cache_write_tokens: number;
++    reasoning_tokens: number;
++    estimated_cost_usd: number;
++    actual_cost_usd: number;
++    api_calls: number;
++    tool_calls: number;
++  };
++  profiles: DashboardAssemblyProfileAnalytics[];
++  top_profiles_by_activity: DashboardAssemblyProfileAnalytics[];
++  stale_profiles: string[];
++  model_distribution: DashboardAssemblyDistributionEntry[];
++  provider_distribution: DashboardAssemblyDistributionEntry[];
++  errors: Array<{ profile: string; error: string }>;
++}
++
++export interface ModelsAnalyticsModelEntry {
++  model: string;
++  provider: string;
++  input_tokens: number;
++  output_tokens: number;
++  cache_read_tokens: number;
++  reasoning_tokens: number;
++  estimated_cost: number;
++  actual_cost: number;
++  sessions: number;
++  api_calls: number;
++  tool_calls: number;
++  last_used_at: number;
++  avg_tokens_per_session: number;
++  capabilities: {
++    supports_tools?: boolean;
++    supports_vision?: boolean;
++    supports_reasoning?: boolean;
++    context_window?: number;
++    max_output_tokens?: number;
++    model_family?: string;
++  };
++}
++
++export interface ModelsAnalyticsResponse {
++  models: ModelsAnalyticsModelEntry[];
++  totals: {
++    distinct_models: number;
++    total_input: number;
++    total_output: number;
++    total_cache_read: number;
++    total_reasoning: number;
++    total_estimated_cost: number;
++    total_actual_cost: number;
++    total_sessions: number;
++    total_api_calls: number;
++  };
++  period_days: number;
++}
++
+ export interface CronJob {
+   id: string;
+   name?: string;
+diff --git a/web/src/pages/AnalyticsPage.tsx b/web/src/pages/AnalyticsPage.tsx
+index eb740d418..859e9f332 100644
+--- a/web/src/pages/AnalyticsPage.tsx
++++ b/web/src/pages/AnalyticsPage.tsx
+@@ -6,6 +6,8 @@ import type {
+   AnalyticsDailyEntry,
+   AnalyticsModelEntry,
+   AnalyticsSkillEntry,
++  DashboardAssemblyAnalyticsResponse,
++  DashboardAssemblyProfileAnalytics,
+ } from "@/lib/api";
+ import { timeAgo } from "@/lib/utils";
+ import { Button, Spinner, Stats } from "@nous-research/ui";
+@@ -329,9 +331,151 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
+   );
+ }
+ 
++function formatUsd(value: number): string {
++  if (!Number.isFinite(value) || value <= 0) return "$0.00";
++  if (value < 0.01) return `$${value.toFixed(4)}`;
++  return `$${value.toFixed(2)}`;
++}
++
++function AssemblyProfileTable({
++  assembly,
++}: {
++  assembly: DashboardAssemblyAnalyticsResponse;
++}) {
++  const rows = assembly.profiles;
++  if (rows.length === 0) return null;
++
++  return (
++    <Card data-dashboard-assembly-analytics>
++      <CardHeader>
++        <div className="flex items-center justify-between gap-3">
++          <div className="flex items-center gap-2">
++            <Cpu className="h-5 w-5 text-muted-foreground" />
++            <CardTitle className="text-base">Assembly profiles</CardTitle>
++          </div>
++          <Badge tone="secondary" className="text-[10px]">
++            {assembly.totals.active_profiles}/{assembly.totals.profiles} active
++          </Badge>
++        </div>
++        <p className="text-xs text-muted-foreground">
++          Safe per-profile rollup across the whole Hermes installation; no prompts,
++          messages, tool arguments, or secrets are exposed.
++        </p>
++      </CardHeader>
++      <CardContent>
++        <div className="grid gap-4 md:grid-cols-4 mb-5">
++          <div className="rounded-md border border-border/60 p-3">
++            <div className="text-xs text-muted-foreground">Profiles</div>
++            <div className="text-xl font-semibold">{assembly.totals.profiles}</div>
++          </div>
++          <div className="rounded-md border border-border/60 p-3">
++            <div className="text-xs text-muted-foreground">Active sessions</div>
++            <div className="text-xl font-semibold">{assembly.totals.active_sessions}</div>
++          </div>
++          <div className="rounded-md border border-border/60 p-3">
++            <div className="text-xs text-muted-foreground">Tool calls</div>
++            <div className="text-xl font-semibold">{assembly.totals.tool_calls}</div>
++          </div>
++          <div className="rounded-md border border-border/60 p-3">
++            <div className="text-xs text-muted-foreground">Estimated cost</div>
++            <div className="text-xl font-semibold">
++              {formatUsd(assembly.totals.estimated_cost_usd)}
++            </div>
++          </div>
++        </div>
++
++        <div className="overflow-x-auto">
++          <table className="w-full text-sm">
++            <thead>
++              <tr className="border-b border-border text-muted-foreground text-xs">
++                <th className="text-left py-2 pr-4 font-medium">Profile</th>
++                <th className="text-left py-2 px-4 font-medium">Model</th>
++                <th className="text-right py-2 px-4 font-medium">Sessions</th>
++                <th className="text-right py-2 px-4 font-medium">Tokens</th>
++                <th className="text-right py-2 px-4 font-medium">API</th>
++                <th className="text-right py-2 px-4 font-medium">Tools</th>
++                <th className="text-right py-2 pl-4 font-medium">Status</th>
++              </tr>
++            </thead>
++            <tbody>
++              {rows.map((profile: DashboardAssemblyProfileAnalytics) => {
++                const totalTokens = profile.input_tokens + profile.output_tokens;
++                return (
++                  <tr
++                    key={profile.profile}
++                    className="border-b border-border/50 hover:bg-secondary/20 transition-colors"
++                  >
++                    <td className="py-2 pr-4">
++                      <span className="font-mono-ui text-xs">{profile.profile}</span>
++                    </td>
++                    <td className="py-2 px-4 text-muted-foreground">
++                      <span className="font-mono-ui text-xs">
++                        {profile.provider ?? "—"}/{profile.model ?? "—"}
++                      </span>
++                    </td>
++                    <td className="text-right py-2 px-4">{profile.sessions}</td>
++                    <td className="text-right py-2 px-4">
++                      {formatTokens(totalTokens)}
++                    </td>
++                    <td className="text-right py-2 px-4">{profile.api_calls}</td>
++                    <td className="text-right py-2 px-4">{profile.tool_calls}</td>
++                    <td className="text-right py-2 pl-4">
++                      {profile.error ? (
++                        <Badge tone="destructive" className="text-[10px]">error</Badge>
++                      ) : profile.stale ? (
++                        <Badge tone="secondary" className="text-[10px]">stale</Badge>
++                      ) : (
++                        <Badge tone="success" className="text-[10px]">active</Badge>
++                      )}
++                    </td>
++                  </tr>
++                );
++              })}
++            </tbody>
++          </table>
++        </div>
++
++        {(assembly.model_distribution.length > 0 || assembly.provider_distribution.length > 0) && (
++          <div className="grid gap-4 md:grid-cols-2 mt-5">
++            <div className="rounded-md border border-border/60 p-3">
++              <div className="text-xs font-medium text-muted-foreground mb-2">
++                Top models
++              </div>
++              <div className="space-y-2">
++                {assembly.model_distribution.slice(0, 5).map((entry) => (
++                  <div key={entry.model ?? "unknown"} className="flex items-center justify-between gap-3 text-xs">
++                    <span className="font-mono-ui truncate">{entry.model ?? "unknown"}</span>
++                    <span className="text-muted-foreground">{entry.sessions} sessions</span>
++                  </div>
++                ))}
++              </div>
++            </div>
++            <div className="rounded-md border border-border/60 p-3">
++              <div className="text-xs font-medium text-muted-foreground mb-2">
++                Providers
++              </div>
++              <div className="space-y-2">
++                {assembly.provider_distribution.slice(0, 5).map((entry) => (
++                  <div key={entry.provider ?? "unknown"} className="flex items-center justify-between gap-3 text-xs">
++                    <span className="font-mono-ui truncate">{entry.provider ?? "unknown"}</span>
++                    <span className="text-muted-foreground">
++                      {formatTokens(entry.input_tokens + entry.output_tokens)} tokens
++                    </span>
++                  </div>
++                ))}
++              </div>
++            </div>
++          </div>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
++
+ export default function AnalyticsPage() {
+   const [days, setDays] = useState(30);
+   const [data, setData] = useState<AnalyticsResponse | null>(null);
++  const [assemblyData, setAssemblyData] = useState<DashboardAssemblyAnalyticsResponse | null>(null);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<string | null>(null);
+   const { t } = useI18n();
+@@ -340,9 +484,14 @@ export default function AnalyticsPage() {
+   const load = useCallback(() => {
+     setLoading(true);
+     setError(null);
+-    api
+-      .getAnalytics(days)
+-      .then(setData)
++    Promise.all([
++      api.getAnalytics(days),
++      api.getDashboardAssemblyAnalytics(days),
++    ])
++      .then(([usage, assembly]) => {
++        setData(usage);
++        setAssemblyData(assembly);
++      })
+       .catch((err) => setError(String(err)))
+       .finally(() => setLoading(false));
+   }, [days]);
+@@ -392,6 +541,7 @@ export default function AnalyticsPage() {
+   }, [days, loading, load, setAfterTitle, setEnd, t.common.refresh]);
+ 
+   useEffect(() => {
++    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async fetch sets loading/data state.
+     load();
+   }, [load]);
+ 
+@@ -452,6 +602,7 @@ export default function AnalyticsPage() {
+             <TokenBarChart daily={data.daily} />
+           </div>
+ 
++          {assemblyData && <AssemblyProfileTable assembly={assemblyData} />}
+           <DailyTable daily={data.daily} />
+           <ModelTable models={data.by_model} />
+           <SkillTable skills={data.skills.top_skills} />
+-- 
+2.39.5
+
