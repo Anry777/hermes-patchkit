@@ -71,6 +71,23 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
 - Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, and optional `080`.
 
+## Planned `200`+ UI line
+
+Patch numbers `200`–`249` are reserved for the Hermes-native multi-profile dashboard line. The concept and first-wave sequence are documented separately: [ui-control-plane-plan.md](ui-control-plane-plan.md).
+
+Initial sequence:
+
+| Patch | Status | Intended scope |
+|---|---|---|
+| `200-dashboard-profile-api` | planned | Read-only profile-aware backend endpoints for dashboard profiles, summaries, sessions and logs. |
+| `201-dashboard-profile-selector` | planned | Profile selector/cards in the built-in dashboard without changing global active profile. |
+| `202-dashboard-profile-aware-pty` | planned | Embedded `hermes --tui` terminal with optional `profile=<name>` on the existing PTY bridge. |
+| `203-dashboard-terminal-workspace` | planned | Multi-terminal tabs/panes, reconnect/close/restart UX and profile/cwd labels. |
+| `204-dashboard-runtime-registry` | planned | Read-only registry for live Hermes/TUI/gateway/worker processes. |
+| `205-dashboard-worker-roster` | planned | Worker cards/roster: role, lane, mission, active task/tool and blocked reason. |
+| `206-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
+| `207-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
+
 ## Workflow features
 
 | Feature | Entry point | Status |

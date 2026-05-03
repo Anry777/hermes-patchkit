@@ -1,0 +1,228 @@
+# UI Control Plane: concept and patch plan
+
+This document records the direction for a dedicated PatchKit UI line. The goal is a Hermes-native multi-profile dashboard, not a fork of an external chat UI.
+
+Reference projects reviewed:
+
+- `karthikkrishnaswamysr/hermes-agent-admin-ui` — useful as a simple admin-console layout for profiles, sessions, logs, skills, tools and memory, but weak as a runtime foundation.
+- `outsourc-e/hermes-workspace` — useful as an agent workspace / swarm IDE reference: terminal panes, worker cards, tmux attach, runtime roster and live status. It is closer to the desired product, but still should not replace the built-in Hermes dashboard/TUI stack.
+
+## Main decision
+
+Build this inside the built-in Hermes dashboard.
+
+The React/Web layer should be a control plane around Hermes, not a second chat engine. The primary interactive agent surface remains the real `hermes --tui` running inside PTY/xterm. Additional panels should read Hermes-native state: profiles, sessions, logs, process/runtime registry, gateway status, tools, skills and memory.
+
+## What to borrow from `hermes-agent-admin-ui`
+
+Useful ideas:
+
+- simple admin navigation: Profiles, Sessions, Logs, Skills, Tools, Memory, Gateway;
+- profile cards with model/provider/session/tool/log summaries;
+- read-only profile detail before mutation;
+- clear status badges and operator-friendly forms;
+- separation between “profile administration” and “chat”.
+
+Do not copy:
+
+- a separate FastAPI/chat endpoint as the primary Hermes interaction path;
+- manual scanning of `~/.hermes/profiles` instead of Hermes profile helpers;
+- unsafe default auth patterns such as dev secrets or admin/admin;
+- direct `.env` editing as a generic config store;
+- hardcoded root log/session paths without profile-aware `get_hermes_home()`.
+
+## What to borrow from `hermes-workspace`
+
+Useful ideas:
+
+- multi-terminal workspace on xterm;
+- terminal attach/restart/reconnect UX;
+- tmux-backed long-lived worker sessions;
+- worker/agent cards with state, cwd, active tool, last output, current task and blocked reason;
+- a roster/spec file idea: role, lane, mission, model and capabilities;
+- live worker chat/session inspector;
+- reports/checkpoints/inbox/artifacts/previews as UI concepts;
+- Swarm/Agent IDE spec as product reference.
+
+Do not copy directly:
+
+- `CLAUDE_*` legacy naming and semantic drift;
+- TypeScript reimplementation of Hermes profile path resolution;
+- global `active_profile` switching as the primary runtime model;
+- separate `/api/send-stream` chat stack;
+- terminal PTY code without validating resize/lifecycle/auth behavior;
+- hardwired `swarm<N>` assumptions.
+
+## Hermes-native invariants
+
+1. Official Hermes upstream remains the runtime base; UI changes are PatchKit patch units.
+2. Primary chat = embedded `hermes --tui` through PTY/xterm, with no parallel React chat rewrite.
+3. Profile awareness must be per request / per terminal / per panel, not global `active_profile` plus restart.
+4. Python side must use `hermes_cli.profiles` and `get_hermes_home()`; frontend must not guess the filesystem layout.
+5. Read-only surfaces first, mutation actions later.
+6. All terminal/process/profile mutation endpoints must be auth-gated and audit-friendly.
+7. Secrets stay in `.env`; non-secret settings live in `config.yaml`.
+8. UI must not pull provider_proxy or IDE traffic into the Hermes agent/session layer.
+9. If the upstream dashboard already has a PTY bridge, extend it instead of adding a second terminal protocol without a strong reason.
+10. Subagent/delegate/process observability should be a runtime data layer, not only terminal-string parsing.
+
+## Patch numbering
+
+Reserve a separate range for the UI line:
+
+- `200`–`249`: Hermes dashboard / multi-profile UI / agent workspace.
+- `250`–`269`: UI integrations around sidecars/previews, if needed.
+- `270`–`299`: UI hardening/polish/packaging, if the line grows.
+
+The initial set should live in `200`–`207` and stay separate from provider/gateway patches such as `070`–`080`.
+
+## Proposed patch sequence
+
+### `200-dashboard-profile-api`
+
+Read-only backend foundation for a profile-aware dashboard.
+
+Scope:
+
+- `GET /api/profiles` — list profiles through Hermes-native profile helpers;
+- `GET /api/profiles/{name}/summary` — config/model/provider/session/log/tool summary;
+- `GET /api/profiles/{name}/sessions` — recent sessions for that profile;
+- `GET /api/profiles/{name}/logs` — recent log metadata/tail with redaction;
+- profile-name validation and path traversal protection;
+- tests around the default profile, named profiles and invalid profiles.
+
+Why first: it creates a safe read-only base and does not touch chat/PTY runtime.
+
+### `201-dashboard-profile-selector`
+
+Frontend selector and profile-aware dashboard shell.
+
+Scope:
+
+- profile dropdown/sidebar in the built-in dashboard;
+- profile cards inspired by both reviewed projects;
+- status summaries: model/provider/sessions/logs/gateway hints;
+- empty/error states that do not kill the embedded terminal;
+- no mutation yet.
+
+Why separate: frontend can land without changing PTY lifecycle.
+
+### `202-dashboard-profile-aware-pty`
+
+Profile-aware embedded TUI terminal.
+
+Scope:
+
+- extend the existing `/api/pty` path with optional `profile=<name>`;
+- spawn `hermes --profile <name> --tui` or equivalent profile-safe environment;
+- keep default behavior unchanged when no profile is provided;
+- validate profile before spawn;
+- expose terminal title metadata: profile, cwd, pid/session id;
+- tests for command construction and profile isolation.
+
+Why it matters: this is the first immediately useful milestone — multiple live Hermes TUI instances for different profiles.
+
+### `203-dashboard-terminal-workspace`
+
+Multi-terminal manager in the dashboard.
+
+Scope:
+
+- tabs/panes for multiple PTY sessions;
+- terminal lifecycle: open, reconnect, close, restart;
+- profile/cwd labels;
+- resize persistence;
+- non-destructive failure handling;
+- auth-gated terminal creation.
+
+Reference: borrow UX from `hermes-workspace`, but keep the protocol Hermes-native.
+
+### `204-dashboard-runtime-registry`
+
+Backend registry for live Hermes/TUI/gateway/worker processes.
+
+Scope:
+
+- read-only process/session registry;
+- correlate PTY child, profile, cwd, started_at and last_activity;
+- expose status without broad shelling out from the frontend;
+- initial subagent/delegate visibility hooks where available;
+- no kill/restart yet except existing PTY close.
+
+Why separate: runtime observability should be a data layer, not only visual terminal tabs.
+
+### `205-dashboard-worker-roster`
+
+Agent/worker cards and optional roster metadata.
+
+Scope:
+
+- profile-local or project-local roster metadata: role, lane, mission, preferred model, capabilities;
+- worker cards: state, active task, active tool, cwd, last output, blocked reason;
+- map long-lived tmux/PTY workers to cards;
+- no hardcoded `swarm<N>` naming.
+
+Reference: `hermes-workspace` Swarm2 ideas, but without Claude naming and without a global active-profile model.
+
+### `206-dashboard-session-log-inspector`
+
+Profile-aware sessions/logs/tools inspector.
+
+Scope:
+
+- browse recent sessions by profile;
+- read recent messages/tool calls through Hermes session APIs/state layer;
+- log tail with redaction and source filters;
+- links from worker cards to terminal/session/log views;
+- safe read-only default.
+
+Reference: admin-ui pages plus the workspace chat-reader idea, implemented through Hermes-native Python APIs.
+
+### `207-dashboard-controlled-actions`
+
+Careful mutation layer after read-only UI is proven.
+
+Scope:
+
+- start/stop/restart selected PTY or worker;
+- optional gateway status/restart per profile;
+- explicit confirmations for destructive actions;
+- audit labels in logs;
+- no profile deletion until a later dedicated patch.
+
+Why last in the first wave: mutation without observability is dangerous.
+
+## Acceptance criteria for the first milestone
+
+The minimally useful UI milestone is patches `200`–`202`:
+
+- dashboard lists all Hermes profiles correctly;
+- user can choose a profile without changing global active profile;
+- user can open embedded TUI terminals for at least two different profiles at once;
+- default old dashboard chat path still works when no profile is selected;
+- profile path traversal attempts fail closed;
+- terminal spawn does not leak secrets in frontend-visible metadata;
+- focused backend/frontend tests pass.
+
+## Verification policy
+
+For every UI patch:
+
+1. focused Python tests through `scripts/run_tests.sh`, not raw pytest;
+2. focused frontend tests/typecheck for `web/` or `ui-tui/` if touched;
+3. manual dashboard smoke:
+   - default profile terminal;
+   - named profile terminal;
+   - invalid profile rejected;
+   - terminal resize still works;
+   - existing `/chat` route still works;
+4. PatchKit clean apply against `v2026.4.30` before claiming the patch exported;
+5. EN/RU docs updated for user-facing behavior.
+
+## Open questions before implementation
+
+- Should the terminal workspace use only the existing `/api/pty`, or introduce a versioned `/api/terminals` wrapper around it?
+- Where should long-lived worker roster metadata live: profile config, project `.hermes/`, or dashboard runtime DB?
+- How much subagent/delegate_task activity can be exposed from existing process/session state without invasive core changes?
+- Should tmux be an optional integration or a first-class supported backend?
+- Which parts are upstream-candidate vs local-overlay? Current read: `200`–`204` can be upstream-candidate; `205`–`207` may start as local-overlay until the product shape stabilizes.

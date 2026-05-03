@@ -92,7 +92,8 @@ PatchKit возвращает эту границу:
 - `scripts/verify.py` — self-check репозитория;
 - `scripts/clean_profile_config.py` — post-update уборка профиля: генерирует `config.yaml.example` из live `config.yaml` с redaction и оставляет в `.env` только secrets/tokens по умолчанию.
 - `scripts/grok2api_bridge.py` — helper для dedicated Grok2API sidecar bridge поверх provider_proxy mode;
-- поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md).
+- поддерживаемый список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md);
+- планируемая UI-линейка control plane: [docs/ru/ui-control-plane-plan.md](docs/ru/ui-control-plane-plan.md).
 
 Свежие заметные patch'и:
 
