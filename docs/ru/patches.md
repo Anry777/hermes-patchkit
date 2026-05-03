@@ -41,6 +41,7 @@ Upstream Hermes сегодня не даёт такого разделения p
 - OpenAI-compatible provider'ы идут через Chat Completions passthrough;
 - `openai-codex` / Responses provider'ы идут через compatibility adapter;
 - `stream: true` отдаёт OpenAI-compatible `text/event-stream` chunks, если в конфиге включён `allow_streaming: true`;
+- OpenAI-style `tools`, `tool_choice`, assistant `tool_calls`, `role: tool` results, `parallel_tool_calls` и inline `image_url` / `input_image` parts сохраняются для IDE clients;
 - `/v1/responses` и `/v1/runs` fail-closed до отдельных patch'ей для agent-style surfaces.
 
 Если нужен только provider gateway patch, используй отдельный profile:

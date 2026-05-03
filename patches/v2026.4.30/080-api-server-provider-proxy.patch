@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..5f49a2a62
+index 000000000..d23239338
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,721 @@
+@@ -0,0 +1,957 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -135,11 +135,7 @@ index 000000000..5f49a2a62
 +    tool_calls = getattr(normalized, "tool_calls", None)
 +    if tool_calls:
 +        message["tool_calls"] = [
-+            {
-+                "id": tc.id or f"call_{uuid.uuid4().hex[:16]}",
-+                "type": "function",
-+                "function": {"name": tc.name, "arguments": tc.arguments},
-+            }
++            _openai_tool_call_from_normalized(tc)
 +            for tc in tool_calls
 +        ]
 +    return {
@@ -156,6 +152,118 @@ index 000000000..5f49a2a62
 +        ],
 +        "usage": _usage_to_openai_dict(raw_response),
 +    }
++
++
++class _ProxyContentError(ValueError):
++    def __init__(self, message: str, *, param: str, code: str = "invalid_content_part"):
++        super().__init__(message)
++        self.param = param
++        self.code = code
++
++
++_CONTENT_TEXT_TYPES = {"text", "input_text", "output_text"}
++_CONTENT_IMAGE_TYPES = {"image_url", "input_image"}
++_CONTENT_UNSUPPORTED_FILE_TYPES = {"file", "input_file", "file_id"}
++
++
++def _tool_call_attr(tool_call: Any, name: str, default: Any = None) -> Any:
++    if isinstance(tool_call, dict):
++        return tool_call.get(name, default)
++    return getattr(tool_call, name, default)
++
++
++def _tool_call_function_attr(tool_call: Any, name: str, default: Any = None) -> Any:
++    fn = _tool_call_attr(tool_call, "function")
++    if isinstance(fn, dict):
++        return fn.get(name, default)
++    if fn is not None:
++        return getattr(fn, name, default)
++    return _tool_call_attr(tool_call, name, default)
++
++
++def _openai_tool_call_from_normalized(tool_call: Any, *, index: Optional[int] = None) -> Dict[str, Any]:
++    call_id = _tool_call_attr(tool_call, "id") or _tool_call_attr(tool_call, "call_id")
++    name = _tool_call_function_attr(tool_call, "name", "") or ""
++    arguments = _tool_call_function_attr(tool_call, "arguments", "{}")
++    if not isinstance(arguments, str):
++        arguments = json.dumps(arguments, ensure_ascii=False)
++    item: Dict[str, Any] = {
++        "id": str(call_id or f"call_{uuid.uuid4().hex[:16]}"),
++        "type": "function",
++        "function": {"name": str(name), "arguments": arguments},
++    }
++    if index is not None:
++        item["index"] = index
++    return item
++
++
++def _responses_tool_choice_from_chat(tool_choice: Any) -> Any:
++    if isinstance(tool_choice, dict):
++        choice_type = str(tool_choice.get("type") or "").strip()
++        fn = tool_choice.get("function")
++        if choice_type == "function" and isinstance(fn, dict):
++            name = fn.get("name")
++            if isinstance(name, str) and name.strip():
++                return {"type": "function", "name": name.strip()}
++    return tool_choice
++
++
++def _validate_chat_messages_content(messages: List[Dict[str, Any]]) -> None:
++    for idx, msg in enumerate(messages):
++        if not isinstance(msg, dict):
++            continue
++        content = msg.get("content")
++        if not isinstance(content, list):
++            continue
++        for part_idx, part in enumerate(content):
++            param = f"messages[{idx}].content"
++            if isinstance(part, str):
++                continue
++            if not isinstance(part, dict):
++                raise _ProxyContentError(
++                    f"Content part {part_idx} must be an object or string.",
++                    param=param,
++                )
++            ptype = str(part.get("type") or "").strip().lower()
++            if ptype in _CONTENT_TEXT_TYPES:
++                text = part.get("text", "")
++                if text is not None and not isinstance(text, str):
++                    raise _ProxyContentError(
++                        f"Text content part {part_idx} must contain a string text field.",
++                        param=param,
++                    )
++                continue
++            if ptype in _CONTENT_IMAGE_TYPES:
++                image_ref = part.get("image_url")
++                if isinstance(image_ref, dict):
++                    url = image_ref.get("url")
++                else:
++                    url = image_ref
++                if not isinstance(url, str) or not url.strip():
++                    raise _ProxyContentError(
++                        "Image parts must include a non-empty image URL.",
++                        param=param,
++                        code="invalid_image_url",
++                    )
++                url = url.strip()
++                if not (url.startswith("http://") or url.startswith("https://") or url.startswith("data:image/")):
++                    raise _ProxyContentError(
++                        "Image inputs must use http(s) URLs or data:image/... URLs.",
++                        param=param,
++                        code="invalid_image_url",
++                    )
++                continue
++            if ptype in _CONTENT_UNSUPPORTED_FILE_TYPES or "file" in ptype:
++                raise _ProxyContentError(
++                    "File content parts are not supported by provider_proxy chat completions. Use text or image_url/input_image parts.",
++                    param=param,
++                    code="unsupported_content_type",
++                )
++            raise _ProxyContentError(
++                f"Unsupported content part type {ptype!r}. Only text and image_url/input_image parts are supported.",
++                param=param,
++                code="unsupported_content_type",
++            )
 +
 +
 +class APIServerProviderProxy:
@@ -230,6 +338,13 @@ index 000000000..5f49a2a62
 +        if not messages or not isinstance(messages, list):
 +            return web.json_response(
 +                _openai_error("Missing or invalid 'messages' field", param="messages"),
++                status=400,
++            )
++        try:
++            _validate_chat_messages_content(messages)
++        except _ProxyContentError as exc:
++            return web.json_response(
++                _openai_error(str(exc), param=exc.param, code=exc.code),
 +                status=400,
 +            )
 +
@@ -470,7 +585,17 @@ index 000000000..5f49a2a62
 +        tools = _responses_tools(body.get("tools"))
 +        if tools:
 +            payload["tools"] = tools
-+            payload["tool_choice"] = body.get("tool_choice", "auto")
++            payload["tool_choice"] = _responses_tool_choice_from_chat(body.get("tool_choice", "auto"))
++        for passthrough_key in (
++            "parallel_tool_calls",
++            "temperature",
++            "reasoning",
++            "include",
++            "prompt_cache_key",
++            "service_tier",
++        ):
++            if body.get(passthrough_key) is not None:
++                payload[passthrough_key] = body.get(passthrough_key)
 +        is_chatgpt_codex_backend = "chatgpt.com/backend-api/codex" in target.base_url
 +        if not is_chatgpt_codex_backend and body.get("max_tokens") is not None:
 +            payload["max_output_tokens"] = body.get("max_tokens")
@@ -494,8 +619,30 @@ index 000000000..5f49a2a62
 +                client = self._create_openai_client(target)
 +                return client.responses.create(**payload)
 +
++            def _item_type(item: Any) -> str:
++                return str(self._event_attr(item, "type", "") or "")
++
++            def _tool_item_identity(item: Any) -> tuple[Optional[str], Optional[str], str, str]:
++                item_id = self._event_attr(item, "id")
++                call_id = self._event_attr(item, "call_id") or item_id
++                name = self._event_attr(item, "name", "") or ""
++                arguments = self._event_attr(item, "arguments", "")
++                if arguments is None:
++                    arguments = ""
++                if not isinstance(arguments, str):
++                    arguments = json.dumps(arguments, ensure_ascii=False)
++                return (
++                    str(item_id) if item_id else None,
++                    str(call_id) if call_id else None,
++                    str(name),
++                    arguments,
++                )
++
 +            stream = await loop.run_in_executor(None, _open_stream)
 +            iterator = iter(stream)
++            streamed_tool_calls = False
++            tool_call_indexes: Dict[str, int] = {}
++            next_tool_call_index = 0
 +            while True:
 +                event = await loop.run_in_executor(None, self._next_stream_item, iterator, sentinel)
 +                if event is sentinel:
@@ -509,10 +656,94 @@ index 000000000..5f49a2a62
 +                            response,
 +                            self._chat_stream_chunk(spec.public_id, delta={"content": str(delta)}),
 +                        )
++                elif event_type == "response.output_item.added":
++                    item = self._event_attr(event, "item")
++                    if item is not None and _item_type(item) in {"function_call", "custom_tool_call"}:
++                        item_id, call_id, name, arguments = _tool_item_identity(item)
++                        index = next_tool_call_index
++                        next_tool_call_index += 1
++                        for key in (item_id, call_id):
++                            if key:
++                                tool_call_indexes[key] = index
++                        streamed_tool_calls = True
++                        await self._write_sse_data(
++                            response,
++                            self._chat_stream_chunk(
++                                spec.public_id,
++                                delta={
++                                    "tool_calls": [
++                                        {
++                                            "index": index,
++                                            "id": call_id or f"call_{uuid.uuid4().hex[:16]}",
++                                            "type": "function",
++                                            "function": {"name": name, "arguments": arguments},
++                                        }
++                                    ]
++                                },
++                            ),
++                        )
++                elif event_type in {
++                    "response.function_call_arguments.delta",
++                    "response.custom_tool_call_input.delta",
++                    "response.output_item.arguments.delta",
++                }:
++                    delta = self._event_attr(event, "delta", "") or self._event_attr(event, "input", "") or ""
++                    item_id = self._event_attr(event, "item_id") or self._event_attr(event, "output_item_id")
++                    call_id = self._event_attr(event, "call_id")
++                    index = None
++                    for key in (item_id, call_id):
++                        if key in tool_call_indexes:
++                            index = tool_call_indexes[key]
++                            break
++                    if index is None:
++                        index = next_tool_call_index
++                        next_tool_call_index += 1
++                        for key in (item_id, call_id):
++                            if key:
++                                tool_call_indexes[str(key)] = index
++                    if delta:
++                        streamed_tool_calls = True
++                        await self._write_sse_data(
++                            response,
++                            self._chat_stream_chunk(
++                                spec.public_id,
++                                delta={"tool_calls": [{"index": index, "function": {"arguments": str(delta)}}]},
++                            ),
++                        )
 +                elif event_type == "response.output_item.done":
 +                    item = self._event_attr(event, "item")
 +                    if item is not None:
 +                        collected_output_items.append(item)
++                        if _item_type(item) in {"function_call", "custom_tool_call"}:
++                            item_id, call_id, name, arguments = _tool_item_identity(item)
++                            known_index = None
++                            for key in (item_id, call_id):
++                                if key in tool_call_indexes:
++                                    known_index = tool_call_indexes[key]
++                                    break
++                            if known_index is None:
++                                known_index = next_tool_call_index
++                                next_tool_call_index += 1
++                                streamed_tool_calls = True
++                                await self._write_sse_data(
++                                    response,
++                                    self._chat_stream_chunk(
++                                        spec.public_id,
++                                        delta={
++                                            "tool_calls": [
++                                                {
++                                                    "index": known_index,
++                                                    "id": call_id or f"call_{uuid.uuid4().hex[:16]}",
++                                                    "type": "function",
++                                                    "function": {"name": name, "arguments": arguments},
++                                                }
++                                            ]
++                                        },
++                                    ),
++                                )
++                            for key in (item_id, call_id):
++                                if key:
++                                    tool_call_indexes[key] = known_index
 +                elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
 +                    terminal_response = self._event_attr(event, "response")
 +                    break
@@ -533,19 +764,14 @@ index 000000000..5f49a2a62
 +            normalized = ResponsesApiTransport().normalize_response(terminal_response)
 +            finish_reason = getattr(normalized, "finish_reason", None) or "stop"
 +            tool_calls = getattr(normalized, "tool_calls", None)
-+            if tool_calls:
++            if tool_calls and not streamed_tool_calls:
 +                await self._write_sse_data(
 +                    response,
 +                    self._chat_stream_chunk(
 +                        spec.public_id,
 +                        delta={
 +                            "tool_calls": [
-+                                {
-+                                    "index": idx,
-+                                    "id": tc.id or f"call_{uuid.uuid4().hex[:16]}",
-+                                    "type": "function",
-+                                    "function": {"name": tc.name, "arguments": tc.arguments},
-+                                }
++                                _openai_tool_call_from_normalized(tc, index=idx)
 +                                for idx, tc in enumerate(tool_calls)
 +                            ]
 +                        },
@@ -639,7 +865,17 @@ index 000000000..5f49a2a62
 +        tools = _responses_tools(body.get("tools"))
 +        if tools:
 +            payload["tools"] = tools
-+            payload["tool_choice"] = body.get("tool_choice", "auto")
++            payload["tool_choice"] = _responses_tool_choice_from_chat(body.get("tool_choice", "auto"))
++        for passthrough_key in (
++            "parallel_tool_calls",
++            "temperature",
++            "reasoning",
++            "include",
++            "prompt_cache_key",
++            "service_tier",
++        ):
++            if body.get(passthrough_key) is not None:
++                payload[passthrough_key] = body.get(passthrough_key)
 +        # ChatGPT's Codex backend rejects max_output_tokens on its streaming
 +        # compatibility endpoint, while standard Responses-compatible backends
 +        # and tests expect the Chat Completions token limit to be mapped.
@@ -813,10 +1049,10 @@ index 8c46cc615..9d668305d 100644
          if len(self._run_streams) >= self._MAX_CONCURRENT_RUNS:
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..2f17b42e0
+index 000000000..ab2a73d80
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,379 @@
+@@ -0,0 +1,640 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -892,6 +1128,21 @@ index 000000000..2f17b42e0
 +
 +    def model_dump(self):
 +        return dict(self._payload)
++
++
++def _read_file_tool():
++    return {
++        "type": "function",
++        "function": {
++            "name": "read_file",
++            "description": "Read a text file",
++            "parameters": {
++                "type": "object",
++                "properties": {"path": {"type": "string"}},
++                "required": ["path"],
++            },
++        },
++    }
 +
 +
 +def _sse_data_payloads(raw: str):
@@ -1051,6 +1302,169 @@ index 000000000..2f17b42e0
 +        mock_transport.normalize_response.assert_called_once_with(mock_response)
 +
 +    @pytest.mark.asyncio
++    async def test_codex_responses_provider_returns_openai_tool_calls_and_payload_passthrough(self):
++        adapter = _proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        mock_client = MagicMock()
++        mock_response = object()
++        mock_client.responses.create.return_value = mock_response
++        mock_transport = MagicMock()
++        mock_transport.normalize_response.return_value = SimpleNamespace(
++            content="",
++            finish_reason="tool_calls",
++            tool_calls=[
++                SimpleNamespace(
++                    id="call_read",
++                    function=SimpleNamespace(name="read_file", arguments='{"path":"README.md"}'),
++                )
++            ],
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client), \
++             patch("agent.transports.codex.ResponsesApiTransport", return_value=mock_transport):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://api.openai.com/v1",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/chat/completions",
++                    json={
++                        "model": "gpt-5.4",
++                        "messages": [{"role": "user", "content": "read README"}],
++                        "tools": [_read_file_tool()],
++                        "tool_choice": {"type": "function", "function": {"name": "read_file"}},
++                        "parallel_tool_calls": False,
++                        "temperature": 0.1,
++                    },
++                )
++                data = await resp.json()
++
++        assert resp.status == 200
++        message = data["choices"][0]["message"]
++        assert message["content"] == ""
++        assert message["tool_calls"] == [
++            {
++                "id": "call_read",
++                "type": "function",
++                "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
++            }
++        ]
++        assert data["choices"][0]["finish_reason"] == "tool_calls"
++        kwargs = mock_client.responses.create.call_args.kwargs
++        assert kwargs["tools"] == [
++            {
++                "type": "function",
++                "name": "read_file",
++                "description": "Read a text file",
++                "strict": False,
++                "parameters": _read_file_tool()["function"]["parameters"],
++            }
++        ]
++        assert kwargs["tool_choice"] == {"type": "function", "name": "read_file"}
++        assert kwargs["parallel_tool_calls"] is False
++        assert kwargs["temperature"] == 0.1
++
++    @pytest.mark.asyncio
++    async def test_codex_responses_multimodal_and_tool_result_roundtrip(self):
++        adapter = _proxy_adapter()
++        app = _create_app(adapter)
++
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = SimpleNamespace(output=[])
++        mock_transport = MagicMock()
++        mock_transport.normalize_response.return_value = SimpleNamespace(
++            content="done",
++            finish_reason="stop",
++            tool_calls=None,
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client), \
++             patch("agent.transports.codex.ResponsesApiTransport", return_value=mock_transport):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://api.openai.com/v1",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/chat/completions",
++                    json={
++                        "model": "gpt-5.4",
++                        "messages": [
++                            {
++                                "role": "user",
++                                "content": [
++                                    {"type": "text", "text": "what is in this image?"},
++                                    {
++                                        "type": "image_url",
++                                        "image_url": {"url": "data:image/png;base64,AAAA", "detail": "low"},
++                                    },
++                                ],
++                            },
++                            {
++                                "role": "assistant",
++                                "content": "",
++                                "tool_calls": [
++                                    {
++                                        "id": "call_read",
++                                        "type": "function",
++                                        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
++                                    }
++                                ],
++                            },
++                            {"role": "tool", "tool_call_id": "call_read", "content": "file contents"},
++                        ],
++                    },
++                )
++
++        assert resp.status == 200
++        payload_input = mock_client.responses.create.call_args.kwargs["input"]
++        assert payload_input[0] == {
++            "role": "user",
++            "content": [
++                {"type": "input_text", "text": "what is in this image?"},
++                {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "low"},
++            ],
++        }
++        assert {"type": "function_call", "call_id": "call_read", "name": "read_file", "arguments": '{"path":"README.md"}'} in payload_input
++        assert {"type": "function_call_output", "call_id": "call_read", "output": "file contents"} in payload_input
++
++    @pytest.mark.asyncio
++    async def test_codex_responses_rejects_unsupported_file_content_parts(self):
++        adapter = _proxy_adapter()
++        app = _create_app(adapter)
++
++        async with TestClient(TestServer(app)) as cli:
++            resp = await cli.post(
++                "/v1/chat/completions",
++                json={
++                    "model": "gpt-5.4",
++                    "messages": [
++                        {
++                            "role": "user",
++                            "content": [
++                                {"type": "text", "text": "read this"},
++                                {"type": "input_file", "file_id": "file_123"},
++                            ],
++                        }
++                    ],
++                },
++            )
++            data = await resp.json()
++
++        assert resp.status == 400
++        assert data["error"]["code"] == "unsupported_content_type"
++        assert data["error"]["param"] == "messages[0].content"
++
++    @pytest.mark.asyncio
 +    async def test_responses_api_is_rejected_in_proxy_mode_without_agent(self):
 +        adapter = _proxy_adapter()
 +        adapter._run_agent = AsyncMock()
@@ -1196,8 +1610,91 @@ index 000000000..2f17b42e0
 +        kwargs = mock_client.responses.create.call_args.kwargs
 +        assert kwargs["model"] == "gpt-5.4"
 +        assert kwargs["stream"] is True
++
++    @pytest.mark.asyncio
++    async def test_codex_responses_streaming_tool_calls_are_adapted_to_chat_completion_sse(self):
++        adapter = _proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        function_item = SimpleNamespace(
++            type="function_call",
++            id="fc_read",
++            call_id="call_read",
++            name="read_file",
++            arguments='{"path":"README.md"}',
++            status="completed",
++        )
++        terminal_response = SimpleNamespace(output=[], usage={"input_tokens": 5, "output_tokens": 1})
++        stream_events = iter([
++            SimpleNamespace(type="response.output_item.added", item=SimpleNamespace(
++                type="function_call",
++                id="fc_read",
++                call_id="call_read",
++                name="read_file",
++                arguments="",
++            )),
++            SimpleNamespace(type="response.function_call_arguments.delta", item_id="fc_read", delta='{"path"'),
++            SimpleNamespace(type="response.function_call_arguments.delta", item_id="fc_read", delta=':"README.md"}'),
++            SimpleNamespace(type="response.output_item.done", item=function_item),
++            SimpleNamespace(type="response.completed", response=terminal_response),
++        ])
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = stream_events
++        mock_transport = MagicMock()
++        mock_transport.normalize_response.return_value = SimpleNamespace(
++            content="",
++            finish_reason="tool_calls",
++            tool_calls=[SimpleNamespace(id="call_read", function=SimpleNamespace(name="read_file", arguments='{"path":"README.md"}'))],
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client), \
++             patch("agent.transports.codex.ResponsesApiTransport", return_value=mock_transport):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/chat/completions",
++                    json={
++                        "model": "gpt-5.4",
++                        "stream": True,
++                        "messages": [{"role": "user", "content": "read README"}],
++                        "tools": [_read_file_tool()],
++                        "parallel_tool_calls": False,
++                    },
++                )
++                raw = await resp.text()
++
++        assert resp.status == 200
++        payloads = _sse_data_payloads(raw)
++        assert payloads[-1] == "[DONE]"
++        chunks = [json.loads(item) for item in payloads if item != "[DONE]"]
++        assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
++        assert chunks[1]["choices"][0]["delta"] == {
++            "tool_calls": [
++                {
++                    "index": 0,
++                    "id": "call_read",
++                    "type": "function",
++                    "function": {"name": "read_file", "arguments": ""},
++                }
++            ]
++        }
++        assert chunks[2]["choices"][0]["delta"] == {
++            "tool_calls": [{"index": 0, "function": {"arguments": '{"path"'}}]
++        }
++        assert chunks[3]["choices"][0]["delta"] == {
++            "tool_calls": [{"index": 0, "function": {"arguments": ':"README.md"}'}}]
++        }
++        assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
++        assert mock_client.responses.create.call_args.kwargs["parallel_tool_calls"] is False
 diff --git a/website/docs/user-guide/features/api-server.md b/website/docs/user-guide/features/api-server.md
-index 16b6eed8c..c2b2af834 100644
+index 16b6eed8c..8258a5b0c 100644
 --- a/website/docs/user-guide/features/api-server.md
 +++ b/website/docs/user-guide/features/api-server.md
 @@ -192,7 +192,9 @@ Delete a stored response.
@@ -1256,7 +1753,7 @@ index 16b6eed8c..c2b2af834 100644
 +
 +Provider proxy mode intentionally uses an explicit catalog. Hermes does not expose every credential or every model found in `auth.json` automatically. Each public model id must map to a configured provider/model target.
 +
-+Provider proxy supports both non-streaming and streaming `POST /v1/chat/completions` when `allow_streaming: true` is set. OpenAI-compatible providers use a pass-through chat-completions backend; Responses-backed providers such as `openai-codex` use a compatibility adapter that converts Responses streaming events to OpenAI Chat Completions SSE. For IDEs such as RooCode, expose the exact public model ids you want users to select (for example `gpt-5.4`) in the explicit catalog.
++Provider proxy supports both non-streaming and streaming `POST /v1/chat/completions` when `allow_streaming: true` is set. OpenAI-compatible providers use a pass-through chat-completions backend; Responses-backed providers such as `openai-codex` use a compatibility adapter that converts Responses streaming events to OpenAI Chat Completions SSE. The compatibility path preserves OpenAI-style `tools`, `tool_choice`, `parallel_tool_calls`, assistant `tool_calls`, `role: tool` results, and inline `image_url` / `input_image` content parts. Uploaded files (`file`, `input_file`, `file_id`) remain unsupported and return `400 unsupported_content_type`. For IDEs such as RooCode, expose the exact public model ids you want users to select (for example `gpt-5.4`) in the explicit catalog.
 +
  ## System Prompt Handling
  

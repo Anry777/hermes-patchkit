@@ -41,6 +41,7 @@ Upstream Hermes does not provide this provider-gateway split today: its API Serv
 - OpenAI-compatible providers use a Chat Completions passthrough;
 - `openai-codex` / Responses providers use a compatibility adapter;
 - `stream: true` returns OpenAI-compatible `text/event-stream` chunks when `allow_streaming: true` is configured;
+- OpenAI-style `tools`, `tool_choice`, assistant `tool_calls`, `role: tool` results, `parallel_tool_calls`, and inline `image_url` / `input_image` parts are preserved for IDE clients;
 - `/v1/responses` and `/v1/runs` fail closed until separate patches add those agent-style surfaces.
 
 Use the dedicated profile when you want to install just this provider gateway patch:
