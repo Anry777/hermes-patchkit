@@ -156,9 +156,12 @@ Backend registry for live Hermes/TUI/gateway/worker processes.
 - correlate PTY child, profile, cwd, started_at, last_activity;
 - expose status without shelling out broadly from frontend;
 - initial subagent/delegate visibility hooks where available;
-- no kill/restart yet except existing PTY close.
+- no kill/restart yet except existing PTY close;
+- no argv/env/output/session/log/memory bodies in registry payloads.
 
 Почему отдельно: runtime observability должна быть data layer, а не только визуальные terminal tabs.
+
+Статус: exported как PatchKit unit `204-dashboard-runtime-registry`; runtime commit `671b540cc`, зависит от `200`–`203`. Реализация добавляет authenticated read-only `/api/dashboard/runtimes`: dashboard process metadata, public/embedded-chat flags, live PTY sessions with profile/cwd/pid/resume/terminal size, action subprocess liveness and event-channel counts. Validation: focused runtime registry tests `3 passed`, broader dashboard focused tests `29 passed`; live browser smoke на `http://10.50.50.28:9119/chat?profile=hermesfix` открыл PTY `resume=live-204-registry`, затем `/api/dashboard/runtimes` вернул live PTY session с `profile=hermesfix` без secrets.
 
 ### `205-dashboard-worker-roster`
 

@@ -1,0 +1,333 @@
+From 671b540ccd3e17a7a2876ee89ba13896e6152e28 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 17:10:46 +0300
+Subject: [PATCH] feat: add dashboard runtime registry
+
+---
+ hermes_cli/web_server.py                      | 134 ++++++++++++++++++
+ .../test_web_server_runtime_registry.py       | 116 +++++++++++++++
+ 2 files changed, 250 insertions(+)
+ create mode 100644 tests/hermes_cli/test_web_server_runtime_registry.py
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index a4c1f797c..bf7cb041b 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -77,6 +77,7 @@ _SESSION_HEADER_NAME = "X-Hermes-Session-Token"
+ # In-browser Chat tab (/chat, /api/pty, …).  Off unless ``hermes dashboard --tui``
+ # or HERMES_DASHBOARD_TUI=1.  Set from :func:`start_server`.
+ _DASHBOARD_EMBEDDED_CHAT_ENABLED = False
++_SERVER_STARTED_AT = time.time()
+ 
+ # Simple rate limiter for the reveal endpoint
+ _reveal_timestamps: List[float] = []
+@@ -597,6 +598,78 @@ def _profile_session_summary(profile_dir: Path, limit: int = 5) -> Dict[str, Any
+     return {"total": total, "active": active, "recent": safe_recent}
+ 
+ 
++def _serialize_dashboard_runtime_registry() -> Dict[str, Any]:
++    """Return safe, read-only runtime/process metadata for the dashboard.
++
++    This intentionally exposes only process/session metadata. It does not include
++    argv, environment variables, terminal output, session messages, log contents,
++    or memory bodies.
++    """
++    with _PTY_SESSIONS_LOCK:
++        pty_sessions = [
++            {
++                "id": str(record.get("id") or key),
++                "channel": record.get("channel"),
++                "pid": record.get("pid"),
++                "profile": record.get("profile") or "default",
++                "resume": record.get("resume"),
++                "cwd": record.get("cwd"),
++                "client_host": record.get("client_host"),
++                "started_at": record.get("started_at"),
++                "last_activity": record.get("last_activity"),
++                "cols": record.get("cols"),
++                "rows": record.get("rows"),
++            }
++            for key, record in sorted(_PTY_SESSIONS.items())
++        ]
++
++    actions: List[Dict[str, Any]] = []
++    for name, proc in sorted(_ACTION_PROCS.items()):
++        returncode = proc.poll()
++        actions.append({
++            "id": name,
++            "pid": proc.pid,
++            "alive": returncode is None,
++            "returncode": returncode,
++        })
++
++    event_channels = [
++        {"channel": channel, "subscribers": len(subscribers)}
++        for channel, subscribers in sorted(_event_channels.items())
++    ]
++
++    return {
++        "dashboard": {
++            "pid": os.getpid(),
++            "cwd": str(PROJECT_ROOT),
++            "hermes_home": str(get_hermes_home()),
++            "bound_host": getattr(app.state, "bound_host", None),
++            "bound_port": getattr(app.state, "bound_port", None),
++            "allow_public": bool(getattr(app.state, "allow_public", False)),
++            "embedded_chat_enabled": bool(_DASHBOARD_EMBEDDED_CHAT_ENABLED),
++            "started_at": _SERVER_STARTED_AT,
++        },
++        "pty_sessions": pty_sessions,
++        "actions": actions,
++        "event_channels": event_channels,
++        "counts": {
++            "pty_sessions": len(pty_sessions),
++            "actions": len(actions),
++            "event_channels": len(event_channels),
++        },
++    }
++
++
++@app.get("/api/dashboard/runtimes")
++async def get_dashboard_runtimes():
++    """Return read-only live runtime metadata for the dashboard control plane."""
++    try:
++        return _serialize_dashboard_runtime_registry()
++    except Exception:
++        _log.exception("GET /api/dashboard/runtimes failed")
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
+ @app.get("/api/dashboard/profiles")
+ async def get_dashboard_profiles():
+     """Return read-only profile inventory for the dashboard control plane."""
+@@ -2793,6 +2866,8 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
+ # drops AND the publisher has disconnected.
+ _event_channels: dict[str, set] = {}
+ _event_lock = asyncio.Lock()
++_PTY_SESSIONS: Dict[str, Dict[str, Any]] = {}
++_PTY_SESSIONS_LOCK = threading.Lock()
+ 
+ 
+ def _dashboard_ws_client_allowed(client_host: str) -> bool:
+@@ -2916,6 +2991,53 @@ def _channel_or_close_code(ws: WebSocket) -> Optional[str]:
+     return channel if _VALID_CHANNEL_RE.match(channel) else None
+ 
+ 
++def _register_pty_session(
++    *,
++    channel: Optional[str],
++    bridge: PtyBridge,
++    profile: Optional[str],
++    resume: Optional[str],
++    cwd: Optional[str],
++    client_host: str,
++    cols: int = 80,
++    rows: int = 24,
++) -> str:
++    session_id = channel or f"pty-{bridge.pid}"
++    now = time.time()
++    with _PTY_SESSIONS_LOCK:
++        _PTY_SESSIONS[session_id] = {
++            "id": session_id,
++            "channel": channel,
++            "pid": bridge.pid,
++            "profile": profile or "default",
++            "resume": resume,
++            "cwd": cwd,
++            "client_host": client_host or None,
++            "started_at": now,
++            "last_activity": now,
++            "cols": cols,
++            "rows": rows,
++        }
++    return session_id
++
++
++def _touch_pty_session(session_id: str, *, cols: Optional[int] = None, rows: Optional[int] = None) -> None:
++    with _PTY_SESSIONS_LOCK:
++        record = _PTY_SESSIONS.get(session_id)
++        if not record:
++            return
++        record["last_activity"] = time.time()
++        if cols is not None:
++            record["cols"] = cols
++        if rows is not None:
++            record["rows"] = rows
++
++
++def _unregister_pty_session(session_id: str) -> None:
++    with _PTY_SESSIONS_LOCK:
++        _PTY_SESSIONS.pop(session_id, None)
++
++
+ @app.websocket("/api/pty")
+ async def pty_ws(ws: WebSocket) -> None:
+     if not _DASHBOARD_EMBEDDED_CHAT_ENABLED:
+@@ -2974,6 +3096,14 @@ async def pty_ws(ws: WebSocket) -> None:
+         return
+ 
+     loop = asyncio.get_running_loop()
++    pty_session_id = _register_pty_session(
++        channel=channel,
++        bridge=bridge,
++        profile=profile,
++        resume=resume,
++        cwd=cwd,
++        client_host=client_host,
++    )
+ 
+     # --- reader task: PTY master → WebSocket ----------------------------
+     async def pump_pty_to_ws() -> None:
+@@ -2988,6 +3118,7 @@ async def pty_ws(ws: WebSocket) -> None:
+                 continue
+             try:
+                 await ws.send_bytes(chunk)
++                _touch_pty_session(pty_session_id)
+             except Exception:
+                 return
+ 
+@@ -3013,9 +3144,11 @@ async def pty_ws(ws: WebSocket) -> None:
+                 cols = int(match.group(1))
+                 rows = int(match.group(2))
+                 bridge.resize(cols=cols, rows=rows)
++                _touch_pty_session(pty_session_id, cols=cols, rows=rows)
+                 continue
+ 
+             bridge.write(raw)
++            _touch_pty_session(pty_session_id)
+     except WebSocketDisconnect:
+         pass
+     finally:
+@@ -3025,6 +3158,7 @@ async def pty_ws(ws: WebSocket) -> None:
+         except (asyncio.CancelledError, Exception):
+             pass
+         bridge.close()
++        _unregister_pty_session(pty_session_id)
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git a/tests/hermes_cli/test_web_server_runtime_registry.py b/tests/hermes_cli/test_web_server_runtime_registry.py
+new file mode 100644
+index 000000000..7c09fe4a9
+--- /dev/null
++++ b/tests/hermes_cli/test_web_server_runtime_registry.py
+@@ -0,0 +1,116 @@
++"""Tests for dashboard runtime registry API endpoints."""
++
++from __future__ import annotations
++
++import os
++import time
++
++import pytest
++
++
++def _client_with_dashboard_token(base_url: str = "http://testserver"):
++    try:
++        from starlette.testclient import TestClient
++    except ImportError:
++        pytest.skip("fastapi/starlette not installed")
++
++    from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
++
++    client = TestClient(app, base_url=base_url)
++    client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
++    return client
++
++
++class TestDashboardRuntimeRegistryApi:
++    def test_runtime_registry_requires_dashboard_session_token(self):
++        try:
++            from starlette.testclient import TestClient
++        except ImportError:
++            pytest.skip("fastapi/starlette not installed")
++
++        from hermes_cli.web_server import app
++
++        response = TestClient(app).get("/api/dashboard/runtimes")
++
++        assert response.status_code == 401
++
++    def test_runtime_registry_returns_dashboard_and_active_pty_sessions(self, monkeypatch):
++        from hermes_cli import web_server as ws
++
++        monkeypatch.setattr(ws, "_DASHBOARD_EMBEDDED_CHAT_ENABLED", True)
++        monkeypatch.setattr(ws.app.state, "bound_host", "10.50.50.28", raising=False)
++        monkeypatch.setattr(ws.app.state, "bound_port", 9119, raising=False)
++        monkeypatch.setattr(ws.app.state, "allow_public", True, raising=False)
++
++        started_at = time.time() - 5
++        with ws._PTY_SESSIONS_LOCK:
++            ws._PTY_SESSIONS.clear()
++            ws._PTY_SESSIONS["terminal-1"] = {
++                "id": "terminal-1",
++                "channel": "terminal-1",
++                "pid": 12345,
++                "profile": "hermesfix",
++                "resume": "session-123",
++                "cwd": "/tmp/project",
++                "client_host": "10.50.50.40",
++                "started_at": started_at,
++                "last_activity": started_at + 1,
++                "cols": 120,
++                "rows": 40,
++                "secret_env": "OPENAI_API_KEY=super-secret",
++            }
++
++        try:
++            response = _client_with_dashboard_token(
++                base_url="http://10.50.50.28:9119"
++            ).get("/api/dashboard/runtimes")
++        finally:
++            with ws._PTY_SESSIONS_LOCK:
++                ws._PTY_SESSIONS.clear()
++
++        assert response.status_code == 200
++        payload = response.json()
++        assert payload["dashboard"]["pid"] == os.getpid()
++        assert payload["dashboard"]["bound_host"] == "10.50.50.28"
++        assert payload["dashboard"]["bound_port"] == 9119
++        assert payload["dashboard"]["embedded_chat_enabled"] is True
++        assert payload["dashboard"]["allow_public"] is True
++        assert payload["counts"]["pty_sessions"] == 1
++
++        session = payload["pty_sessions"][0]
++        assert session == {
++            "id": "terminal-1",
++            "channel": "terminal-1",
++            "pid": 12345,
++            "profile": "hermesfix",
++            "resume": "session-123",
++            "cwd": "/tmp/project",
++            "client_host": "10.50.50.40",
++            "started_at": started_at,
++            "last_activity": started_at + 1,
++            "cols": 120,
++            "rows": 40,
++        }
++        assert "super-secret" not in str(payload)
++        assert "OPENAI_API_KEY" not in str(payload)
++
++    def test_runtime_registry_includes_event_channels_without_messages(self):
++        from hermes_cli import web_server as ws
++
++        class _FakeSubscriber:
++            pass
++
++        with ws._PTY_SESSIONS_LOCK:
++            ws._PTY_SESSIONS.clear()
++        ws._event_channels.clear()
++        ws._event_channels["events-1"] = {_FakeSubscriber(), _FakeSubscriber()}
++
++        try:
++            response = _client_with_dashboard_token().get("/api/dashboard/runtimes")
++        finally:
++            ws._event_channels.clear()
++
++        assert response.status_code == 200
++        payload = response.json()
++        assert payload["counts"]["event_channels"] == 1
++        assert payload["event_channels"] == [{"channel": "events-1", "subscribers": 2}]
+-- 
+2.39.5
+

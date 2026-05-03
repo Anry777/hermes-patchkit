@@ -4,6 +4,7 @@
     "dashboard-profile-api",
     "dashboard-profile-selector",
     "dashboard-profile-aware-pty",
-    "dashboard-terminal-workspace"
+    "dashboard-terminal-workspace",
+    "dashboard-runtime-registry"
   ]
 }

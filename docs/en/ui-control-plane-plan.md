@@ -156,9 +156,12 @@ Scope:
 - correlate PTY child, profile, cwd, started_at and last_activity;
 - expose status without broad shelling out from the frontend;
 - initial subagent/delegate visibility hooks where available;
-- no kill/restart yet except existing PTY close.
+- no kill/restart yet except existing PTY close;
+- no argv/env/output/session/log/memory bodies in registry payloads.
 
 Why separate: runtime observability should be a data layer, not only visual terminal tabs.
+
+Status: exported as PatchKit unit `204-dashboard-runtime-registry`; runtime commit `671b540cc`, depends on `200`–`203`. The implementation adds authenticated read-only `/api/dashboard/runtimes`: dashboard process metadata, public/embedded-chat flags, live PTY sessions with profile/cwd/pid/resume/terminal size, action subprocess liveness and event-channel counts. Validation: focused runtime registry tests `3 passed`, broader dashboard focused tests `29 passed`; live browser smoke on `http://10.50.50.28:9119/chat?profile=hermesfix` opened PTY `resume=live-204-registry`, then `/api/dashboard/runtimes` returned a live PTY session with `profile=hermesfix` and no secrets.
 
 ### `205-dashboard-worker-roster`
 
