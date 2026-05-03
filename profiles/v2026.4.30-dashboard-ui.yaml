@@ -3,6 +3,7 @@
   "patches": [
     "dashboard-profile-api",
     "dashboard-profile-selector",
-    "dashboard-profile-aware-pty"
+    "dashboard-profile-aware-pty",
+    "dashboard-terminal-workspace"
   ]
 }

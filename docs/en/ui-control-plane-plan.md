@@ -139,9 +139,12 @@ Scope:
 - profile/cwd labels;
 - resize persistence;
 - non-destructive failure handling;
-- auth-gated terminal creation.
+- auth-gated terminal creation;
+- remote browser PTY/WebSocket access only under the explicit public-dashboard opt-in (`--insecure`), otherwise loopback-only.
 
 Reference: borrow UX from `hermes-workspace`, but keep the protocol Hermes-native.
+
+Status: exported as PatchKit unit `203-dashboard-terminal-workspace`; runtime commit `3a324f471`. The first foundation slice removes the live blocker found after `202`: a remote dashboard at `http://10.50.50.28:9119` can open authenticated WebSocket terminal endpoints when started with `--insecure`, while defaults remain loopback-only. Validation: RED test reproduced remote PTY 4403 under a public dashboard, focused `TestPtyWebSocket` now `16 passed`, broader dashboard focused tests `26 passed`; live browser smoke on `http://10.50.50.28:9119/chat?profile=hermesfix` opened remote `/api/pty?profile=hermesfix&resume=live-203-decode` and received PTY output with OSC title `Hermes`.
 
 ### `204-dashboard-runtime-registry`
 
@@ -215,7 +218,7 @@ Why last in the first wave: mutation without observability is dangerous.
 
 ## Acceptance criteria for the first milestone
 
-The minimally useful UI milestone is patches `200`–`202`:
+The minimally useful UI milestone is patches `200`–`203`:
 
 - dashboard lists all Hermes profiles correctly;
 - user can choose a profile without changing global active profile;

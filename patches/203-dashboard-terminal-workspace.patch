@@ -1,0 +1,163 @@
+From 3a324f471fee0dcd122d3e3bc82fa3cdf040aff7 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 16:57:24 +0300
+Subject: [PATCH] fix: allow remote dashboard PTY when public
+
+---
+ hermes_cli/web_server.py            | 25 ++++++++++--
+ tests/hermes_cli/test_web_server.py | 61 +++++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+), 4 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 9db632fe4..a4c1f797c 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -2795,6 +2795,22 @@ _event_channels: dict[str, set] = {}
+ _event_lock = asyncio.Lock()
+ 
+ 
++def _dashboard_ws_client_allowed(client_host: str) -> bool:
++    """Return whether a dashboard WebSocket peer may connect.
++
++    Embedded chat/PTY endpoints are loopback-only by default. When the
++    dashboard was explicitly started with ``--insecure`` for a non-loopback
++    bind, HTTP already exposes the dashboard to that trusted network; allow the
++    authenticated WebSocket endpoints too so the in-browser terminal works from
++    the same remote browser.
++    """
++    if not client_host:
++        return True
++    if client_host in _LOOPBACK_HOSTS:
++        return True
++    return bool(getattr(app.state, "allow_public", False))
++
++
+ def _resolve_chat_argv(
+     resume: Optional[str] = None,
+     sidecar_url: Optional[str] = None,
+@@ -2914,7 +2930,7 @@ async def pty_ws(ws: WebSocket) -> None:
+         return
+ 
+     client_host = ws.client.host if ws.client else ""
+-    if client_host and client_host not in _LOOPBACK_HOSTS:
++    if not _dashboard_ws_client_allowed(client_host):
+         await ws.close(code=4403)
+         return
+ 
+@@ -3034,7 +3050,7 @@ async def gateway_ws(ws: WebSocket) -> None:
+         return
+ 
+     client_host = ws.client.host if ws.client else ""
+-    if client_host and client_host not in _LOOPBACK_HOSTS:
++    if not _dashboard_ws_client_allowed(client_host):
+         await ws.close(code=4403)
+         return
+ 
+@@ -3067,7 +3083,7 @@ async def pub_ws(ws: WebSocket) -> None:
+         return
+ 
+     client_host = ws.client.host if ws.client else ""
+-    if client_host and client_host not in _LOOPBACK_HOSTS:
++    if not _dashboard_ws_client_allowed(client_host):
+         await ws.close(code=4403)
+         return
+ 
+@@ -3097,7 +3113,7 @@ async def events_ws(ws: WebSocket) -> None:
+         return
+ 
+     client_host = ws.client.host if ws.client else ""
+-    if client_host and client_host not in _LOOPBACK_HOSTS:
++    if not _dashboard_ws_client_allowed(client_host):
+         await ws.close(code=4403)
+         return
+ 
+@@ -3707,6 +3723,7 @@ def start_server(
+     # PTY child uses to publish events to the dashboard sidebar.
+     app.state.bound_host = host
+     app.state.bound_port = port
++    app.state.allow_public = allow_public
+ 
+     if open_browser:
+         import webbrowser
+diff --git a/tests/hermes_cli/test_web_server.py b/tests/hermes_cli/test_web_server.py
+index eea972645..164e09392 100644
+--- a/tests/hermes_cli/test_web_server.py
++++ b/tests/hermes_cli/test_web_server.py
+@@ -1753,6 +1753,7 @@ class TestPtyWebSocket:
+         # its own fake argv via ``ws._resolve_chat_argv``.
+         self.ws_module = ws
+         monkeypatch.setattr(ws, "_DASHBOARD_EMBEDDED_CHAT_ENABLED", True)
++        monkeypatch.setattr(ws.app.state, "allow_public", False, raising=False)
+         self.token = ws._SESSION_TOKEN
+         self.client = TestClient(ws.app)
+ 
+@@ -1800,6 +1801,66 @@ class TestPtyWebSocket:
+                 pass
+         assert exc.value.code == 4401
+ 
++    def test_remote_pty_client_allowed_when_public_dashboard(self, monkeypatch):
++        from starlette.testclient import TestClient
++
++        monkeypatch.setattr(
++            self.ws_module,
++            "_resolve_chat_argv",
++            lambda resume=None, sidecar_url=None: (
++                ["/bin/sh", "-c", "printf remote-pty-ok"],
++                None,
++                None,
++            ),
++        )
++        monkeypatch.setattr(
++            self.ws_module.app.state, "allow_public", True, raising=False
++        )
++        remote_client = TestClient(
++            self.ws_module.app,
++            base_url="http://10.50.50.28:9119",
++            client=("10.50.50.99", 50123),
++        )
++
++        with remote_client.websocket_connect(self._url(channel="remote-pty")) as conn:
++            buf = b""
++            import time
++
++            deadline = time.monotonic() + 5.0
++            while time.monotonic() < deadline:
++                try:
++                    frame = conn.receive_bytes()
++                except Exception:
++                    break
++                if frame:
++                    buf += frame
++                if b"remote-pty-ok" in buf:
++                    break
++        assert b"remote-pty-ok" in buf
++
++    def test_remote_pty_client_rejected_without_public_dashboard(self, monkeypatch):
++        from starlette.testclient import TestClient
++        from starlette.websockets import WebSocketDisconnect
++
++        monkeypatch.setattr(
++            self.ws_module,
++            "_resolve_chat_argv",
++            lambda resume=None, sidecar_url=None: (["/bin/cat"], None, None),
++        )
++        monkeypatch.setattr(
++            self.ws_module.app.state, "allow_public", False, raising=False
++        )
++        remote_client = TestClient(
++            self.ws_module.app,
++            base_url="http://10.50.50.28:9119",
++            client=("10.50.50.99", 50123),
++        )
++
++        with pytest.raises(WebSocketDisconnect) as exc:
++            with remote_client.websocket_connect(self._url(channel="remote-pty")):
++                pass
++        assert exc.value.code == 4403
++
+     def test_streams_child_stdout_to_client(self, monkeypatch):
+         monkeypatch.setattr(
+             self.ws_module,
+-- 
+2.39.5
+

@@ -72,7 +72,7 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
 - `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`/`201`/`202`.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`/`201`/`202`/`203`.
 
 ## Planned `200`+ UI line
 
@@ -85,7 +85,7 @@ Initial sequence:
 | `200-dashboard-profile-api` | exported | Authenticated read-only endpoints `/api/dashboard/profiles` and `/api/dashboard/profiles/{name}` for safe profile inventory: model/provider, skills, gateway, session metadata and log metadata. |
 | `201-dashboard-profile-selector` | exported | Built-in dashboard Profiles page plus sidebar selector/cards on top of `200`: model/provider, skills, env presence, gateway, paths, session counts and log metadata without changing the global active profile. |
 | `202-dashboard-profile-aware-pty` | exported | Embedded `hermes --tui` terminal with optional `profile=<name>` on the existing PTY bridge; profile-scoped `HERMES_HOME`, resume forwarding, and an Open terminal action from the Profiles page. |
-| `203-dashboard-terminal-workspace` | planned | Multi-terminal tabs/panes, reconnect/close/restart UX and profile/cwd labels. |
+| `203-dashboard-terminal-workspace` | exported | Remote terminal workspace foundation: authenticated dashboard WebSockets (`/api/pty`, `/api/ws`, `/api/pub`, `/api/events`) stay loopback-only by default but work for remote browsers under explicit `--insecure`, unlocking live `/chat?profile=<name>` on the dashboard service. |
 | `204-dashboard-runtime-registry` | planned | Read-only registry for live Hermes/TUI/gateway/worker processes. |
 | `205-dashboard-worker-roster` | planned | Worker cards/roster: role, lane, mission, active task/tool and blocked reason. |
 | `206-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |

@@ -254,6 +254,37 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-terminal-workspace",
+      "file": "patches/v2026.4.30/203-dashboard-terminal-workspace.patch",
+      "title_en": "Dashboard terminal workspace foundation",
+      "title_ru": "Foundation для dashboard terminal workspace",
+      "description_en": "Makes the dashboard WebSocket terminal stack usable from a remote browser when the dashboard is explicitly started with --insecure: authenticated /api/pty, /api/ws, /api/pub, and /api/events keep loopback-only defaults but allow non-loopback clients under the same public-dashboard opt-in, so profile-aware terminals opened from /chat?profile=<name> work on the live dashboard service.",
+      "description_ru": "Делает dashboard WebSocket terminal stack пригодным для remote browser, когда dashboard явно запущен с --insecure: authenticated /api/pty, /api/ws, /api/pub и /api/events остаются loopback-only по умолчанию, но разрешают non-loopback clients при том же public-dashboard opt-in, чтобы profile-aware terminals из /chat?profile=<name> работали на live dashboard service.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "live_smoke": "Live dashboard systemd service on http://10.50.50.28:9119 restarted with --tui --insecure from runtime commit 3a324f471; browser WebSocket smoke opened /api/pty?profile=hermesfix&resume=live-203-decode from the remote dashboard route and received PTY output with OSC title Hermes."
+      },
+      "exported_from": "3a324f471",
+      "base_runtime": "4c6a0e631",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

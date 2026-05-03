@@ -139,9 +139,12 @@ Multi-terminal manager in dashboard.
 - profile/cwd labels;
 - resize persistence;
 - non-destructive failure handling;
-- auth-gated terminal creation.
+- auth-gated terminal creation;
+- remote browser PTY/WebSocket access только при явном public-dashboard opt-in (`--insecure`), иначе loopback-only.
 
 Reference: брать UX у `hermes-workspace`, но protocol оставить Hermes-native.
+
+Статус: exported как PatchKit unit `203-dashboard-terminal-workspace`; runtime commit `3a324f471`. Первый foundation-slice устраняет live-блокер после `202`: remote dashboard по `http://10.50.50.28:9119` теперь может открывать authenticated WebSocket terminal endpoints при `--insecure`, while defaults stay loopback-only. Validation: RED test reproduced remote PTY 4403 under public dashboard, focused `TestPtyWebSocket` теперь `16 passed`, broader dashboard focused tests `26 passed`; live browser smoke на `http://10.50.50.28:9119/chat?profile=hermesfix` открыл remote `/api/pty?profile=hermesfix&resume=live-203-decode` и получил PTY output с OSC title `Hermes`.
 
 ### `204-dashboard-runtime-registry`
 
@@ -215,7 +218,7 @@ Careful mutation layer after read-only UI is proven.
 
 ## Acceptance criteria for first milestone
 
-Минимально полезный UI milestone — patches `200`–`202`:
+Минимально полезный UI milestone — patches `200`–`203`:
 
 - dashboard lists all Hermes profiles correctly;
 - user can choose profile without changing global active profile;
