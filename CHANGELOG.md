@@ -12,6 +12,7 @@ The format follows Keep a Changelog.
 - `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
+- real exported upstream-candidate patch `200-dashboard-profile-api`, opening the `200`–`249` dashboard/control-plane line with authenticated read-only `/api/dashboard/profiles` and `/api/dashboard/profiles/{name}` endpoints for safe profile inventory: model/provider, skills, gateway status, session metadata, and log-file metadata without reading secrets, memory, session messages, or log contents.
 - `scripts/pin_runtime_dependencies.py` adds an opt-in PatchKit runtime dependency pin stage, currently installing `setuptools<80` via `uv` to silence the `lark-oapi` / `pkg_resources` warning in Hermes venvs without `pip`; `apply.py --pin-runtime-dependencies` wires it into post-apply workflows.
 - `scripts/migrate_profile_config.py` runs the target Hermes checkout's own config schema migration for a profile with dry-run-by-default, backup, redacted diff output, and `apply.py --migrate-profile-config` integration before profile cleanup.
 - release-pinned `v2026.4.30` manifest and profiles: `v2026.4.30-upstream-fixes`, `v2026.4.30-provider-proxy`, `v2026.4.30-grok2api-sidecar`, and `v2026.4.30-personal`.

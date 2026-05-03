@@ -79,7 +79,7 @@ Initial sequence:
 
 | Patch | Status | Intended scope |
 |---|---|---|
-| `200-dashboard-profile-api` | planned | Read-only profile-aware backend endpoints for dashboard profiles, summaries, sessions and logs. |
+| `200-dashboard-profile-api` | exported | Authenticated read-only endpoints `/api/dashboard/profiles` and `/api/dashboard/profiles/{name}` for safe profile inventory: model/provider, skills, gateway, session metadata and log metadata. |
 | `201-dashboard-profile-selector` | planned | Profile selector/cards in the built-in dashboard without changing global active profile. |
 | `202-dashboard-profile-aware-pty` | planned | Embedded `hermes --tui` terminal with optional `profile=<name>` on the existing PTY bridge. |
 | `203-dashboard-terminal-workspace` | planned | Multi-terminal tabs/panes, reconnect/close/restart UX and profile/cwd labels. |

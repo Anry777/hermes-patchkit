@@ -84,14 +84,16 @@ Read-only backend foundation для profile-aware dashboard.
 
 Состав:
 
-- `GET /api/profiles` — список profiles через Hermes-native profile helpers;
-- `GET /api/profiles/{name}/summary` — config/model/provider/session/log/tool summary;
-- `GET /api/profiles/{name}/sessions` — recent sessions for that profile;
-- `GET /api/profiles/{name}/logs` — recent log metadata/tail with redaction;
+- `GET /api/dashboard/profiles` — список profiles через Hermes-native profile helpers;
+- `GET /api/dashboard/profiles/{name}` — config/model/provider/skill/gateway/session/log metadata summary;
+- session metadata включает counts/recent identifiers, но не session messages/system prompt;
+- log metadata включает file name/path/size/mtime, но не log contents;
 - profile name validation and path traversal protection;
-- tests around default profile, named profile and invalid profile.
+- tests around default profile, named profile, invalid/missing profile and dashboard auth.
 
 Почему первым: даёт безопасную read-only основу и не трогает chat/PTY runtime.
+
+Статус: exported как PatchKit unit `200-dashboard-profile-api` в `manifests/upstream-v2026.4.30.yaml`; runtime commit `591863f7f`. Validation: runtime focused tests `126 passed`, clean `v2026.4.30` PatchKit apply + reverse-check + focused tests `126 passed`, live HTTP smoke on `127.0.0.1:9137` passed for auth gate, list and detail endpoints.
 
 ### `201-dashboard-profile-selector`
 
