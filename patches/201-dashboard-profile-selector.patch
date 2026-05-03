@@ -1,0 +1,741 @@
+From 36471e3b1eb1573941a6c5acc9519363b97d702d Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 15:51:21 +0300
+Subject: [PATCH] feat: add dashboard profile selector
+
+---
+ ...est_dashboard_profile_selector_frontend.py |  50 +++
+ web/src/App.tsx                               |  11 +
+ web/src/components/SidebarProfileSelector.tsx | 111 ++++++
+ web/src/i18n/en.ts                            |   1 +
+ web/src/i18n/types.ts                         |   1 +
+ web/src/i18n/zh.ts                            |   1 +
+ web/src/lib/api.ts                            |  57 +++
+ web/src/lib/resolve-page-title.ts             |   1 +
+ web/src/pages/ProfilesPage.tsx                | 366 ++++++++++++++++++
+ 9 files changed, 599 insertions(+)
+ create mode 100644 tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+ create mode 100644 web/src/components/SidebarProfileSelector.tsx
+ create mode 100644 web/src/pages/ProfilesPage.tsx
+
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+new file mode 100644
+index 000000000..5b52b7d88
+--- /dev/null
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -0,0 +1,50 @@
++"""Source contract tests for the dashboard profile selector frontend slice.
++
++The project does not currently ship a JS unit-test runner for the web app, so
++these tests guard the integration points that make the profile inventory API
++visible in the dashboard shell. They complement `npm run build` and live browser
++smoke checks.
++"""
++
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[2]
++WEB_SRC = ROOT / "web" / "src"
++
++
++def _read(relative: str) -> str:
++    return (WEB_SRC / relative).read_text(encoding="utf-8")
++
++
++def test_dashboard_has_profiles_route_and_nav_item():
++    app = _read("App.tsx")
++
++    assert 'import ProfilesPage from "@/pages/ProfilesPage";' in app
++    assert '"/profiles": ProfilesPage' in app
++    assert 'path: "/profiles"' in app
++    assert 'labelKey: "profiles"' in app
++
++
++def test_dashboard_sidebar_renders_profile_selector():
++    app = _read("App.tsx")
++
++    assert 'import { SidebarProfileSelector } from "@/components/SidebarProfileSelector";' in app
++    assert "<SidebarProfileSelector" in app
++
++
++def test_dashboard_api_client_exposes_profile_inventory():
++    api = _read("lib/api.ts")
++
++    assert "DashboardProfilesResponse" in api
++    assert "DashboardProfileSummary" in api
++    assert "getDashboardProfiles:" in api
++    assert '"/api/dashboard/profiles"' in api
++
++
++def test_profiles_page_uses_profile_inventory_api():
++    page = _read("pages/ProfilesPage.tsx")
++
++    assert "api.getDashboardProfiles" in page
++    assert "api.getDashboardProfile" in page
++    assert "active_profile" in page
++    assert "gateway_running" in page
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index 4be497acb..84f586652 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
+ import { Backdrop } from "@/components/Backdrop";
+ import { SidebarFooter } from "@/components/SidebarFooter";
+ import { SidebarStatusStrip } from "@/components/SidebarStatusStrip";
++import { SidebarProfileSelector } from "@/components/SidebarProfileSelector";
+ import { PageHeaderProvider } from "@/contexts/PageHeaderProvider";
+ import { useSystemActions } from "@/contexts/useSystemActions";
+ import type { SystemAction } from "@/contexts/system-actions-context";
+@@ -60,6 +61,7 @@ import ConfigPage from "@/pages/ConfigPage";
+ import DocsPage from "@/pages/DocsPage";
+ import EnvPage from "@/pages/EnvPage";
+ import SessionsPage from "@/pages/SessionsPage";
++import ProfilesPage from "@/pages/ProfilesPage";
+ import LogsPage from "@/pages/LogsPage";
+ import AnalyticsPage from "@/pages/AnalyticsPage";
+ import ModelsPage from "@/pages/ModelsPage";
+@@ -97,6 +99,7 @@ const CHAT_NAV_ITEM: NavItem = {
+ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
+   "/": RootRedirect,
+   "/sessions": SessionsPage,
++  "/profiles": ProfilesPage,
+   "/analytics": AnalyticsPage,
+   "/models": ModelsPage,
+   "/logs": LogsPage,
+@@ -122,6 +125,12 @@ const BUILTIN_NAV_REST: NavItem[] = [
+     label: "Sessions",
+     icon: MessageSquare,
+   },
++  {
++    path: "/profiles",
++    labelKey: "profiles",
++    label: "Profiles",
++    icon: Database,
++  },
+   {
+     path: "/analytics",
+     labelKey: "analytics",
+@@ -468,6 +477,8 @@ export default function App() {
+               </Button>
+             </div>
+ 
++            <SidebarProfileSelector />
++
+             <nav
+               className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden border-t border-current/10 py-2"
+               aria-label={t.app.navigation}
+diff --git a/web/src/components/SidebarProfileSelector.tsx b/web/src/components/SidebarProfileSelector.tsx
+new file mode 100644
+index 000000000..4fdc89253
+--- /dev/null
++++ b/web/src/components/SidebarProfileSelector.tsx
+@@ -0,0 +1,111 @@
++import { useEffect, useMemo, useState } from "react";
++import { ChevronDown, Layers3 } from "lucide-react";
++import { useLocation, useNavigate } from "react-router-dom";
++import { Spinner } from "@nous-research/ui";
++
++import { api, type DashboardProfileSummary } from "@/lib/api";
++import { cn } from "@/lib/utils";
++
++export function SidebarProfileSelector() {
++  const [profiles, setProfiles] = useState<DashboardProfileSummary[]>([]);
++  const [activeProfile, setActiveProfile] = useState<string | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++  const navigate = useNavigate();
++  const location = useLocation();
++
++  useEffect(() => {
++    let cancelled = false;
++    void Promise.resolve().then(() => {
++      setLoading(true);
++      setError(null);
++      api
++        .getDashboardProfiles()
++        .then((resp) => {
++          if (cancelled) return;
++          setProfiles(resp.profiles);
++          setActiveProfile(resp.active_profile);
++        })
++        .catch((err: unknown) => {
++          if (cancelled) return;
++          setError(String(err));
++        })
++        .finally(() => {
++          if (!cancelled) setLoading(false);
++        });
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, []);
++
++  const selectedName = useMemo(() => {
++    const fromQuery = new URLSearchParams(location.search).get("profile");
++    if (fromQuery && profiles.some((p) => p.name === fromQuery)) return fromQuery;
++    return activeProfile ?? profiles.find((p) => p.is_active)?.name ?? profiles[0]?.name ?? "";
++  }, [activeProfile, location.search, profiles]);
++
++  const selected = profiles.find((p) => p.name === selectedName) ?? null;
++
++  const handleSelect = (name: string) => {
++    const params = new URLSearchParams(location.search);
++    params.set("profile", name);
++    navigate({ pathname: "/profiles", search: `?${params.toString()}` });
++  };
++
++  return (
++    <div className="border-b border-current/10 px-4 py-3" data-dashboard-profile-selector>
++      <div className="mb-2 flex items-center justify-between gap-2">
++        <div className="flex min-w-0 items-center gap-2 text-muted-foreground/55">
++          <Layers3 className="h-3.5 w-3.5 shrink-0" />
++          <span className="font-mondwest text-[0.6rem] tracking-[0.15em]">
++            Profile
++          </span>
++        </div>
++        {loading && <Spinner className="text-[0.7rem] text-muted-foreground/60" />}
++      </div>
++
++      {error ? (
++        <p className="line-clamp-2 text-[0.65rem] leading-snug text-destructive/80">
++          Profile inventory unavailable
++        </p>
++      ) : (
++        <div className="relative">
++          <select
++            aria-label="Dashboard profile selector"
++            value={selectedName}
++            disabled={loading || profiles.length === 0}
++            onChange={(event) => handleSelect(event.target.value)}
++            className={cn(
++              "w-full appearance-none rounded-none border border-current/15",
++              "bg-background-base/40 py-2 pl-3 pr-8",
++              "font-mondwest text-[0.72rem] tracking-[0.08em] text-midground",
++              "outline-none transition-colors",
++              "hover:border-current/30 focus:border-current/50",
++              "disabled:cursor-not-allowed disabled:opacity-50",
++            )}
++          >
++            {profiles.map((profile) => (
++              <option key={profile.name} value={profile.name}>
++                {profile.name}
++              </option>
++            ))}
++          </select>
++          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
++        </div>
++      )}
++
++      {selected && (
++        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.62rem] leading-snug text-muted-foreground/60">
++          {selected.is_active && <span className="text-success">active</span>}
++          {selected.is_default && <span>default</span>}
++          <span>{selected.provider ?? "provider?"}</span>
++          <span>{selected.model ?? "model?"}</span>
++          <span className={selected.gateway_running ? "text-success" : undefined}>
++            gateway {selected.gateway_running ? "on" : "off"}
++          </span>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/web/src/i18n/en.ts b/web/src/i18n/en.ts
+index 9fed7cb83..1d54d814a 100644
+--- a/web/src/i18n/en.ts
++++ b/web/src/i18n/en.ts
+@@ -75,6 +75,7 @@ export const en: Translations = {
+       keys: "Keys",
+       logs: "Logs",
+       models: "Models",
++      profiles: "Profiles",
+       sessions: "Sessions",
+       skills: "Skills",
+     },
+diff --git a/web/src/i18n/types.ts b/web/src/i18n/types.ts
+index 04c67cdad..ee7497514 100644
+--- a/web/src/i18n/types.ts
++++ b/web/src/i18n/types.ts
+@@ -75,6 +75,7 @@ export interface Translations {
+       keys: string;
+       logs: string;
+       models: string;
++      profiles: string;
+       sessions: string;
+       skills: string;
+     };
+diff --git a/web/src/i18n/zh.ts b/web/src/i18n/zh.ts
+index caec8c861..6d53e2491 100644
+--- a/web/src/i18n/zh.ts
++++ b/web/src/i18n/zh.ts
+@@ -74,6 +74,7 @@ export const zh: Translations = {
+       keys: "密钥",
+       logs: "日志",
+       models: "模型",
++      profiles: "配置档",
+       sessions: "会话",
+       skills: "技能",
+     },
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index ef8e3ae10..98ef8d9bb 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -45,6 +45,12 @@ async function getSessionToken(): Promise<string> {
+ 
+ export const api = {
+   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
++  getDashboardProfiles: () =>
++    fetchJSON<DashboardProfilesResponse>("/api/dashboard/profiles"),
++  getDashboardProfile: (name: string) =>
++    fetchJSON<DashboardProfileDetail>(
++      `/api/dashboard/profiles/${encodeURIComponent(name)}`,
++    ),
+   getSessions: (limit = 20, offset = 0) =>
+     fetchJSON<PaginatedSessions>(`/api/sessions?limit=${limit}&offset=${offset}`),
+   getSessionMessages: (id: string) =>
+@@ -268,6 +274,57 @@ export interface StatusResponse {
+   version: string;
+ }
+ 
++export interface DashboardProfileSummary {
++  name: string;
++  path: string;
++  is_default: boolean;
++  is_active: boolean;
++  gateway_running: boolean;
++  model: string | null;
++  provider: string | null;
++  has_env: boolean;
++  skill_count: number;
++  alias_path: string | null;
++}
++
++export interface DashboardProfileSessionSummary {
++  total: number;
++  active: number;
++  recent: Array<{
++    id: string | null;
++    session_id: string | null;
++    source: string | null;
++    model: string | null;
++    title: string | null;
++    started_at: number | null;
++    ended_at: number | null;
++    end_reason: string | null;
++    last_active: number | null;
++    message_count: number | null;
++    tool_call_count: number | null;
++  }>;
++}
++
++export interface DashboardProfileLogSummary {
++  name: string;
++  path: string;
++  size_bytes: number;
++  modified_at: number;
++}
++
++export interface DashboardProfileDetail extends DashboardProfileSummary {
++  config_path: string;
++  env_path: string;
++  sessions: DashboardProfileSessionSummary;
++  logs: DashboardProfileLogSummary[];
++}
++
++export interface DashboardProfilesResponse {
++  active_profile: string;
++  total: number;
++  profiles: DashboardProfileSummary[];
++}
++
+ export interface SessionInfo {
+   id: string;
+   source: string | null;
+diff --git a/web/src/lib/resolve-page-title.ts b/web/src/lib/resolve-page-title.ts
+index 00d2d1e6e..a038cd72e 100644
+--- a/web/src/lib/resolve-page-title.ts
++++ b/web/src/lib/resolve-page-title.ts
+@@ -3,6 +3,7 @@ import type { Translations } from "@/i18n/types";
+ const BUILTIN: Record<string, keyof Translations["app"]["nav"]> = {
+   "/chat": "chat",
+   "/sessions": "sessions",
++  "/profiles": "profiles",
+   "/analytics": "analytics",
+   "/logs": "logs",
+   "/cron": "cron",
+diff --git a/web/src/pages/ProfilesPage.tsx b/web/src/pages/ProfilesPage.tsx
+new file mode 100644
+index 000000000..5b51bd8e0
+--- /dev/null
++++ b/web/src/pages/ProfilesPage.tsx
+@@ -0,0 +1,366 @@
++import {
++  useCallback,
++  useEffect,
++  useLayoutEffect,
++  useMemo,
++  useState,
++  type ComponentType,
++} from "react";
++import { useSearchParams } from "react-router-dom";
++import {
++  Bot,
++  CheckCircle2,
++  CircleDot,
++  FileText,
++  Folder,
++  KeyRound,
++  MessageSquare,
++  RefreshCw,
++  Terminal,
++} from "lucide-react";
++import { Badge, Button, Spinner } from "@nous-research/ui";
++
++import {
++  api,
++  type DashboardProfileDetail,
++  type DashboardProfileSummary,
++} from "@/lib/api";
++import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
++import { usePageHeader } from "@/contexts/usePageHeader";
++import { useI18n } from "@/i18n";
++import { cn } from "@/lib/utils";
++import { PluginSlot } from "@/plugins";
++
++export default function ProfilesPage() {
++  const [searchParams, setSearchParams] = useSearchParams();
++  const [profiles, setProfiles] = useState<DashboardProfileSummary[]>([]);
++  const [activeProfile, setActiveProfile] = useState<string | null>(null);
++  const [selectedDetail, setSelectedDetail] = useState<DashboardProfileDetail | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [detailLoading, setDetailLoading] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const [detailError, setDetailError] = useState<string | null>(null);
++  const { setAfterTitle, setEnd } = usePageHeader();
++  const { t } = useI18n();
++
++  const selectedName = useMemo(() => {
++    const fromQuery = searchParams.get("profile");
++    if (fromQuery && profiles.some((profile) => profile.name === fromQuery)) {
++      return fromQuery;
++    }
++    return activeProfile ?? profiles.find((profile) => profile.is_active)?.name ?? profiles[0]?.name ?? "";
++  }, [activeProfile, profiles, searchParams]);
++
++  const loadProfiles = useCallback(() => {
++    setLoading(true);
++    setError(null);
++    api.getDashboardProfiles()
++      .then((resp) => {
++        setProfiles(resp.profiles);
++        setActiveProfile(resp.active_profile);
++      })
++      .catch((err: unknown) => setError(String(err)))
++      .finally(() => setLoading(false));
++  }, []);
++
++  useEffect(() => {
++    const timeout = window.setTimeout(loadProfiles, 0);
++    return () => window.clearTimeout(timeout);
++  }, [loadProfiles]);
++
++  useEffect(() => {
++    let cancelled = false;
++    void Promise.resolve().then(() => {
++      if (!selectedName) {
++        setSelectedDetail(null);
++        return;
++      }
++      setDetailLoading(true);
++      setDetailError(null);
++      api.getDashboardProfile(selectedName)
++        .then((detail) => {
++          if (!cancelled) setSelectedDetail(detail);
++        })
++        .catch((err: unknown) => {
++          if (!cancelled) setDetailError(String(err));
++        })
++        .finally(() => {
++          if (!cancelled) setDetailLoading(false);
++        });
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [selectedName]);
++
++  useLayoutEffect(() => {
++    setAfterTitle(
++      <span className="flex items-center gap-2">
++        {loading && <Spinner className="shrink-0 text-base text-primary" />}
++        <Badge tone="secondary" className="text-[10px]">
++          {profiles.length} profiles
++        </Badge>
++      </span>,
++    );
++    setEnd(
++      <Button
++        type="button"
++        size="sm"
++        outlined
++        onClick={loadProfiles}
++        disabled={loading}
++        prefix={loading ? <Spinner /> : <RefreshCw />}
++      >
++        {t.common.refresh}
++      </Button>,
++    );
++    return () => {
++      setAfterTitle(null);
++      setEnd(null);
++    };
++  }, [loadProfiles, loading, profiles.length, setAfterTitle, setEnd, t.common.refresh]);
++
++  const selectProfile = (name: string) => {
++    setSearchParams({ profile: name });
++  };
++
++  return (
++    <div className="flex flex-col gap-6" data-dashboard-profiles-page>
++      <PluginSlot name="profiles:top" />
++
++      <Card>
++        <CardHeader>
++          <div className="flex items-start justify-between gap-3">
++            <div>
++              <CardTitle>Profile control plane</CardTitle>
++              <CardDescription>
++                Read-only profile inventory from native Hermes profile metadata. No secrets, prompts, or log contents are exposed.
++              </CardDescription>
++            </div>
++            {activeProfile && (
++              <Badge tone="success" className="shrink-0 text-[10px]">
++                active: {activeProfile}
++              </Badge>
++            )}
++          </div>
++        </CardHeader>
++        <CardContent>
++          {error ? (
++            <p className="text-sm text-destructive">{error}</p>
++          ) : loading && profiles.length === 0 ? (
++            <div className="flex items-center justify-center py-16">
++              <Spinner className="text-2xl text-primary" />
++            </div>
++          ) : (
++            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
++              {profiles.map((profile) => (
++                <ProfileCard
++                  key={profile.name}
++                  profile={profile}
++                  selected={profile.name === selectedName}
++                  onSelect={() => selectProfile(profile.name)}
++                />
++              ))}
++            </div>
++          )}
++        </CardContent>
++      </Card>
++
++      {selectedName && (
++        <ProfileDetailCard
++          detail={selectedDetail}
++          loading={detailLoading}
++          error={detailError}
++          selectedName={selectedName}
++        />
++      )}
++
++      <PluginSlot name="profiles:bottom" />
++    </div>
++  );
++}
++
++function ProfileCard({
++  profile,
++  selected,
++  onSelect,
++}: {
++  profile: DashboardProfileSummary;
++  selected: boolean;
++  onSelect: () => void;
++}) {
++  return (
++    <button
++      type="button"
++      onClick={onSelect}
++      data-profile-card={profile.name}
++      aria-pressed={selected}
++      className={cn(
++        "group border border-current/15 bg-background-base/35 p-4 text-left",
++        "transition-colors hover:border-current/35 hover:bg-background-base/55",
++        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/50",
++        selected && "border-primary/70 bg-primary/10",
++      )}
++    >
++      <div className="flex items-start justify-between gap-3">
++        <div className="min-w-0">
++          <div className="flex items-center gap-2">
++            <h3 className="truncate font-expanded text-sm font-bold tracking-[0.08em] text-midground">
++              {profile.name}
++            </h3>
++            {profile.is_active && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />}
++          </div>
++          <p className="mt-1 truncate text-xs text-muted-foreground">
++            {profile.provider ?? "provider?"} / {profile.model ?? "model?"}
++          </p>
++        </div>
++        <Badge tone={profile.gateway_running ? "success" : "outline"} className="shrink-0 text-[10px]">
++          gateway {profile.gateway_running ? "on" : "off"}
++        </Badge>
++      </div>
++
++      <div className="mt-4 grid grid-cols-3 gap-2 text-[0.68rem] text-muted-foreground/75">
++        <Metric icon={Bot} label="skills" value={String(profile.skill_count)} />
++        <Metric icon={KeyRound} label="env" value={profile.has_env ? "yes" : "no"} />
++        <Metric icon={CircleDot} label="kind" value={profile.is_default ? "default" : "named"} />
++      </div>
++
++      <p className="mt-3 truncate text-[0.65rem] text-muted-foreground/45" title={profile.path}>
++        {profile.path}
++      </p>
++    </button>
++  );
++}
++
++function ProfileDetailCard({
++  detail,
++  loading,
++  error,
++  selectedName,
++}: {
++  detail: DashboardProfileDetail | null;
++  loading: boolean;
++  error: string | null;
++  selectedName: string;
++}) {
++  return (
++    <Card data-profile-detail={selectedName}>
++      <CardHeader>
++        <div className="flex items-start justify-between gap-3">
++          <div>
++            <CardTitle>{selectedName}</CardTitle>
++            <CardDescription>Profile paths, sessions, and log-file metadata.</CardDescription>
++          </div>
++          {loading && <Spinner className="text-primary" />}
++        </div>
++      </CardHeader>
++      <CardContent>
++        {error ? (
++          <p className="text-sm text-destructive">{error}</p>
++        ) : detail ? (
++          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.7fr)]">
++            <div className="grid gap-3 md:grid-cols-2">
++              <InfoRow icon={Folder} label="Profile path" value={detail.path} />
++              <InfoRow icon={FileText} label="Config" value={detail.config_path} />
++              <InfoRow icon={KeyRound} label="Env file" value={detail.env_path} />
++              <InfoRow icon={Terminal} label="Alias" value={detail.alias_path ?? "none"} />
++            </div>
++
++            <div className="grid gap-3">
++              <div className="border border-current/10 p-3">
++                <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
++                  <MessageSquare className="h-3.5 w-3.5" /> Sessions
++                </div>
++                <div className="flex gap-3 text-sm">
++                  <Badge tone="secondary">{detail.sessions.total} total</Badge>
++                  <Badge tone={detail.sessions.active ? "success" : "outline"}>
++                    {detail.sessions.active} active
++                  </Badge>
++                </div>
++                {detail.sessions.recent.length > 0 && (
++                  <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
++                    {detail.sessions.recent.slice(0, 3).map((session) => (
++                      <li key={session.session_id ?? session.id ?? "session"} className="truncate">
++                        {session.title || session.session_id || session.id || "Untitled session"}
++                      </li>
++                    ))}
++                  </ul>
++                )}
++              </div>
++
++              <div className="border border-current/10 p-3">
++                <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
++                  <FileText className="h-3.5 w-3.5" /> Logs
++                </div>
++                {detail.logs.length === 0 ? (
++                  <p className="text-xs text-muted-foreground">No log files found.</p>
++                ) : (
++                  <ul className="space-y-2 text-xs text-muted-foreground">
++                    {detail.logs.slice(0, 4).map((log) => (
++                      <li key={log.path} className="flex justify-between gap-3">
++                        <span className="truncate">{log.name}</span>
++                        <span className="shrink-0 tabular-nums">{formatBytes(log.size_bytes)}</span>
++                      </li>
++                    ))}
++                  </ul>
++                )}
++              </div>
++            </div>
++          </div>
++        ) : (
++          <div className="flex items-center justify-center py-10">
++            <Spinner className="text-xl text-primary" />
++          </div>
++        )}
++      </CardContent>
++    </Card>
++  );
++}
++
++function Metric({
++  icon: Icon,
++  label,
++  value,
++}: {
++  icon: ComponentType<{ className?: string }>;
++  label: string;
++  value: string;
++}) {
++  return (
++    <div className="min-w-0 border border-current/10 p-2">
++      <div className="mb-1 flex items-center gap-1.5 text-muted-foreground/55">
++        <Icon className="h-3 w-3 shrink-0" />
++        <span className="truncate">{label}</span>
++      </div>
++      <p className="truncate text-midground">{value}</p>
++    </div>
++  );
++}
++
++function InfoRow({
++  icon: Icon,
++  label,
++  value,
++}: {
++  icon: ComponentType<{ className?: string }>;
++  label: string;
++  value: string;
++}) {
++  return (
++    <div className="min-w-0 border border-current/10 p-3">
++      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
++        <Icon className="h-3.5 w-3.5 shrink-0" />
++        {label}
++      </div>
++      <p className="truncate text-sm text-midground" title={value}>
++        {value}
++      </p>
++    </div>
++  );
++}
++
++function formatBytes(size: number): string {
++  if (size >= 1_048_576) return `${(size / 1_048_576).toFixed(1)} MB`;
++  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
++  return `${size} B`;
++}
+-- 
+2.39.5
+

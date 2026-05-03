@@ -188,6 +188,38 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-profile-selector",
+      "file": "patches/v2026.4.30/201-dashboard-profile-selector.patch",
+      "title_en": "Dashboard profile selector and cards",
+      "title_ru": "Profile selector и cards для dashboard",
+      "description_en": "Adds a built-in dashboard Profiles page and sidebar selector backed by the read-only profile inventory API, showing model/provider, skills, env presence, gateway status, paths, session counts, and log-file metadata without mutating the global active profile.",
+      "description_ru": "Добавляет встроенную dashboard страницу Profiles и sidebar selector поверх read-only profile inventory API: model/provider, skills, наличие env, gateway status, paths, session counts и log-file metadata без изменения global active profile.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py",
+          "tests/hermes_cli/test_web_server_profiles_api.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/components/SidebarProfileSelector.tsx src/pages/ProfilesPage.tsx src/App.tsx src/lib/api.ts src/lib/resolve-page-title.ts src/i18n/types.ts src/i18n/en.ts src/i18n/zh.ts"
+        ],
+        "live_smoke": "Dashboard /profiles rendered on http://10.50.50.28:9119/profiles with sidebar selector, 4 profile cards, authenticated /api/dashboard/profiles returned 200, and /api/dashboard/profiles/hermesfix returned 200."
+      },
+      "exported_from": "36471e3b1",
+      "base_runtime": "591863f7f",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

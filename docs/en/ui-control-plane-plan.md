@@ -109,6 +109,8 @@ Scope:
 
 Why separate: frontend can land without changing PTY lifecycle.
 
+Status: exported as PatchKit unit `201-dashboard-profile-selector`; runtime commit `36471e3b1`, depends on `200-dashboard-profile-api`. Validation: frontend `npm run build` passed, focused eslint on touched files passed, focused runtime tests `8 passed` (`test_dashboard_profile_selector_frontend.py` + `test_web_server_profiles_api.py`), live dashboard smoke on `http://10.50.50.28:9119/profiles` confirmed the sidebar selector, four profile cards, authenticated list/detail API calls and no browser console errors.
+
 ### `202-dashboard-profile-aware-pty`
 
 Profile-aware embedded TUI terminal.

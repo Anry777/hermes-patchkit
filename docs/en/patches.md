@@ -26,6 +26,8 @@ Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specif
 | `076-max-media-directive-safety` | exported | Stops documented `MEDIA:` examples and markdown/code snippets from being parsed as real attachments. | Depends on `075-max-gateway-file-attachments`. `MEDIA:` directives for MAX must be real local paths on their own plain line, not placeholder paths, inline code, or fenced code blocks. |
 | `077-max-markdown-formatting` | exported | Makes outgoing MAX text less flat by sending text and captions with official MAX Markdown formatting by default. | Depends on `076-max-media-directive-safety`. Adds configurable `MAX_TEXT_FORMAT` (`markdown`, `html`, or invalid/disabled values to omit formatting metadata), preserves explicit per-message metadata overrides, and updates the MAX prompt hint to use concise MAX-safe Markdown without wrapping `MEDIA:` lines in code blocks. Fresh runtime live sends confirmed that MAX renders both Markdown and HTML formatting; if raw Markdown appears again, restart the gateway/tool process before changing payload logic. |
 | `080-api-server-provider-proxy` | exported | Adds an opt-in `provider_proxy` mode to the OpenAI-compatible API Server: `/v1/models` returns an explicit catalog and `/v1/chat/completions` routes to configured provider/model targets without creating an `AIAgent`. | Generic upstream-candidate patch. Supports non-streaming and streaming Chat Completions for OpenAI-compatible providers, plus a compatibility path for `openai-codex`/Responses that adapts Responses streams into OpenAI Chat Completion SSE chunks, maps `reasoning_effort`, and filters ChatGPT Codex-rejected sampling params such as `temperature`. `/v1/responses` and `/v1/runs` still fail closed as unsupported operations. |
+| `200-dashboard-profile-api` | exported | Adds an authenticated read-only profile inventory API for the built-in dashboard. | First upstream-candidate patch in the `200`–`249` UI/control-plane line; does not expose secrets, session messages, or log contents. |
+| `201-dashboard-profile-selector` | exported | Adds the built-in Profiles page and sidebar selector/cards on top of `200-dashboard-profile-api`. | Shows model/provider, skills, env presence, gateway status, paths, session counts, and log-file metadata; selection does not mutate the global active profile. |
 
 ## Patch highlights
 
@@ -69,7 +71,7 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
 - `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, and optional `080`.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`/`201`.
 
 ## Planned `200`+ UI line
 
@@ -80,7 +82,7 @@ Initial sequence:
 | Patch | Status | Intended scope |
 |---|---|---|
 | `200-dashboard-profile-api` | exported | Authenticated read-only endpoints `/api/dashboard/profiles` and `/api/dashboard/profiles/{name}` for safe profile inventory: model/provider, skills, gateway, session metadata and log metadata. |
-| `201-dashboard-profile-selector` | planned | Profile selector/cards in the built-in dashboard without changing global active profile. |
+| `201-dashboard-profile-selector` | exported | Built-in dashboard Profiles page plus sidebar selector/cards on top of `200`: model/provider, skills, env presence, gateway, paths, session counts and log metadata without changing the global active profile. |
 | `202-dashboard-profile-aware-pty` | planned | Embedded `hermes --tui` terminal with optional `profile=<name>` on the existing PTY bridge. |
 | `203-dashboard-terminal-workspace` | planned | Multi-terminal tabs/panes, reconnect/close/restart UX and profile/cwd labels. |
 | `204-dashboard-runtime-registry` | planned | Read-only registry for live Hermes/TUI/gateway/worker processes. |
