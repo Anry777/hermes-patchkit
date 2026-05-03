@@ -1,0 +1,331 @@
+From be1ef4e87c2df05b0fa40711df09ef6455ed953d Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 18:01:30 +0300
+Subject: [PATCH] fix: isolate dashboard profile terminals
+
+---
+ hermes_cli/web_server.py                      | 29 +++++++
+ ...est_dashboard_profile_selector_frontend.py | 21 +++--
+ .../test_web_server_runtime_registry.py       | 47 +++++++++++
+ web/src/pages/ChatPage.tsx                    | 80 +++++++++++++++++--
+ web/src/pages/ProfilesPage.tsx                | 13 ++-
+ 5 files changed, 178 insertions(+), 12 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 77f2100b7..6738f81ea 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -675,6 +675,34 @@ async def get_dashboard_runtimes():
+         raise HTTPException(status_code=500, detail="Internal server error")
+ 
+ 
++@app.delete("/api/dashboard/runtimes/pty/{session_id}")
++async def close_dashboard_pty_session(session_id: str):
++    """Close one dashboard PTY session by its opaque registry id."""
++    if not _VALID_CHANNEL_RE.match(session_id):
++        raise HTTPException(status_code=400, detail="Invalid PTY session id")
++
++    with _PTY_SESSIONS_LOCK:
++        record = _PTY_SESSIONS.pop(session_id, None)
++
++    if not record:
++        raise HTTPException(status_code=404, detail="PTY session not found")
++
++    bridge = record.get("bridge")
++    if bridge is not None:
++        try:
++            bridge.close()
++        except Exception:
++            _log.exception("Failed to close dashboard PTY session %s", session_id)
++            raise HTTPException(status_code=500, detail="Failed to close PTY session")
++
++    return {
++        "ok": True,
++        "id": session_id,
++        "profile": record.get("profile"),
++        "pid": record.get("pid"),
++    }
++
++
+ def _safe_worker_roster_value(value: Any) -> Optional[Any]:
+     """Return a JSON-safe scalar/list roster value without nested secret bags."""
+     if value is None:
+@@ -3137,6 +3165,7 @@ def _register_pty_session(
+             "resume": resume,
+             "cwd": cwd,
+             "client_host": client_host or None,
++            "bridge": bridge,
+             "started_at": now,
+             "last_activity": now,
+             "cols": cols,
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index 81a9fe71f..4ddb2d05e 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -50,19 +50,30 @@ def test_profiles_page_uses_profile_inventory_api():
+     assert "gateway_running" in page
+ 
+ 
+-def test_profiles_page_links_selected_profile_to_chat_terminal():
++def test_profiles_page_links_selected_profile_to_unique_chat_terminal():
+     page = _read("pages/ProfilesPage.tsx")
+ 
+     assert "function profileChatHref" in page
+-    assert "new URLSearchParams({ profile: name })" in page
++    assert 'params.set("profile", name)' in page
++    assert 'params.set("terminal", generateTerminalId(name))' in page
+     assert 'to={profileChatHref(selectedName)}' in page
+     assert "data-open-profile-terminal" in page
+ 
+ 
+-def test_chat_page_forwards_profile_query_to_pty_websocket():
++def test_chat_page_forwards_live_profile_and_terminal_query_to_pty_websocket():
+     page = _read("pages/ChatPage.tsx")
+ 
+     assert "profile: string | null" in page
+     assert 'if (profile) qs.set("profile", profile);' in page
+-    assert 'const profileRef = useRef<string | null>(searchParams.get("profile"));' in page
+-    assert "buildWsUrl(token, resumeRef.current, channel, profileRef.current)" in page
++    assert 'const profile = searchParams.get("profile");' in page
++    assert 'const terminalQueryId = searchParams.get("terminal");' in page
++    assert "buildWsUrl(token, resume, channel, profile)" in page
++    assert "}, [channel, profile, resume, terminalClosed]);" in page
++
++
++def test_chat_page_exposes_close_terminal_action():
++    page = _read("pages/ChatPage.tsx")
++
++    assert "handleCloseTerminal" in page
++    assert "data-close-profile-terminal" in page
++    assert "close terminal" in page.lower()
+diff --git a/tests/hermes_cli/test_web_server_runtime_registry.py b/tests/hermes_cli/test_web_server_runtime_registry.py
+index 7c09fe4a9..71c29b3d1 100644
+--- a/tests/hermes_cli/test_web_server_runtime_registry.py
++++ b/tests/hermes_cli/test_web_server_runtime_registry.py
+@@ -114,3 +114,50 @@ class TestDashboardRuntimeRegistryApi:
+         payload = response.json()
+         assert payload["counts"]["event_channels"] == 1
+         assert payload["event_channels"] == [{"channel": "events-1", "subscribers": 2}]
++
++    def test_close_pty_session_closes_bridge_and_removes_registry_entry(self):
++        from hermes_cli import web_server as ws
++
++        class _FakeBridge:
++            def __init__(self):
++                self.closed = False
++
++            def close(self):
++                self.closed = True
++
++        bridge = _FakeBridge()
++        with ws._PTY_SESSIONS_LOCK:
++            ws._PTY_SESSIONS.clear()
++            ws._PTY_SESSIONS["terminal-hermesfix-123"] = {
++                "id": "terminal-hermesfix-123",
++                "channel": "terminal-hermesfix-123",
++                "pid": 4321,
++                "profile": "hermesfix",
++                "bridge": bridge,
++            }
++
++        response = _client_with_dashboard_token().delete(
++            "/api/dashboard/runtimes/pty/terminal-hermesfix-123"
++        )
++
++        try:
++            assert response.status_code == 200
++            assert response.json() == {
++                "ok": True,
++                "id": "terminal-hermesfix-123",
++                "profile": "hermesfix",
++                "pid": 4321,
++            }
++            assert bridge.closed is True
++            with ws._PTY_SESSIONS_LOCK:
++                assert "terminal-hermesfix-123" not in ws._PTY_SESSIONS
++        finally:
++            with ws._PTY_SESSIONS_LOCK:
++                ws._PTY_SESSIONS.clear()
++
++    def test_close_pty_session_returns_404_for_unknown_session(self):
++        response = _client_with_dashboard_token().delete(
++            "/api/dashboard/runtimes/pty/missing-terminal"
++        )
++
++        assert response.status_code == 404
+diff --git a/web/src/pages/ChatPage.tsx b/web/src/pages/ChatPage.tsx
+index da8ac8d2a..d3889a28a 100644
+--- a/web/src/pages/ChatPage.tsx
++++ b/web/src/pages/ChatPage.tsx
+@@ -148,9 +148,20 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+       : false,
+   );
+ 
+-  const resumeRef = useRef<string | null>(searchParams.get("resume"));
+-  const profileRef = useRef<string | null>(searchParams.get("profile"));
+-  const channel = useMemo(() => generateChannelId(), []);
++  const resume = searchParams.get("resume");
++  const profile = searchParams.get("profile");
++  const terminalQueryId = searchParams.get("terminal");
++  const channel = useMemo(
++    () =>
++      terminalQueryId && /^[A-Za-z0-9._-]{1,128}$/.test(terminalQueryId)
++        ? terminalQueryId
++        : generateChannelId(),
++    [terminalQueryId],
++  );
++  const terminalKey = `${channel}:${profile ?? "default"}:${resume ?? ""}`;
++  const manualCloseRef = useRef(false);
++  const [closedTerminalKey, setClosedTerminalKey] = useState<string | null>(null);
++  const terminalClosed = closedTerminalKey === terminalKey;
+ 
+   useEffect(() => {
+     const mql = window.matchMedia("(max-width: 1023px)");
+@@ -216,6 +227,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+   }, [isActive, narrow, mobilePanelOpen, modelToolsLabel, setEnd]);
+ 
+   const handleCopyLast = () => {
++    if (terminalClosed) return;
+     const ws = wsRef.current;
+     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+     // Send the slash as a burst, wait long enough for Ink's tokenizer to
+@@ -234,6 +246,28 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+     termRef.current?.focus();
+   };
+ 
++  const handleCloseTerminal = useCallback(() => {
++    manualCloseRef.current = true;
++    setClosedTerminalKey(terminalKey);
++
++    const token = window.__HERMES_SESSION_TOKEN__;
++    if (token) {
++      fetch(`/api/dashboard/runtimes/pty/${encodeURIComponent(channel)}`, {
++        method: "DELETE",
++        headers: { "X-Hermes-Session-Token": token },
++      }).catch((err: unknown) => {
++        console.warn("[hermes-chat] close terminal request failed", err);
++      });
++    }
++
++    const ws = wsRef.current;
++    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
++      ws.close(1000, "dashboard terminal closed");
++    }
++    wsRef.current = null;
++    termRef.current?.write("\r\n\x1b[90m[terminal closed]\x1b[0m\r\n");
++  }, [channel, terminalKey]);
++
+   useEffect(() => {
+     const host = hostRef.current;
+     if (!host) return;
+@@ -243,6 +277,9 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+     if (!token) {
+       return;
+     }
++    if (terminalClosed) {
++      return;
++    }
+ 
+     const tierW0 = terminalTierWidthPx(host);
+     const term = new Terminal({
+@@ -485,8 +522,9 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+       });
+     });
+ 
++    manualCloseRef.current = false;
+     // WebSocket
+-    const url = buildWsUrl(token, resumeRef.current, channel, profileRef.current);
++    const url = buildWsUrl(token, resume, channel, profile);
+     const ws = new WebSocket(url);
+     ws.binaryType = "arraybuffer";
+     wsRef.current = ws;
+@@ -514,7 +552,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+ 
+     ws.onclose = (ev) => {
+       wsRef.current = null;
+-      if (unmounting) {
++      if (unmounting || manualCloseRef.current) {
+         return;
+       }
+       if (ev.code === 4401) {
+@@ -629,7 +667,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+         copyResetRef.current = null;
+       }
+     };
+-  }, [channel]);
++  }, [channel, profile, resume, terminalClosed]);
+ 
+   // When the user returns to the chat tab (isActive: false → true), the
+   // terminal host just transitioned from display:none to display:flex.
+@@ -778,6 +816,12 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+         </div>
+       )}
+ 
++      {terminalClosed && (
++        <div className="border border-midground/25 bg-midground/5 text-midground px-3 py-2 text-xs tracking-wide">
++          Terminal closed. Open a profile terminal from /profiles to start a new scoped PTY.
++        </div>
++      )}
++
+       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
+         <div
+           className={cn(
+@@ -794,6 +838,30 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+             className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"
+           />
+ 
++          <Button
++            ghost
++            data-close-profile-terminal
++            onClick={handleCloseTerminal}
++            disabled={terminalClosed}
++            title="Close this terminal"
++            aria-label="Close terminal"
++            className={cn(
++              "absolute z-10",
++              "rounded border border-current/30",
++              "bg-black/20 backdrop-blur-sm",
++              "opacity-60 hover:opacity-100 hover:border-current/60",
++              "transition-opacity duration-150 normal-case font-normal tracking-normal",
++              "top-2 right-2 px-2 py-1 text-[0.65rem] sm:top-3 sm:right-3 sm:px-2.5 sm:py-1.5 sm:text-xs",
++              "disabled:pointer-events-none disabled:opacity-35",
++            )}
++            style={{ color: TERMINAL_THEME.foreground }}
++          >
++            <span className="inline-flex items-center gap-1.5">
++              <X className="h-3 w-3 shrink-0" />
++              <span className="hidden min-[400px]:inline tracking-wide">close terminal</span>
++            </span>
++          </Button>
++
+           <Button
+             ghost
+             onClick={handleCopyLast}
+diff --git a/web/src/pages/ProfilesPage.tsx b/web/src/pages/ProfilesPage.tsx
+index 3ceed012e..e9bea997a 100644
+--- a/web/src/pages/ProfilesPage.tsx
++++ b/web/src/pages/ProfilesPage.tsx
+@@ -232,8 +232,19 @@ function ProfileCard({
+   );
+ }
+ 
++function generateTerminalId(profileName: string): string {
++  const safeProfile = profileName.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 48) || "profile";
++  const suffix =
++    typeof crypto !== "undefined" && "randomUUID" in crypto
++      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
++      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
++  return `terminal-${safeProfile}-${suffix}`.slice(0, 128);
++}
++
+ function profileChatHref(name: string): string {
+-  const params = new URLSearchParams({ profile: name });
++  const params = new URLSearchParams();
++  params.set("profile", name);
++  params.set("terminal", generateTerminalId(name));
+   return `/chat?${params.toString()}`;
+ }
+ 
+-- 
+2.39.5
+

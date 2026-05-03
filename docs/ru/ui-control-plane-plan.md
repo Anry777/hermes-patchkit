@@ -178,7 +178,21 @@ Reference: `hermes-workspace` Swarm2 ideas, но без Claude naming и без 
 
 Статус: exported как PatchKit unit `205-dashboard-worker-roster`; runtime commit `9ea912604`, зависит от `200`–`204`. Реализация добавляет authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers из `dashboard/worker_roster.json` плюс live PTY runtime workers из `204`, только safe role/lane/mission/model/capability/process metadata. Validation: focused worker roster tests `3 passed`, broader dashboard focused tests `32 passed`; live dashboard smoke вернул `200` и counts `configured_workers=0`, `runtime_workers=2`, `workers=2` без secrets.
 
-### `206-dashboard-session-log-inspector`
+### `206-dashboard-terminal-profile-lifecycle`
+
+Bugfix/control slice for profile terminal identity and close lifecycle.
+
+Состав:
+
+- Open terminal из Profiles page создаёт уникальный `/chat?profile=<name>&terminal=<id>` channel;
+- Chat page больше не переиспользует default terminal при переходе между profiles;
+- authenticated `DELETE /api/dashboard/runtimes/pty/{id}` закрывает ровно одну registered PTY session;
+- user-facing кнопка `Close terminal` закрывает текущий terminal и удаляет его из runtime registry;
+- close/reopen не мутирует global active profile.
+
+Статус: exported как PatchKit unit `206-dashboard-terminal-profile-lifecycle`; runtime commit `be1ef4e87`, зависит от `200`–`205`. Validation: dashboard focused tests `35 passed`, `npm run build` passed, focused eslint passed; live smoke на `http://10.50.50.28:9119/profiles` подтвердил, что `hermesfix` открывается как `/chat?profile=hermesfix&terminal=terminal-hermesfix-...`, `/api/dashboard/runtimes` показывает PTY с `profile=hermesfix`, а `Close terminal` удаляет session из registry.
+
+### `207-dashboard-session-log-inspector`
 
 Profile-aware sessions/logs/tools inspector.
 
@@ -192,7 +206,7 @@ Profile-aware sessions/logs/tools inspector.
 
 Reference: admin-ui pages + workspace chat reader idea, но реализовать через Hermes-native Python APIs.
 
-### `207-dashboard-assembly-analytics`
+### `208-dashboard-assembly-analytics`
 
 Profile-aware analytics and whole-assembly summary.
 
@@ -207,7 +221,7 @@ Profile-aware analytics and whole-assembly summary.
 
 Почему до controlled actions: сначала нужно видеть нагрузку, стоимость и активность всей сборки, иначе stop/restart/mutation decisions будут слепыми.
 
-### `208-dashboard-controlled-actions`
+### `209-dashboard-controlled-actions`
 
 Careful mutation layer after read-only UI is proven.
 

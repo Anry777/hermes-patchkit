@@ -178,7 +178,21 @@ Reference: `hermes-workspace` Swarm2 ideas, but without Claude naming and withou
 
 Status: exported as PatchKit unit `205-dashboard-worker-roster`; runtime commit `9ea912604`, depends on `200`–`204`. The implementation adds authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers from `dashboard/worker_roster.json` plus live PTY runtime workers from `204`, exposing only safe role/lane/mission/model/capability/process metadata. Validation: focused worker roster tests `3 passed`, broader dashboard focused tests `32 passed`; live dashboard smoke returned `200` with counts `configured_workers=0`, `runtime_workers=2`, `workers=2` and no secrets.
 
-### `206-dashboard-session-log-inspector`
+### `206-dashboard-terminal-profile-lifecycle`
+
+Bugfix/control slice for profile terminal identity and close lifecycle.
+
+Scope:
+
+- Open terminal from the Profiles page creates a unique `/chat?profile=<name>&terminal=<id>` channel;
+- Chat no longer reuses the default terminal when moving between profiles;
+- authenticated `DELETE /api/dashboard/runtimes/pty/{id}` closes exactly one registered PTY session;
+- user-facing `Close terminal` closes the current terminal and removes it from the runtime registry;
+- close/reopen does not mutate the global active profile.
+
+Status: exported as PatchKit unit `206-dashboard-terminal-profile-lifecycle`; runtime commit `be1ef4e87`, depends on `200`–`205`. Validation: dashboard focused tests `35 passed`, `npm run build` passed, focused eslint passed; live smoke on `http://10.50.50.28:9119/profiles` confirmed `hermesfix` opens as `/chat?profile=hermesfix&terminal=terminal-hermesfix-...`, `/api/dashboard/runtimes` shows a PTY with `profile=hermesfix`, and `Close terminal` removes the session from the registry.
+
+### `207-dashboard-session-log-inspector`
 
 Profile-aware sessions/logs/tools inspector.
 
@@ -192,7 +206,7 @@ Scope:
 
 Reference: admin-ui pages plus the workspace chat-reader idea, implemented through Hermes-native Python APIs.
 
-### `207-dashboard-assembly-analytics`
+### `208-dashboard-assembly-analytics`
 
 Profile-aware analytics and whole-assembly summary.
 
@@ -207,7 +221,7 @@ Scope:
 
 Why before controlled actions: first we need visibility into load, cost and activity across the whole assembly; otherwise stop/restart/mutation decisions are blind.
 
-### `208-dashboard-controlled-actions`
+### `209-dashboard-controlled-actions`
 
 Careful mutation layer after read-only UI is proven.
 

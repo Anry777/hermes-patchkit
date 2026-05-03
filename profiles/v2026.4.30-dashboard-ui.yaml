@@ -6,6 +6,7 @@
     "dashboard-profile-aware-pty",
     "dashboard-terminal-workspace",
     "dashboard-runtime-registry",
-    "dashboard-worker-roster"
+    "dashboard-worker-roster",
+    "dashboard-terminal-profile-lifecycle"
   ]
 }

@@ -88,9 +88,10 @@ Release manifest намеренно не включает patch units, кото�
 | `203-dashboard-terminal-workspace` | exported | Foundation для remote terminal workspace: authenticated dashboard WebSockets (`/api/pty`, `/api/ws`, `/api/pub`, `/api/events`) остаются loopback-only по умолчанию, но работают для remote browser при явном `--insecure`; это разблокирует live `/chat?profile=<name>` на dashboard service. |
 | `204-dashboard-runtime-registry` | exported | Authenticated read-only `/api/dashboard/runtimes`: dashboard process state, live PTY sessions с profile/cwd/pid/resume/terminal size, action subprocess liveness и event-channel counts без argv/env/output/session/log/memory bodies. |
 | `205-dashboard-worker-roster` | exported | Authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers из `dashboard/worker_roster.json` плюс live PTY runtime workers из `204`, с safe role/lane/mission/model/capability/process metadata без secrets/env/output/session/log/memory bodies. |
-| `206-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
-| `207-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
-| `208-dashboard-controlled-actions` | planned | Auth-gated controlled actions после read-only observability: stop/restart selected terminal/worker/gateway. |
+| `206-dashboard-terminal-profile-lifecycle` | exported | Bugfix/control slice: Open terminal из profile создаёт уникальный `/chat?profile=<name>&terminal=<id>` channel вместо reuse default Chat terminal; Chat page получила Close terminal поверх `DELETE /api/dashboard/runtimes/pty/{id}`. |
+| `207-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
+| `208-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
+| `209-dashboard-controlled-actions` | planned | Auth-gated controlled actions после read-only observability: stop/restart selected terminal/worker/gateway. |
 
 ## Workflow-фичи
 

@@ -88,9 +88,10 @@ Initial sequence:
 | `203-dashboard-terminal-workspace` | exported | Remote terminal workspace foundation: authenticated dashboard WebSockets (`/api/pty`, `/api/ws`, `/api/pub`, `/api/events`) stay loopback-only by default but work for remote browsers under explicit `--insecure`, unlocking live `/chat?profile=<name>` on the dashboard service. |
 | `204-dashboard-runtime-registry` | exported | Authenticated read-only `/api/dashboard/runtimes`: dashboard process state, live PTY sessions with profile/cwd/pid/resume/terminal size, action subprocess liveness and event-channel counts without argv/env/output/session/log/memory bodies. |
 | `205-dashboard-worker-roster` | exported | Authenticated read-only `/api/dashboard/worker-roster`: configured profile-local workers from `dashboard/worker_roster.json` plus live PTY runtime workers from `204`, with safe role/lane/mission/model/capability/process metadata and no secrets/env/output/session/log/memory bodies. |
-| `206-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
-| `207-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
-| `208-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
+| `206-dashboard-terminal-profile-lifecycle` | exported | Bugfix/control slice: Open terminal from a profile creates a unique `/chat?profile=<name>&terminal=<id>` channel instead of reusing the default Chat terminal; Chat now has Close terminal backed by `DELETE /api/dashboard/runtimes/pty/{id}`. |
+| `207-dashboard-session-log-inspector` | planned | Profile-aware sessions/logs/tool-call inspector. |
+| `208-dashboard-assembly-analytics` | planned | Profile-aware analytics plus whole-assembly summary across all profiles: usage, cost, model/provider distribution, top profiles and stale profiles. |
+| `209-dashboard-controlled-actions` | planned | Auth-gated controlled actions after read-only observability: stop/restart selected terminal/worker/gateway. |
 
 ## Workflow features
 

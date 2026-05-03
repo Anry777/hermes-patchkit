@@ -353,6 +353,46 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-terminal-profile-lifecycle",
+      "file": "patches/v2026.4.30/206-dashboard-terminal-profile-lifecycle.patch",
+      "title_en": "Dashboard profile terminal lifecycle",
+      "title_ru": "Lifecycle profile terminal в dashboard",
+      "description_en": "Fixes dashboard profile terminal lifecycle: Open terminal from a profile now creates a unique terminal channel in /chat?profile=<name>&terminal=<id> instead of reusing the default Chat terminal, and the Chat page exposes a Close terminal action backed by DELETE /api/dashboard/runtimes/pty/{id} to close exactly one registered PTY session.",
+      "description_ru": "Исправляет lifecycle profile terminal в dashboard: Open terminal из профиля создаёт уникальный terminal channel в /chat?profile=<name>&terminal=<id> вместо reuse default Chat terminal, а Chat page показывает Close terminal action поверх DELETE /api/dashboard/runtimes/pty/{id}, закрывая ровно одну registered PTY session.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py",
+          "tests/hermes_cli/test_web_server_runtime_registry.py",
+          "tests/hermes_cli/test_web_server_worker_roster.py",
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/ChatPage.tsx src/pages/ProfilesPage.tsx"
+        ],
+        "live_smoke": "Live dashboard systemd service on http://10.50.50.28:9119 restarted from runtime commit be1ef4e87; selecting hermesfix on /profiles produced /chat?profile=hermesfix&terminal=terminal-hermesfix-..., /api/dashboard/runtimes showed one PTY with profile=hermesfix/id matching the terminal query, and clicking Close terminal removed the PTY session from the registry."
+      },
+      "exported_from": "be1ef4e87",
+      "base_runtime": "9ea912604",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",
