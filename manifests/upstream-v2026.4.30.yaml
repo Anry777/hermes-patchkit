@@ -393,6 +393,48 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-session-log-inspector",
+      "file": "patches/v2026.4.30/207-dashboard-session-log-inspector.patch",
+      "title_en": "Dashboard session/log inspector",
+      "title_ru": "Session/log inspector в dashboard",
+      "description_en": "Adds profile-aware read-only dashboard inspector endpoints for profile-local sessions, safe message/tool-call summaries, and log-file metadata: /api/dashboard/profiles/{name}/sessions, /sessions/{session_id}, and /logs. It intentionally omits message bodies, raw tool arguments, system prompts, log contents, env, and secrets while wiring the Profiles page/API client to show Session inspector and Log inspector metadata.",
+      "description_ru": "Добавляет profile-aware read-only inspector endpoints в dashboard для profile-local sessions, safe message/tool-call summaries и log-file metadata: /api/dashboard/profiles/{name}/sessions, /sessions/{session_id} и /logs. Реализация намеренно не отдаёт message bodies, raw tool arguments, system prompts, log contents, env и secrets; Profiles page/API client показывают Session inspector и Log inspector metadata.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_profile_inspector.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py",
+          "tests/hermes_cli/test_web_server_runtime_registry.py",
+          "tests/hermes_cli/test_web_server_worker_roster.py",
+          "tests/hermes_cli/test_web_server.py::TestPtyWebSocket",
+          "tests/hermes_cli/test_web_server_profiles_api.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/ProfilesPage.tsx src/lib/api.ts"
+        ],
+        "live_smoke": "Live dashboard systemd service on http://10.50.50.28:9119 restarted from runtime commit 2205eb455; authenticated GET /api/dashboard/profiles/hermesfix/sessions and /logs returned 200 with profile=hermesfix, 199 sessions and 4 log files in the observed live profile, and leak checks found no API_KEY/SECRET payloads."
+      },
+      "exported_from": "2205eb455",
+      "base_runtime": "be1ef4e87",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

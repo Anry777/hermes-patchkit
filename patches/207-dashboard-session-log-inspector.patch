@@ -1,0 +1,730 @@
+From 2205eb4559b24f989c78d2915775978691b3d55f Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sun, 3 May 2026 19:19:10 +0300
+Subject: [PATCH] feat: add dashboard profile inspector
+
+---
+ hermes_cli/web_server.py                      | 242 +++++++++++++++---
+ ...est_dashboard_profile_selector_frontend.py |  16 ++
+ .../test_web_server_profile_inspector.py      | 177 +++++++++++++
+ web/src/lib/api.ts                            |  97 ++++++-
+ web/src/pages/ProfilesPage.tsx                |  42 ++-
+ 5 files changed, 517 insertions(+), 57 deletions(-)
+ create mode 100644 tests/hermes_cli/test_web_server_profile_inspector.py
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 6738f81ea..cf0ff38c3 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -553,49 +553,169 @@ def _profile_log_summaries(profile_dir: Path, limit: int = 20) -> List[Dict[str,
+     return entries
+ 
+ 
+-def _profile_session_summary(profile_dir: Path, limit: int = 5) -> Dict[str, Any]:
+-    """Return session counts/recent metadata for a profile if its DB exists."""
++def _safe_dashboard_session_row(item: Dict[str, Any], *, now: Optional[float] = None) -> Dict[str, Any]:
++    """Return safe session metadata without prompts, configs, or message bodies."""
++    now_ts = time.time() if now is None else now
++    started_at = item.get("started_at") or 0
++    last_active = item.get("last_active", started_at) or started_at
++    session_id = item.get("id") or item.get("session_id")
++    return {
++        "id": session_id,
++        "session_id": session_id,
++        "source": item.get("source"),
++        "model": item.get("model"),
++        "title": item.get("title"),
++        "started_at": item.get("started_at"),
++        "ended_at": item.get("ended_at"),
++        "end_reason": item.get("end_reason"),
++        "last_active": last_active,
++        "message_count": item.get("message_count", 0) or 0,
++        "tool_call_count": item.get("tool_call_count", 0) or 0,
++        "token_counts": {
++            "input": item.get("input_tokens", 0) or 0,
++            "output": item.get("output_tokens", 0) or 0,
++            "cache_read": item.get("cache_read_tokens", 0) or 0,
++            "cache_write": item.get("cache_write_tokens", 0) or 0,
++            "reasoning": item.get("reasoning_tokens", 0) or 0,
++        },
++        "estimated_cost_usd": item.get("estimated_cost_usd", 0) or 0,
++        "api_call_count": item.get("api_call_count", 0) or 0,
++        "is_active": item.get("ended_at") is None and (now_ts - last_active) < 300,
++    }
++
++
++def _safe_dashboard_message_summary(index: int, item: Dict[str, Any]) -> Dict[str, Any]:
++    """Return message metadata without body text or raw tool arguments."""
++    raw_tool_calls = item.get("tool_calls")
++    if isinstance(raw_tool_calls, list):
++        tool_call_count = len(raw_tool_calls)
++    elif raw_tool_calls:
++        tool_call_count = 1
++    else:
++        tool_call_count = 0
++
++    content = item.get("content")
++    reasoning = item.get("reasoning") or item.get("reasoning_content")
++    return {
++        "index": index,
++        "message_id": item.get("id"),
++        "role": item.get("role"),
++        "timestamp": item.get("timestamp"),
++        "token_count": item.get("token_count"),
++        "finish_reason": item.get("finish_reason"),
++        "tool_name": item.get("tool_name"),
++        "tool_call_id": item.get("tool_call_id"),
++        "tool_call_count": tool_call_count,
++        "has_content": bool(content),
++        "content_length": len(content) if isinstance(content, str) else 0,
++        "has_reasoning": bool(reasoning),
++    }
++
++
++def _safe_dashboard_tool_call_summaries(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
++    """Return tool-call presence without raw tool arguments."""
++    summaries: List[Dict[str, Any]] = []
++    for index, item in enumerate(messages):
++        raw_tool_calls = item.get("tool_calls")
++        if not raw_tool_calls:
++            continue
++        count = len(raw_tool_calls) if isinstance(raw_tool_calls, list) else 1
++        for _ in range(count):
++            summaries.append({
++                "message_index": index,
++                "role": item.get("role"),
++                "tool_name": item.get("tool_name"),
++            })
++    return summaries
++
++
++def _dashboard_profile_dir_or_raise(name: str) -> Path:
++    """Validate profile name and return its directory for dashboard APIs."""
++    from hermes_cli.profiles import get_profile_dir, profile_exists, validate_profile_name
++
++    try:
++        validate_profile_name(name)
++    except ValueError as exc:
++        raise HTTPException(status_code=400, detail=str(exc)) from exc
++    if not profile_exists(name):
++        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
++    return get_profile_dir(name)
++
++
++def _profile_sessions_inspector(profile_dir: Path, *, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
++    """Return safe session rows for a profile without message bodies."""
+     db_path = profile_dir / "state.db"
+     if not db_path.exists():
+-        return {"total": 0, "active": 0, "recent": []}
++        return {"total": 0, "sessions": [], "limit": limit, "offset": offset}
++
++    from hermes_state import SessionDB
+ 
++    db = SessionDB(db_path=db_path)
+     try:
+-        from hermes_state import SessionDB
++        sessions = db.list_sessions_rich(
++            limit=limit,
++            offset=offset,
++            include_children=True,
++            project_compression_tips=False,
++        )
++        total = db.session_count()
++    finally:
++        db.close()
+ 
+-        db = SessionDB(db_path=db_path)
+-        try:
+-            recent = db.list_sessions_rich(limit=limit)
+-            total = db.session_count()
+-        finally:
+-            db.close()
++    now = time.time()
++    return {
++        "total": total,
++        "sessions": [_safe_dashboard_session_row(item, now=now) for item in sessions],
++        "limit": limit,
++        "offset": offset,
++    }
++
++
++def _profile_session_detail(profile_dir: Path, session_id: str) -> Dict[str, Any]:
++    """Return safe message/tool metadata for one profile-local session."""
++    db_path = profile_dir / "state.db"
++    if not db_path.exists():
++        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
++
++    from hermes_state import SessionDB
++
++    db = SessionDB(db_path=db_path)
++    try:
++        session = db.get_session(session_id)
++        if session is None:
++            raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
++        messages = db.get_messages(session_id)
++    finally:
++        db.close()
++
++    row = dict(session)
++    return {
++        "session": _safe_dashboard_session_row(row),
++        "messages": [
++            _safe_dashboard_message_summary(index, item)
++            for index, item in enumerate(messages)
++        ],
++        "tool_calls": _safe_dashboard_tool_call_summaries(messages),
++        "counts": {
++            "messages": len(messages),
++            "tool_calls": sum(
++                _safe_dashboard_message_summary(index, item)["tool_call_count"]
++                for index, item in enumerate(messages)
++            ),
++        },
++    }
++
++
++def _profile_session_summary(profile_dir: Path, limit: int = 5) -> Dict[str, Any]:
++    """Return session counts/recent metadata for a profile if its DB exists."""
++    try:
++        summary = _profile_sessions_inspector(profile_dir, limit=limit, offset=0)
+     except Exception:
+         _log.exception("Failed to summarize profile sessions for %s", profile_dir)
+         return {"total": 0, "active": 0, "recent": []}
+ 
+-    safe_recent: List[Dict[str, Any]] = []
+-    for session in recent:
+-        session_id = session.get("id")
+-        safe_recent.append({
+-            "id": session_id,
+-            "session_id": session_id,
+-            "source": session.get("source"),
+-            "model": session.get("model"),
+-            "title": session.get("title"),
+-            "started_at": session.get("started_at"),
+-            "ended_at": session.get("ended_at"),
+-            "end_reason": session.get("end_reason"),
+-            "last_active": session.get("last_active"),
+-            "message_count": session.get("message_count"),
+-            "tool_call_count": session.get("tool_call_count"),
+-        })
+-
+-    now = time.time()
+-    active = sum(
+-        1 for session in safe_recent
+-        if session.get("ended_at") is None
+-        and (now - session.get("last_active", session.get("started_at", 0))) < 300
+-    )
+-    return {"total": total, "active": active, "recent": safe_recent}
++    active = sum(1 for item in summary["sessions"] if item["is_active"])
++    return {"total": summary["total"], "active": active, "recent": summary["sessions"]}
+ 
+ 
+ def _dashboard_pty_sessions_snapshot() -> List[Dict[str, Any]]:
+@@ -885,6 +1005,60 @@ async def get_dashboard_profile(name: str):
+         raise HTTPException(status_code=500, detail="Internal server error")
+ 
+ 
++@app.get("/api/dashboard/profiles/{name}/sessions")
++async def get_dashboard_profile_sessions(name: str, limit: int = 20, offset: int = 0):
++    """Return safe profile-local session metadata without message bodies."""
++    if limit < 1 or limit > 100:
++        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
++    if offset < 0:
++        raise HTTPException(status_code=400, detail="offset must be non-negative")
++    try:
++        profile_dir = _dashboard_profile_dir_or_raise(name)
++        data = _profile_sessions_inspector(profile_dir, limit=limit, offset=offset)
++        data["profile"] = name
++        return data
++    except HTTPException:
++        raise
++    except Exception:
++        _log.exception("GET /api/dashboard/profiles/%s/sessions failed", name)
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
++@app.get("/api/dashboard/profiles/{name}/sessions/{session_id}")
++async def get_dashboard_profile_session(name: str, session_id: str):
++    """Return safe message/tool metadata for one profile-local session."""
++    try:
++        profile_dir = _dashboard_profile_dir_or_raise(name)
++        data = _profile_session_detail(profile_dir, session_id)
++        data["profile"] = name
++        return data
++    except HTTPException:
++        raise
++    except Exception:
++        _log.exception(
++            "GET /api/dashboard/profiles/%s/sessions/%s failed",
++            name,
++            session_id,
++        )
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
++@app.get("/api/dashboard/profiles/{name}/logs")
++async def get_dashboard_profile_logs(name: str, limit: int = 50):
++    """Return safe profile-local log file metadata without log contents."""
++    if limit < 1 or limit > 200:
++        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
++    try:
++        profile_dir = _dashboard_profile_dir_or_raise(name)
++        logs = _profile_log_summaries(profile_dir, limit=limit)
++        return {"profile": name, "total": len(logs), "logs": logs, "limit": limit}
++    except HTTPException:
++        raise
++    except Exception:
++        _log.exception("GET /api/dashboard/profiles/%s/logs failed", name)
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
+ @app.get("/api/status")
+ async def get_status():
+     current_ver, latest_ver = check_config_version()
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index 4ddb2d05e..c255ac17c 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -41,11 +41,27 @@ def test_dashboard_api_client_exposes_profile_inventory():
+     assert '"/api/dashboard/profiles"' in api
+ 
+ 
++def test_dashboard_api_client_exposes_profile_inspector_endpoints():
++    api = _read("lib/api.ts")
++
++    assert "DashboardProfileSessionsResponse" in api
++    assert "DashboardProfileSessionDetail" in api
++    assert "getDashboardProfileSessions:" in api
++    assert "getDashboardProfileSession:" in api
++    assert "getDashboardProfileLogs:" in api
++    assert '}/sessions?limit=${limit}&offset=${offset}`' in api
++    assert '}/logs?limit=${limit}`' in api
++
++
+ def test_profiles_page_uses_profile_inventory_api():
+     page = _read("pages/ProfilesPage.tsx")
+ 
+     assert "api.getDashboardProfiles" in page
+     assert "api.getDashboardProfile" in page
++    assert "api.getDashboardProfileSessions" in page
++    assert "api.getDashboardProfileLogs" in page
++    assert "Session inspector" in page
++    assert "Log inspector" in page
+     assert "active_profile" in page
+     assert "gateway_running" in page
+ 
+diff --git a/tests/hermes_cli/test_web_server_profile_inspector.py b/tests/hermes_cli/test_web_server_profile_inspector.py
+new file mode 100644
+index 000000000..1f344bb3a
+--- /dev/null
++++ b/tests/hermes_cli/test_web_server_profile_inspector.py
+@@ -0,0 +1,177 @@
++"""Tests for profile-aware dashboard session/log inspector endpoints."""
++
++from __future__ import annotations
++
++import os
++from pathlib import Path
++
++import pytest
++
++
++def _client_with_dashboard_token():
++    try:
++        from starlette.testclient import TestClient
++    except ImportError:
++        pytest.skip("fastapi/starlette not installed")
++
++    from hermes_cli.web_server import app, _SESSION_HEADER_NAME, _SESSION_TOKEN
++
++    client = TestClient(app)
++    client.headers[_SESSION_HEADER_NAME] = _SESSION_TOKEN
++    return client
++
++
++def _make_profile(root: Path, name: str) -> Path:
++    profile_dir = root / "profiles" / name
++    for subdir in ("logs", "skills", "home", "workspace"):
++        (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
++    (profile_dir / "config.yaml").write_text(
++        "model:\n  default: inspector-model\n  provider: openrouter\n",
++        encoding="utf-8",
++    )
++    return profile_dir
++
++
++def _seed_session(profile_dir: Path) -> None:
++    from hermes_state import SessionDB
++
++    db = SessionDB(db_path=profile_dir / "state.db")
++    try:
++        db.create_session(
++            "inspect-session",
++            source="dashboard-test",
++            model="inspector-model",
++            system_prompt="SYSTEM SECRET: do not expose this",
++        )
++        db.append_message(
++            "inspect-session",
++            role="user",
++            content="hello with API_KEY=super-secret-user-message",
++            token_count=7,
++        )
++        db.append_message(
++            "inspect-session",
++            role="assistant",
++            content="assistant body should not be exposed",
++            tool_calls=[{"name": "terminal", "arguments": {"secret": "hidden"}}],
++            token_count=11,
++            finish_reason="tool_calls",
++        )
++        db.append_message(
++            "inspect-session",
++            role="tool",
++            content="tool output with TOKEN=super-secret-tool-output",
++            tool_name="terminal",
++            tool_call_id="call-1",
++            token_count=5,
++        )
++        db.update_token_counts(
++            "inspect-session",
++            input_tokens=10,
++            output_tokens=20,
++            model="inspector-model",
++            estimated_cost_usd=0.0123,
++            api_call_count=2,
++        )
++    finally:
++        db.close()
++
++
++class TestDashboardProfileInspectorApi:
++    def test_profile_sessions_endpoint_returns_safe_metadata_only(self):
++        root = Path(os.environ["HERMES_HOME"])
++        profile_dir = _make_profile(root, "coder")
++        _seed_session(profile_dir)
++
++        response = _client_with_dashboard_token().get("/api/dashboard/profiles/coder/sessions")
++
++        assert response.status_code == 200
++        payload = response.json()
++        assert payload["profile"] == "coder"
++        assert payload["total"] == 1
++        session = payload["sessions"][0]
++        assert session["session_id"] == "inspect-session"
++        assert session["source"] == "dashboard-test"
++        assert session["model"] == "inspector-model"
++        assert session["message_count"] == 3
++        assert session["tool_call_count"] == 1
++        assert session["token_counts"]["input"] == 10
++        assert session["token_counts"]["output"] == 20
++        assert "system_prompt" not in session
++        assert "model_config" not in session
++        assert "super-secret" not in str(payload)
++        assert "SYSTEM SECRET" not in str(payload)
++
++    def test_profile_session_detail_returns_message_and_tool_summaries_without_bodies(self):
++        root = Path(os.environ["HERMES_HOME"])
++        profile_dir = _make_profile(root, "coder")
++        _seed_session(profile_dir)
++
++        response = _client_with_dashboard_token().get(
++            "/api/dashboard/profiles/coder/sessions/inspect-session"
++        )
++
++        assert response.status_code == 200
++        payload = response.json()
++        assert payload["profile"] == "coder"
++        assert payload["session"]["session_id"] == "inspect-session"
++        assert payload["messages"][0]["role"] == "user"
++        assert payload["messages"][0]["has_content"] is True
++        assert payload["messages"][0]["content_length"] > 0
++        assert payload["messages"][1]["tool_call_count"] == 1
++        assert payload["messages"][2]["tool_name"] == "terminal"
++        assert payload["tool_calls"] == [{"message_index": 1, "role": "assistant", "tool_name": None}]
++        assert "content" not in payload["messages"][0]
++        assert "tool_calls" not in payload["messages"][1]
++        assert "super-secret" not in str(payload)
++        assert "assistant body" not in str(payload)
++        assert "SYSTEM SECRET" not in str(payload)
++
++    def test_profile_logs_endpoint_returns_metadata_not_log_contents(self):
++        root = Path(os.environ["HERMES_HOME"])
++        profile_dir = _make_profile(root, "coder")
++        (profile_dir / "logs" / "agent.log").write_text(
++            "INFO hello\nERROR SECRET_TOKEN=hidden\n",
++            encoding="utf-8",
++        )
++
++        response = _client_with_dashboard_token().get("/api/dashboard/profiles/coder/logs")
++
++        assert response.status_code == 200
++        payload = response.json()
++        assert payload["profile"] == "coder"
++        assert payload["total"] == 1
++        log = payload["logs"][0]
++        assert log["name"] == "agent.log"
++        assert log["size_bytes"] > 0
++        assert "SECRET_TOKEN" not in str(payload)
++        assert "INFO hello" not in str(payload)
++
++    def test_profile_inspector_rejects_invalid_missing_or_cross_profile_sessions(self):
++        root = Path(os.environ["HERMES_HOME"])
++        coder_dir = _make_profile(root, "coder")
++        other_dir = _make_profile(root, "other")
++        _seed_session(coder_dir)
++        _seed_session(other_dir)
++
++        client = _client_with_dashboard_token()
++
++        invalid = client.get("/api/dashboard/profiles/INVALID!/sessions")
++        missing_profile = client.get("/api/dashboard/profiles/missing/sessions")
++        missing_session = client.get("/api/dashboard/profiles/coder/sessions/nope")
++
++        assert invalid.status_code == 400
++        assert missing_profile.status_code == 404
++        assert missing_session.status_code == 404
++
++    def test_profile_inspector_requires_dashboard_session_token(self):
++        try:
++            from starlette.testclient import TestClient
++        except ImportError:
++            pytest.skip("fastapi/starlette not installed")
++
++        from hermes_cli.web_server import app
++
++        response = TestClient(app).get("/api/dashboard/profiles/default/sessions")
++
++        assert response.status_code == 401
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index 98ef8d9bb..c3b55da84 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -51,6 +51,18 @@ export const api = {
+     fetchJSON<DashboardProfileDetail>(
+       `/api/dashboard/profiles/${encodeURIComponent(name)}`,
+     ),
++  getDashboardProfileSessions: (name: string, limit = 20, offset = 0) =>
++    fetchJSON<DashboardProfileSessionsResponse>(
++      `/api/dashboard/profiles/${encodeURIComponent(name)}/sessions?limit=${limit}&offset=${offset}`,
++    ),
++  getDashboardProfileSession: (name: string, sessionId: string) =>
++    fetchJSON<DashboardProfileSessionDetail>(
++      `/api/dashboard/profiles/${encodeURIComponent(name)}/sessions/${encodeURIComponent(sessionId)}`,
++    ),
++  getDashboardProfileLogs: (name: string, limit = 50) =>
++    fetchJSON<DashboardProfileLogsResponse>(
++      `/api/dashboard/profiles/${encodeURIComponent(name)}/logs?limit=${limit}`,
++    ),
+   getSessions: (limit = 20, offset = 0) =>
+     fetchJSON<PaginatedSessions>(`/api/sessions?limit=${limit}&offset=${offset}`),
+   getSessionMessages: (id: string) =>
+@@ -290,19 +302,78 @@ export interface DashboardProfileSummary {
+ export interface DashboardProfileSessionSummary {
+   total: number;
+   active: number;
+-  recent: Array<{
+-    id: string | null;
+-    session_id: string | null;
+-    source: string | null;
+-    model: string | null;
+-    title: string | null;
+-    started_at: number | null;
+-    ended_at: number | null;
+-    end_reason: string | null;
+-    last_active: number | null;
+-    message_count: number | null;
+-    tool_call_count: number | null;
+-  }>;
++  recent: DashboardProfileSessionRow[];
++}
++
++export interface DashboardProfileSessionRow {
++  id: string | null;
++  session_id: string | null;
++  source: string | null;
++  model: string | null;
++  title: string | null;
++  started_at: number | null;
++  ended_at: number | null;
++  end_reason: string | null;
++  last_active: number | null;
++  message_count: number | null;
++  tool_call_count: number | null;
++  token_counts?: {
++    input: number;
++    output: number;
++    cache_read: number;
++    cache_write: number;
++    reasoning: number;
++  };
++  estimated_cost_usd?: number;
++  api_call_count?: number;
++  is_active?: boolean;
++}
++
++export interface DashboardProfileMessageSummary {
++  index: number;
++  message_id: number | string | null;
++  role: string | null;
++  timestamp: number | null;
++  token_count: number | null;
++  finish_reason: string | null;
++  tool_name: string | null;
++  tool_call_id: string | null;
++  tool_call_count: number;
++  has_content: boolean;
++  content_length: number;
++  has_reasoning: boolean;
++}
++
++export interface DashboardProfileToolCallSummary {
++  message_index: number;
++  role: string | null;
++  tool_name: string | null;
++}
++
++export interface DashboardProfileSessionsResponse {
++  profile: string;
++  total: number;
++  sessions: DashboardProfileSessionRow[];
++  limit: number;
++  offset: number;
++}
++
++export interface DashboardProfileSessionDetail {
++  profile: string;
++  session: DashboardProfileSessionRow;
++  messages: DashboardProfileMessageSummary[];
++  tool_calls: DashboardProfileToolCallSummary[];
++  counts: {
++    messages: number;
++    tool_calls: number;
++  };
++}
++
++export interface DashboardProfileLogsResponse {
++  profile: string;
++  total: number;
++  logs: DashboardProfileLogSummary[];
++  limit: number;
+ }
+ 
+ export interface DashboardProfileLogSummary {
+diff --git a/web/src/pages/ProfilesPage.tsx b/web/src/pages/ProfilesPage.tsx
+index e9bea997a..d8e7bef67 100644
+--- a/web/src/pages/ProfilesPage.tsx
++++ b/web/src/pages/ProfilesPage.tsx
+@@ -23,6 +23,8 @@ import { Badge, Button, Spinner } from "@nous-research/ui";
+ import {
+   api,
+   type DashboardProfileDetail,
++  type DashboardProfileLogsResponse,
++  type DashboardProfileSessionsResponse,
+   type DashboardProfileSummary,
+ } from "@/lib/api";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+@@ -36,6 +38,8 @@ export default function ProfilesPage() {
+   const [profiles, setProfiles] = useState<DashboardProfileSummary[]>([]);
+   const [activeProfile, setActiveProfile] = useState<string | null>(null);
+   const [selectedDetail, setSelectedDetail] = useState<DashboardProfileDetail | null>(null);
++  const [inspectorSessions, setInspectorSessions] = useState<DashboardProfileSessionsResponse | null>(null);
++  const [inspectorLogs, setInspectorLogs] = useState<DashboardProfileLogsResponse | null>(null);
+   const [loading, setLoading] = useState(true);
+   const [detailLoading, setDetailLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+@@ -77,9 +81,19 @@ export default function ProfilesPage() {
+       }
+       setDetailLoading(true);
+       setDetailError(null);
+-      api.getDashboardProfile(selectedName)
+-        .then((detail) => {
+-          if (!cancelled) setSelectedDetail(detail);
++      setInspectorSessions(null);
++      setInspectorLogs(null);
++      Promise.all([
++        api.getDashboardProfile(selectedName),
++        api.getDashboardProfileSessions(selectedName),
++        api.getDashboardProfileLogs(selectedName),
++      ])
++        .then(([detail, sessions, logs]) => {
++          if (!cancelled) {
++            setSelectedDetail(detail);
++            setInspectorSessions(sessions);
++            setInspectorLogs(logs);
++          }
+         })
+         .catch((err: unknown) => {
+           if (!cancelled) setDetailError(String(err));
+@@ -172,6 +186,8 @@ export default function ProfilesPage() {
+           loading={detailLoading}
+           error={detailError}
+           selectedName={selectedName}
++          inspectorSessions={inspectorSessions}
++          inspectorLogs={inspectorLogs}
+         />
+       )}
+ 
+@@ -253,11 +269,15 @@ function ProfileDetailCard({
+   loading,
+   error,
+   selectedName,
++  inspectorSessions,
++  inspectorLogs,
+ }: {
+   detail: DashboardProfileDetail | null;
+   loading: boolean;
+   error: string | null;
+   selectedName: string;
++  inspectorSessions: DashboardProfileSessionsResponse | null;
++  inspectorLogs: DashboardProfileLogsResponse | null;
+ }) {
+   return (
+     <Card data-profile-detail={selectedName}>
+@@ -299,34 +319,36 @@ function ProfileDetailCard({
+             <div className="grid gap-3">
+               <div className="border border-current/10 p-3">
+                 <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+-                  <MessageSquare className="h-3.5 w-3.5" /> Sessions
++                  <MessageSquare className="h-3.5 w-3.5" /> Session inspector
+                 </div>
+                 <div className="flex gap-3 text-sm">
+-                  <Badge tone="secondary">{detail.sessions.total} total</Badge>
++                  <Badge tone="secondary">{(inspectorSessions?.total ?? detail.sessions.total)} total</Badge>
+                   <Badge tone={detail.sessions.active ? "success" : "outline"}>
+                     {detail.sessions.active} active
+                   </Badge>
+                 </div>
+-                {detail.sessions.recent.length > 0 && (
++                {inspectorSessions?.sessions.length ? (
+                   <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
+-                    {detail.sessions.recent.slice(0, 3).map((session) => (
++                    {inspectorSessions.sessions.slice(0, 3).map((session) => (
+                       <li key={session.session_id ?? session.id ?? "session"} className="truncate">
+                         {session.title || session.session_id || session.id || "Untitled session"}
+                       </li>
+                     ))}
+                   </ul>
++                ) : (
++                  <p className="mt-3 text-xs text-muted-foreground">No sessions found.</p>
+                 )}
+               </div>
+ 
+               <div className="border border-current/10 p-3">
+                 <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+-                  <FileText className="h-3.5 w-3.5" /> Logs
++                  <FileText className="h-3.5 w-3.5" /> Log inspector
+                 </div>
+-                {detail.logs.length === 0 ? (
++                {(inspectorLogs?.logs ?? detail.logs).length === 0 ? (
+                   <p className="text-xs text-muted-foreground">No log files found.</p>
+                 ) : (
+                   <ul className="space-y-2 text-xs text-muted-foreground">
+-                    {detail.logs.slice(0, 4).map((log) => (
++                    {(inspectorLogs?.logs ?? detail.logs).slice(0, 4).map((log) => (
+                       <li key={log.path} className="flex justify-between gap-3">
+                         <span className="truncate">{log.name}</span>
+                         <span className="shrink-0 tabular-nums">{formatBytes(log.size_bytes)}</span>
+-- 
+2.39.5
+

@@ -206,6 +206,8 @@ Profile-aware sessions/logs/tools inspector.
 
 Reference: admin-ui pages + workspace chat reader idea, но реализовать через Hermes-native Python APIs.
 
+Статус: exported как PatchKit unit `207-dashboard-session-log-inspector`; runtime commit `2205eb455`, зависит от `200`–`206`. Реализация добавляет authenticated read-only `/api/dashboard/profiles/{name}/sessions`, `/sessions/{session_id}` и `/logs`, плюс API client/Profile page wiring для `Session inspector` и `Log inspector`. Endpoint'ы отдают только safe metadata: session counts, token/cost/api-call metadata, message/tool-call summaries и log-file stat; не отдают message bodies, raw tool args, system prompts, log contents, env или secrets. Validation: profile inspector focused tests `5 passed`, broader dashboard focused tests `41 passed`, `npm run build` passed, focused eslint passed; live dashboard smoke на `http://10.50.50.28:9119/profiles?profile=hermesfix` подтвердил `200` для sessions/logs и отсутствие `API_KEY`/`SECRET` payload leaks.
+
 ### `208-dashboard-assembly-analytics`
 
 Profile-aware analytics and whole-assembly summary.
