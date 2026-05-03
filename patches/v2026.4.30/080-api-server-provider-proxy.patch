@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..53ba15c4fdc44a41ace5a4f56b875672b7348b95
+index 000000000..5f49a2a62
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,462 @@
+@@ -0,0 +1,721 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -226,15 +226,6 @@ index 0000000000000000000000000000000000000000..53ba15c4fdc44a41ace5a4f56b875672
 +        except (json.JSONDecodeError, Exception):
 +            return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
 +
-+        if body.get("stream") and not self._allow_streaming:
-+            return web.json_response(
-+                _openai_error(
-+                    "Streaming is not supported in provider_proxy mode yet",
-+                    code="unsupported_streaming",
-+                ),
-+                status=400,
-+            )
-+
 +        messages = body.get("messages")
 +        if not messages or not isinstance(messages, list):
 +            return web.json_response(
@@ -263,6 +254,26 @@ index 0000000000000000000000000000000000000000..53ba15c4fdc44a41ace5a4f56b875672
 +
 +        try:
 +            target = self._resolve_target(spec)
++            if body.get("stream"):
++                if not self._allow_streaming:
++                    return web.json_response(
++                        _openai_error(
++                            "Streaming is not enabled for provider_proxy mode",
++                            code="unsupported_streaming",
++                        ),
++                        status=400,
++                    )
++                if target.api_mode == "chat_completions":
++                    return await self._stream_chat_completions(request, body, target, spec)
++                if target.api_mode == "codex_responses":
++                    return await self._stream_codex_chat_compat(request, body, target, spec)
++                return web.json_response(
++                    _openai_error(
++                        f"Provider proxy does not support streaming for api_mode '{target.api_mode}' yet.",
++                        code="unsupported_operation",
++                    ),
++                    status=400,
++                )
 +            if target.api_mode == "chat_completions":
 +                data = await self._call_chat_completions(body, target, spec)
 +            elif target.api_mode == "codex_responses":
@@ -310,6 +321,254 @@ index 0000000000000000000000000000000000000000..53ba15c4fdc44a41ace5a4f56b875672
 +        if target.base_url:
 +            kwargs["base_url"] = target.base_url
 +        return OpenAI(**kwargs)
++
++    @staticmethod
++    def _sse_headers(request: "web.Request") -> Dict[str, str]:
++        headers = {
++            "Content-Type": "text/event-stream",
++            "Cache-Control": "no-cache",
++            "X-Accel-Buffering": "no",
++        }
++        try:
++            origin = request.headers.get("Origin", "")
++            adapter = request.app.get("api_server_adapter")
++            cors_fn = getattr(adapter, "_cors_headers_for_origin", None)
++            if origin and callable(cors_fn):
++                cors = cors_fn(origin)
++                if cors:
++                    headers.update(cors)
++        except Exception:
++            pass
++        return headers
++
++    @staticmethod
++    def _chat_stream_chunk(
++        public_model: str,
++        *,
++        delta: Optional[Dict[str, Any]] = None,
++        finish_reason: Optional[str] = None,
++        usage: Optional[Dict[str, int]] = None,
++    ) -> Dict[str, Any]:
++        chunk: Dict[str, Any] = {
++            "id": f"chatcmpl-{uuid.uuid4().hex[:29]}",
++            "object": "chat.completion.chunk",
++            "created": int(time.time()),
++            "model": public_model,
++            "choices": [
++                {
++                    "index": 0,
++                    "delta": delta or {},
++                    "finish_reason": finish_reason,
++                }
++            ],
++        }
++        if usage is not None:
++            chunk["usage"] = usage
++        return chunk
++
++    @staticmethod
++    async def _write_sse_data(response: "web.StreamResponse", data: Any) -> None:
++        await response.write(f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
++
++    @staticmethod
++    async def _write_sse_done(response: "web.StreamResponse") -> None:
++        await response.write(b"data: [DONE]\n\n")
++
++    @staticmethod
++    def _next_stream_item(iterator: Any, sentinel: Any) -> Any:
++        try:
++            return next(iterator)
++        except StopIteration:
++            return sentinel
++
++    @staticmethod
++    def _event_attr(event: Any, name: str, default: Any = None) -> Any:
++        if isinstance(event, dict):
++            return event.get(name, default)
++        return getattr(event, name, default)
++
++    async def _stream_chat_completions(
++        self,
++        request: "web.Request",
++        body: Dict[str, Any],
++        target: ResolvedProxyTarget,
++        spec: ProxyModelSpec,
++    ) -> "web.StreamResponse":
++        payload = dict(spec.request_defaults)
++        payload.update(body)
++        payload["model"] = target.model
++        payload["stream"] = True
++
++        response = web.StreamResponse(status=200, headers=self._sse_headers(request))
++        await response.prepare(request)
++        loop = asyncio.get_running_loop()
++        sentinel = object()
++        client = None
++        stream = None
++        try:
++            def _open_stream() -> Any:
++                nonlocal client
++                client = self._create_openai_client(target)
++                return client.chat.completions.create(**payload)
++
++            stream = await loop.run_in_executor(None, _open_stream)
++            iterator = iter(stream)
++            while True:
++                chunk_obj = await loop.run_in_executor(None, self._next_stream_item, iterator, sentinel)
++                if chunk_obj is sentinel:
++                    break
++                chunk = _object_to_dict(chunk_obj)
++                if not chunk:
++                    continue
++                chunk["model"] = spec.public_id
++                await self._write_sse_data(response, chunk)
++            await self._write_sse_done(response)
++        finally:
++            for obj in (stream, client):
++                close = getattr(obj, "close", None)
++                if callable(close):
++                    try:
++                        close()
++                    except Exception:
++                        pass
++        return response
++
++    async def _stream_codex_chat_compat(
++        self,
++        request: "web.Request",
++        body: Dict[str, Any],
++        target: ResolvedProxyTarget,
++        spec: ProxyModelSpec,
++    ) -> "web.StreamResponse":
++        from agent.codex_responses_adapter import _chat_messages_to_responses_input, _responses_tools
++        from agent.transports.codex import ResponsesApiTransport
++
++        messages = body.get("messages") or []
++        instructions = "\n".join(
++            str(msg.get("content") or "")
++            for msg in messages
++            if isinstance(msg, dict) and msg.get("role") in {"system", "developer"}
++        ).strip()
++        if not instructions:
++            instructions = str(
++                spec.request_defaults.get("instructions")
++                or body.get("instructions")
++                or "You are a helpful assistant."
++            ).strip()
++        payload_messages = [
++            msg for msg in messages
++            if not (isinstance(msg, dict) and msg.get("role") in {"system", "developer"})
++        ]
++        payload: Dict[str, Any] = {
++            "model": target.model,
++            "input": _chat_messages_to_responses_input(payload_messages),
++            "store": False,
++            "stream": True,
++        }
++        if instructions:
++            payload["instructions"] = instructions
++        tools = _responses_tools(body.get("tools"))
++        if tools:
++            payload["tools"] = tools
++            payload["tool_choice"] = body.get("tool_choice", "auto")
++        is_chatgpt_codex_backend = "chatgpt.com/backend-api/codex" in target.base_url
++        if not is_chatgpt_codex_backend and body.get("max_tokens") is not None:
++            payload["max_output_tokens"] = body.get("max_tokens")
++        if not is_chatgpt_codex_backend and body.get("max_completion_tokens") is not None:
++            payload["max_output_tokens"] = body.get("max_completion_tokens")
++
++        response = web.StreamResponse(status=200, headers=self._sse_headers(request))
++        await response.prepare(request)
++        await self._write_sse_data(response, self._chat_stream_chunk(spec.public_id, delta={"role": "assistant"}))
++
++        loop = asyncio.get_running_loop()
++        sentinel = object()
++        client = None
++        stream = None
++        terminal_response = None
++        collected_output_items: List[Any] = []
++        collected_text_deltas: List[str] = []
++        try:
++            def _open_stream() -> Any:
++                nonlocal client
++                client = self._create_openai_client(target)
++                return client.responses.create(**payload)
++
++            stream = await loop.run_in_executor(None, _open_stream)
++            iterator = iter(stream)
++            while True:
++                event = await loop.run_in_executor(None, self._next_stream_item, iterator, sentinel)
++                if event is sentinel:
++                    break
++                event_type = self._event_attr(event, "type")
++                if event_type == "response.output_text.delta":
++                    delta = self._event_attr(event, "delta", "") or ""
++                    if delta:
++                        collected_text_deltas.append(str(delta))
++                        await self._write_sse_data(
++                            response,
++                            self._chat_stream_chunk(spec.public_id, delta={"content": str(delta)}),
++                        )
++                elif event_type == "response.output_item.done":
++                    item = self._event_attr(event, "item")
++                    if item is not None:
++                        collected_output_items.append(item)
++                elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
++                    terminal_response = self._event_attr(event, "response")
++                    break
++
++            if terminal_response is None:
++                raise RuntimeError("Responses stream did not emit a terminal response")
++            output = getattr(terminal_response, "output", None)
++            if isinstance(output, list) and not output:
++                if collected_output_items:
++                    terminal_response.output = list(collected_output_items)
++                elif collected_text_deltas:
++                    terminal_response.output = [SimpleNamespace(
++                        type="message",
++                        role="assistant",
++                        status="completed",
++                        content=[SimpleNamespace(type="output_text", text="".join(collected_text_deltas))],
++                    )]
++            normalized = ResponsesApiTransport().normalize_response(terminal_response)
++            finish_reason = getattr(normalized, "finish_reason", None) or "stop"
++            tool_calls = getattr(normalized, "tool_calls", None)
++            if tool_calls:
++                await self._write_sse_data(
++                    response,
++                    self._chat_stream_chunk(
++                        spec.public_id,
++                        delta={
++                            "tool_calls": [
++                                {
++                                    "index": idx,
++                                    "id": tc.id or f"call_{uuid.uuid4().hex[:16]}",
++                                    "type": "function",
++                                    "function": {"name": tc.name, "arguments": tc.arguments},
++                                }
++                                for idx, tc in enumerate(tool_calls)
++                            ]
++                        },
++                    ),
++                )
++            await self._write_sse_data(
++                response,
++                self._chat_stream_chunk(
++                    spec.public_id,
++                    finish_reason=finish_reason,
++                    usage=_usage_to_openai_dict(terminal_response),
++                ),
++            )
++            await self._write_sse_done(response)
++        finally:
++            for obj in (stream, client):
++                close = getattr(obj, "close", None)
++                if callable(close):
++                    try:
++                        close()
++                    except Exception:
++                        pass
++        return response
 +
 +    async def _call_chat_completions(
 +        self,
@@ -466,100 +725,15 @@ index 0000000000000000000000000000000000000000..53ba15c4fdc44a41ace5a4f56b875672
 +                    content=[SimpleNamespace(type="output_text", text="".join(collected_text_deltas))],
 +                )]
 +        return terminal_response
-diff --git a/gateway/platforms/api_server.py b/gateway/platforms/api_server.py
-index 8c46cc6157c2e59d17c07c5a2778621de2767056..9d668305dd414e6f1b7755c28cca563bf88827be 100644
---- a/gateway/platforms/api_server.py
-+++ b/gateway/platforms/api_server.py
-@@ -581,6 +581,20 @@ class APIServerAdapter(BasePlatformAdapter):
-         self._model_name: str = self._resolve_model_name(
-             extra.get("model_name", os.getenv("API_SERVER_MODEL_NAME", "")),
-         )
-+        env_mode = os.getenv("API_SERVER_MODE", "").strip().lower()
-+        if env_mode and "mode" not in extra:
-+            extra = {**extra, "mode": env_mode}
-+        self._mode: str = str(extra.get("mode") or "agent").strip().lower() or "agent"
-+        self._provider_proxy = None
-+        try:
-+            from gateway.api_server_provider_proxy import APIServerProviderProxy
-+            self._provider_proxy = APIServerProviderProxy.from_extra(extra)
-+            if self._provider_proxy is not None:
-+                self._mode = "provider_proxy"
-+        except Exception as exc:
-+            if self._mode == "provider_proxy":
-+                raise
-+            logger.debug("Provider proxy mode unavailable: %s", exc)
-         self._app: Optional["web.Application"] = None
-         self._runner: Optional["web.AppRunner"] = None
-         self._site: Optional["web.TCPSite"] = None
-@@ -783,6 +797,7 @@ class APIServerAdapter(BasePlatformAdapter):
-         return web.json_response({
-             "status": "ok",
-             "platform": "hermes-agent",
-+            "mode": self._mode,
-             "gateway_state": runtime.get("gateway_state"),
-             "platforms": runtime.get("platforms", {}),
-             "active_agents": runtime.get("active_agents", 0),
-@@ -792,10 +807,12 @@ class APIServerAdapter(BasePlatformAdapter):
-         })
- 
-     async def _handle_models(self, request: "web.Request") -> "web.Response":
--        """GET /v1/models — return hermes-agent as an available model."""
-+        """GET /v1/models — return available agent or provider-proxy models."""
-         auth_err = self._check_auth(request)
-         if auth_err:
-             return auth_err
-+        if self._provider_proxy is not None:
-+            return await self._provider_proxy.handle_models(request)
- 
-         return web.json_response({
-             "object": "list",
-@@ -862,6 +879,8 @@ class APIServerAdapter(BasePlatformAdapter):
-         auth_err = self._check_auth(request)
-         if auth_err:
-             return auth_err
-+        if self._provider_proxy is not None:
-+            return await self._provider_proxy.handle_chat_completions(request)
- 
-         # Parse request body
-         try:
-@@ -1750,6 +1769,14 @@ class APIServerAdapter(BasePlatformAdapter):
-         auth_err = self._check_auth(request)
-         if auth_err:
-             return auth_err
-+        if self._provider_proxy is not None:
-+            return web.json_response(
-+                _openai_error(
-+                    "The Responses API is not supported in provider_proxy mode yet",
-+                    code="unsupported_operation",
-+                ),
-+                status=400,
-+            )
- 
-         # Parse request body
-         try:
-@@ -2439,6 +2466,14 @@ class APIServerAdapter(BasePlatformAdapter):
-         auth_err = self._check_auth(request)
-         if auth_err:
-             return auth_err
-+        if self._provider_proxy is not None:
-+            return web.json_response(
-+                _openai_error(
-+                    "Agent runs are not supported in provider_proxy mode",
-+                    code="unsupported_operation",
-+                ),
-+                status=400,
-+            )
- 
-         # Enforce concurrency limit
-         if len(self._run_streams) >= self._MAX_CONCURRENT_RUNS:
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157ec366e57
+index 000000000..2f17b42e0
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,379 @@
 +"""Tests for API Server provider_proxy mode."""
 +
++import json
 +from types import SimpleNamespace
 +from unittest.mock import AsyncMock, MagicMock, patch
 +
@@ -589,6 +763,7 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +            extra={
 +                "mode": "provider_proxy",
 +                "provider_proxy": {
++                    "allow_streaming": True,
 +                    "models": [
 +                        {
 +                            "id": "openrouter/test-model",
@@ -596,7 +771,7 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +                            "model": "upstream/test-model",
 +                        },
 +                        {
-+                            "id": "codex/gpt-5.4",
++                            "id": "gpt-5.4",
 +                            "provider": "openai-codex",
 +                            "model": "gpt-5.4",
 +                        },
@@ -625,6 +800,27 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +        }
 +
 +
++class _MockStreamChunk:
++    def __init__(self, payload):
++        self._payload = payload
++
++    def model_dump(self):
++        return dict(self._payload)
++
++
++def _sse_data_payloads(raw: str):
++    payloads = []
++    for line in raw.splitlines():
++        if not line.startswith("data: "):
++            continue
++        data = line[len("data: "):]
++        if data == "[DONE]":
++            payloads.append("[DONE]")
++        else:
++            payloads.append(data)
++    return payloads
++
++
 +class TestProviderProxyModels:
 +    @pytest.mark.asyncio
 +    async def test_models_returns_proxy_catalog(self):
@@ -639,7 +835,7 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +        assert data["object"] == "list"
 +        assert [item["id"] for item in data["data"]] == [
 +            "openrouter/test-model",
-+            "codex/gpt-5.4",
++            "gpt-5.4",
 +        ]
 +        assert data["data"][0]["owned_by"] == "openrouter"
 +        assert data["data"][1]["owned_by"] == "openai-codex"
@@ -741,7 +937,7 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +                resp = await cli.post(
 +                    "/v1/chat/completions",
 +                    json={
-+                        "model": "codex/gpt-5.4",
++                        "model": "gpt-5.4",
 +                        "messages": [
 +                            {"role": "system", "content": "be concise"},
 +                            {"role": "user", "content": "hello"},
@@ -752,7 +948,7 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +                data = await resp.json()
 +
 +        assert resp.status == 200
-+        assert data["model"] == "codex/gpt-5.4"
++        assert data["model"] == "gpt-5.4"
 +        assert data["choices"][0]["message"]["content"] == "codex proxied"
 +        adapter._run_agent.assert_not_called()
 +        mock_resolve.assert_called_once_with(
@@ -797,25 +993,125 @@ index 0000000000000000000000000000000000000000..ba7cee4d2dbd1c4c6cc421bcf851e157
 +        adapter._run_agent.assert_not_called()
 +
 +    @pytest.mark.asyncio
-+    async def test_streaming_is_explicitly_rejected_in_initial_proxy_mode(self):
++    async def test_chat_completions_streaming_proxies_sse_chunks(self):
 +        adapter = _proxy_adapter()
++        adapter._run_agent = AsyncMock()
 +        app = _create_app(adapter)
 +
-+        async with TestClient(TestServer(app)) as cli:
-+            resp = await cli.post(
-+                "/v1/chat/completions",
-+                json={
-+                    "model": "openrouter/test-model",
-+                    "stream": True,
-+                    "messages": [{"role": "user", "content": "hello"}],
-+                },
-+            )
-+            data = await resp.json()
++        mock_client = MagicMock()
++        mock_client.chat.completions.create.return_value = iter([
++            _MockStreamChunk({
++                "id": "chatcmpl-upstream",
++                "object": "chat.completion.chunk",
++                "created": 123,
++                "model": "upstream/test-model",
++                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
++            }),
++            _MockStreamChunk({
++                "id": "chatcmpl-upstream",
++                "object": "chat.completion.chunk",
++                "created": 123,
++                "model": "upstream/test-model",
++                "choices": [{"index": 0, "delta": {"content": "streamed"}, "finish_reason": None}],
++            }),
++            _MockStreamChunk({
++                "id": "chatcmpl-upstream",
++                "object": "chat.completion.chunk",
++                "created": 123,
++                "model": "upstream/test-model",
++                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
++            }),
++        ])
 +
-+        assert resp.status == 400
-+        assert data["error"]["code"] == "unsupported_streaming"
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openrouter",
++                "api_mode": "chat_completions",
++                "base_url": "https://openrouter.ai/api/v1",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/chat/completions",
++                    json={
++                        "model": "openrouter/test-model",
++                        "stream": True,
++                        "messages": [{"role": "user", "content": "hello"}],
++                    },
++                )
++                raw = await resp.text()
++
++        assert resp.status == 200
++        assert resp.headers["Content-Type"].startswith("text/event-stream")
++        payloads = _sse_data_payloads(raw)
++        assert payloads[-1] == "[DONE]"
++        chunks = [json.loads(item) for item in payloads if item != "[DONE]"]
++        assert [chunk["model"] for chunk in chunks] == ["openrouter/test-model"] * 3
++        assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
++        assert chunks[1]["choices"][0]["delta"] == {"content": "streamed"}
++        assert chunks[2]["choices"][0]["finish_reason"] == "stop"
++        adapter._run_agent.assert_not_called()
++        kwargs = mock_client.chat.completions.create.call_args.kwargs
++        assert kwargs["model"] == "upstream/test-model"
++        assert kwargs["stream"] is True
++
++    @pytest.mark.asyncio
++    async def test_codex_responses_streaming_is_adapted_to_chat_completion_sse(self):
++        adapter = _proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        terminal_response = SimpleNamespace(output=[], usage={"input_tokens": 4, "output_tokens": 2})
++        stream_events = iter([
++            SimpleNamespace(type="response.output_text.delta", delta="codex "),
++            SimpleNamespace(type="response.output_text.delta", delta="stream"),
++            SimpleNamespace(type="response.completed", response=terminal_response),
++        ])
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = stream_events
++        mock_transport = MagicMock()
++        mock_transport.normalize_response.return_value = SimpleNamespace(
++            content="codex stream",
++            finish_reason="stop",
++            tool_calls=None,
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client), \
++             patch("agent.transports.codex.ResponsesApiTransport", return_value=mock_transport):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/chat/completions",
++                    json={
++                        "model": "gpt-5.4",
++                        "stream": True,
++                        "messages": [{"role": "user", "content": "hello"}],
++                    },
++                )
++                raw = await resp.text()
++
++        assert resp.status == 200
++        payloads = _sse_data_payloads(raw)
++        assert payloads[-1] == "[DONE]"
++        chunks = [json.loads(item) for item in payloads if item != "[DONE]"]
++        assert chunks[0]["choices"][0]["delta"] == {"role": "assistant"}
++        assert chunks[1]["choices"][0]["delta"] == {"content": "codex "}
++        assert chunks[2]["choices"][0]["delta"] == {"content": "stream"}
++        assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
++        assert chunks[-1]["model"] == "gpt-5.4"
++        adapter._run_agent.assert_not_called()
++        kwargs = mock_client.responses.create.call_args.kwargs
++        assert kwargs["model"] == "gpt-5.4"
++        assert kwargs["stream"] is True
 diff --git a/website/docs/user-guide/features/api-server.md b/website/docs/user-guide/features/api-server.md
-index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa765dd9e6 100644
+index 16b6eed8c..c2b2af834 100644
 --- a/website/docs/user-guide/features/api-server.md
 +++ b/website/docs/user-guide/features/api-server.md
 @@ -192,7 +192,9 @@ Delete a stored response.
@@ -829,7 +1125,7 @@ index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa
  
  ### GET /v1/capabilities
  
-@@ -304,11 +306,55 @@ Resume a previously paused job.
+@@ -304,11 +306,56 @@ Resume a previously paused job.
  
  Trigger the job to run immediately, out of schedule.
  
@@ -851,13 +1147,14 @@ index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa
 +      key: change-me
 +      mode: provider_proxy
 +      provider_proxy:
-+        default_model: openai-codex/gpt-5.4
++        default_model: gpt-5.4
 +        require_explicit_model: false
++        allow_streaming: true
 +        models:
-+          - id: openai-codex/gpt-5.4
++          - id: gpt-5.4
 +            provider: openai-codex
 +            model: gpt-5.4
-+          - id: openai-codex/gpt-5.4-mini
++          - id: gpt-5.4-mini
 +            provider: openai-codex
 +            model: gpt-5.4-mini
 +          - id: openrouter/anthropic/claude-sonnet-4.5
@@ -873,7 +1170,7 @@ index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa
 +
 +Provider proxy mode intentionally uses an explicit catalog. Hermes does not expose every credential or every model found in `auth.json` automatically. Each public model id must map to a configured provider/model target.
 +
-+Initial support covers non-streaming `POST /v1/chat/completions`. OpenAI-compatible providers use a pass-through chat-completions backend; Responses-backed providers such as `openai-codex` use a compatibility adapter. Streaming proxy support is disabled unless explicitly added in a later release.
++Provider proxy supports both non-streaming and streaming `POST /v1/chat/completions` when `allow_streaming: true` is set. OpenAI-compatible providers use a pass-through chat-completions backend; Responses-backed providers such as `openai-codex` use a compatibility adapter that converts Responses streaming events to OpenAI Chat Completions SSE. For IDEs such as RooCode, expose the exact public model ids you want users to select (for example `gpt-5.4`) in the explicit catalog.
 +
  ## System Prompt Handling
  
@@ -887,7 +1184,7 @@ index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa
  - Open WebUI system prompt: "You are a Python expert. Always include type hints."
  - The agent still has terminal, file tools, web search, memory, etc.
  
-@@ -339,15 +385,24 @@ The default bind address (`127.0.0.1`) is for local-only use. Browser access is
+@@ -339,15 +386,24 @@ The default bind address (`127.0.0.1`) is for local-only use. Browser access is
  | `API_SERVER_HOST` | `127.0.0.1` | Bind address (localhost only by default) |
  | `API_SERVER_KEY` | _(none)_ | Bearer token for auth |
  | `API_SERVER_CORS_ORIGINS` | _(none)_ | Comma-separated allowed browser origins |
@@ -915,7 +1212,7 @@ index 16b6eed8c7c31a97b8e08d1c639ddc100f6efd2a..ca162ee9bf027e7b43510d8c7d30b6fa
  ## Security Headers
  
  All responses include security headers:
-@@ -423,7 +478,7 @@ In Open WebUI, add each as a separate connection. The model dropdown shows `alic
+@@ -423,7 +479,7 @@ In Open WebUI, add each as a separate connection. The model dropdown shows `alic
  
  - **Response storage** — stored responses (for `previous_response_id`) are persisted in SQLite and survive gateway restarts. Max 100 stored responses (LRU eviction).
  - **No file upload** — inline images are supported on both `/v1/chat/completions` and `/v1/responses`, but uploaded files (`file`, `input_file`, `file_id`) and non-image document inputs are not supported through the API.
