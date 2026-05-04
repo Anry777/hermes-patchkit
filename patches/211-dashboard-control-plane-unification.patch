@@ -1,0 +1,988 @@
+From cd84e8812ed30aa80ba9c6586c9b56e523241266 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Mon, 4 May 2026 19:57:30 +0300
+Subject: [PATCH] feat: unify dashboard control plane overview
+
+---
+ hermes_cli/web_server.py                      | 145 ++++++++++++++
+ ...est_dashboard_profile_selector_frontend.py |  21 +++
+ .../test_web_server_dashboard_overview.py     | 130 +++++++++++++
+ web/src/App.tsx                               |  12 +-
+ web/src/components/PlatformsCard.tsx          |  25 ++-
+ web/src/components/SidebarStatusStrip.tsx     |  55 +++---
+ web/src/hooks/useSidebarStatus.ts             |  15 +-
+ web/src/lib/api.ts                            |  75 ++++++++
+ web/src/pages/OverviewPage.tsx                | 177 ++++++++++++++++++
+ web/src/pages/SessionsPage.tsx                |  54 +++---
+ 10 files changed, 639 insertions(+), 70 deletions(-)
+ create mode 100644 tests/hermes_cli/test_web_server_dashboard_overview.py
+ create mode 100644 web/src/pages/OverviewPage.tsx
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 9412cd61f..220aab5f4 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -22,6 +22,7 @@ import threading
+ import time
+ import urllib.parse
+ import urllib.request
++from datetime import datetime, timezone
+ from pathlib import Path
+ from typing import Any, Dict, List, Optional, Tuple
+ 
+@@ -920,6 +921,144 @@ async def get_dashboard_assembly_analytics(days: int = 30):
+         raise HTTPException(status_code=500, detail="Internal server error")
+ 
+ 
++def _parse_dashboard_iso_timestamp(value: Any) -> Optional[float]:
++    if not value:
++        return None
++    try:
++        text = str(value).strip()
++        if text.endswith("Z"):
++            text = text[:-1] + "+00:00"
++        return datetime.fromisoformat(text).timestamp()
++    except Exception:
++        return None
++
++
++def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> List[Dict[str, Any]]:
++    platforms = (runtime or {}).get("platforms") or {}
++    rows: List[Dict[str, Any]] = []
++    stale_after_seconds = 24 * 3600
++    for name, raw in sorted(platforms.items()):
++        info = raw if isinstance(raw, dict) else {}
++        state = str(info.get("state") or "unknown")
++        updated_at = info.get("updated_at")
++        updated_ts = _parse_dashboard_iso_timestamp(updated_at)
++        age_seconds = None if updated_ts is None else max(0, int(now - updated_ts))
++        stale = age_seconds is not None and age_seconds > stale_after_seconds
++        needs_attention = state not in {"connected", "running", "ok"} or stale
++        display_state = "STALE" if state == "connected" and stale else state.upper()
++        rows.append({
++            "name": str(name),
++            "state": state,
++            "display_state": display_state,
++            "needs_attention": needs_attention,
++            "updated_at": updated_at,
++            "age_seconds": age_seconds,
++            "error_code": info.get("error_code"),
++            "error_message": info.get("error_message"),
++        })
++    return rows
++
++
++def _serialize_dashboard_overview() -> Dict[str, Any]:
++    """Unified read-only dashboard control-plane summary.
++
++    Exposes counts and safe process metadata only: no session IDs, message
++    bodies, prompts, tool arguments, env vars, or log contents.  This is the
++    shared semantic contract for Overview, sidebar, and profile/session pages.
++    """
++    now = time.time()
++    analytics = _serialize_dashboard_assembly_analytics(days=30)
++    runtime_registry = _serialize_dashboard_runtime_registry()
++    active_profile = str(analytics.get("active_profile") or "default")
++    profile_rows = list(analytics.get("profiles") or [])
++    totals = dict(analytics.get("totals") or {})
++    current_profile_row = next(
++        (row for row in profile_rows if str(row.get("profile")) == active_profile),
++        {},
++    )
++
++    pty_sessions = list(runtime_registry.get("pty_sessions") or [])
++    terminals_by_profile: Dict[str, int] = {}
++    for session in pty_sessions:
++        profile = str(session.get("profile") or "default")
++        terminals_by_profile[profile] = terminals_by_profile.get(profile, 0) + 1
++
++    gateway_pid = get_running_pid()
++    gateway_running = gateway_pid is not None
++    runtime_status = read_runtime_status()
++    gateway_state = None
++    gateway_updated_at = None
++    if runtime_status:
++        gateway_state = runtime_status.get("gateway_state")
++        gateway_updated_at = runtime_status.get("updated_at")
++        if not gateway_running:
++            gateway_state = gateway_state if gateway_state in ("stopped", "startup_failed") else "stopped"
++    platform_rows = _dashboard_platform_rows(runtime_status, now) if gateway_running else []
++
++    return {
++        "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
++        "version": __version__,
++        "release_date": __release_date__,
++        "active_profile": active_profile,
++        "model": {
++            "provider": current_profile_row.get("provider"),
++            "name": current_profile_row.get("model"),
++        },
++        "profiles": {
++            "total": int(totals.get("profiles") or len(profile_rows)),
++            "active": int(totals.get("active_profiles") or 0),
++            "stale": int(totals.get("stale_profiles") or 0),
++            "rows": profile_rows,
++        },
++        "sessions": {
++            "total": int(totals.get("total_sessions") or 0),
++            "current_profile_total": int(current_profile_row.get("sessions") or 0),
++            "recently_active_db_records": int(totals.get("active_sessions") or 0),
++            "current_profile_recently_active_db_records": int(current_profile_row.get("active_sessions") or 0),
++        },
++        "terminals": {
++            "active": len(pty_sessions),
++            "by_profile": terminals_by_profile,
++            "sessions": pty_sessions,
++        },
++        "gateway": {
++            "running": gateway_running,
++            "state": gateway_state,
++            "pid": gateway_pid,
++            "updated_at": gateway_updated_at,
++            "platforms": {
++                "total": len(platform_rows),
++                "connected": sum(1 for row in platform_rows if row.get("state") == "connected"),
++                "stale": sum(1 for row in platform_rows if row.get("display_state") == "STALE"),
++                "attention": sum(1 for row in platform_rows if row.get("needs_attention")),
++            },
++            "platform_rows": platform_rows,
++        },
++        "runtime": {
++            "dashboard_pid": (runtime_registry.get("dashboard") or {}).get("pid"),
++            "event_channels": int((runtime_registry.get("counts") or {}).get("event_channels") or 0),
++            "actions": int((runtime_registry.get("counts") or {}).get("actions") or 0),
++        },
++        "semantics": {
++            "historical_sessions": "session DB records across profiles",
++            "recently_active_db_records": "unended session DB records active in the last five minutes",
++            "active_terminals": "live dashboard PTY channels",
++            "connected_platforms": "gateway platform adapters currently reporting connected",
++            "needs_attention": "disconnected, failed, unknown, or stale gateway platform rows",
++        },
++    }
++
++
++@app.get("/api/dashboard/overview")
++async def get_dashboard_overview():
++    """Return the unified dashboard control-plane overview."""
++    try:
++        return _serialize_dashboard_overview()
++    except Exception:
++        _log.exception("GET /api/dashboard/overview failed")
++        raise HTTPException(status_code=500, detail="Internal server error")
++
++
+ def _dashboard_pty_sessions_snapshot() -> List[Dict[str, Any]]:
+     """Return a sanitized snapshot of active dashboard PTY sessions."""
+     with _PTY_SESSIONS_LOCK:
+@@ -4269,6 +4408,12 @@ def _discover_dashboard_plugins() -> list:
+             try:
+                 data = json.loads(manifest_file.read_text(encoding="utf-8"))
+                 name = data.get("name", child.name)
++                if (
++                    name == "example"
++                    and source == "bundled"
++                    and os.environ.get("HERMES_DASHBOARD_SHOW_EXAMPLES") not in {"1", "true", "TRUE", "yes", "YES"}
++                ):
++                    continue
+                 if name in seen_names:
+                     continue
+                 seen_names.add(name)
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index b9f6a85ce..b98b51f2f 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -159,3 +159,24 @@ def test_system_actions_use_controlled_dashboard_action_api():
+     assert "window.prompt" in context
+     assert "api.runDashboardAction(actionId, confirmation)" in context
+     assert "Confirmation did not match" in context
++
++
++def test_dashboard_control_plane_unification_contract():
++    app = _read("App.tsx")
++    api = _read("lib/api.ts")
++    sessions = _read("pages/SessionsPage.tsx")
++    overview = _read("pages/OverviewPage.tsx")
++
++    assert "getDashboardOverview" in api
++    assert "DashboardOverviewResponse" in api
++    assert "RootRedirect" in app
++    assert "to=\"/overview\"" in app
++    assert "OverviewPage" in app
++    assert "Total sessions" in sessions
++    assert "Active terminals" in sessions
++    assert "ConnectedPlatforms" not in sessions
++    assert "getStatus()" not in sessions
++    assert "dashboard-control-plane-overview" in overview
++    assert "Historical sessions" in overview
++    assert "Active terminals" in overview
++    assert "Needs attention" in overview
+diff --git a/tests/hermes_cli/test_web_server_dashboard_overview.py b/tests/hermes_cli/test_web_server_dashboard_overview.py
+new file mode 100644
+index 000000000..e8f2cbcb3
+--- /dev/null
++++ b/tests/hermes_cli/test_web_server_dashboard_overview.py
+@@ -0,0 +1,130 @@
++"""Tests for the unified dashboard overview control-plane endpoint."""
++
++from __future__ import annotations
++
++import time
++from pathlib import Path
++
++import pytest
++
++
++def _client_with_dashboard_token():
++    try:
++        from starlette.testclient import TestClient
++    except Exception as exc:  # pragma: no cover - optional dependency guard
++        pytest.skip(f"starlette TestClient unavailable: {exc}")
++
++    import hermes_cli.web_server as ws
++
++    ws._SESSION_TOKEN = "overview-test-token"
++    ws.app.state.session_token = "overview-test-token"
++    return TestClient(ws.app, headers={"X-Hermes-Session-Token": "overview-test-token"})
++
++
++def _seed_session(profile_dir: Path, session_id: str, *, model: str = "gpt-5.5", last_active: float | None = None) -> None:
++    from hermes_state import SessionDB
++
++    profile_dir.mkdir(parents=True, exist_ok=True)
++    db = SessionDB(db_path=profile_dir / "state.db")
++    try:
++        db.create_session(session_id=session_id, source="cli", model=model)
++        db.update_token_counts(session_id, input_tokens=100, output_tokens=20)
++        db.set_session_title(session_id, f"Session {session_id}")
++        if last_active is not None:
++            with db._lock:
++                db._conn.execute(
++                    "UPDATE sessions SET started_at = ?, ended_at = NULL WHERE id = ?",
++                    (last_active, session_id),
++                )
++                db._conn.commit()
++    finally:
++        db.close()
++
++
++def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch):
++    import hermes_cli.web_server as ws
++
++    home = tmp_path / ".hermes"
++    home.mkdir()
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(home))
++    monkeypatch.setenv("HERMES_ACTIVE_PROFILE", "default")
++
++    profile_dir = home / "profiles" / "ops"
++    profile_dir.mkdir(parents=True)
++    (profile_dir / "config.yaml").write_text("model:\n  provider: openai-codex\n  default: gpt-5.5\n", encoding="utf-8")
++
++    now = time.time()
++    _seed_session(home, "default-active", last_active=now)
++    _seed_session(profile_dir, "ops-stale", last_active=now - 10 * 86400)
++
++    monkeypatch.setattr(ws, "get_running_pid", lambda: 12345)
++    monkeypatch.setattr(ws, "read_runtime_status", lambda: {
++        "gateway_state": "running",
++        "updated_at": "2026-05-03T10:00:00+00:00",
++        "platforms": {
++            "telegram": {"state": "connected", "updated_at": "2026-05-01T10:00:00+00:00"},
++            "discord": {"state": "disconnected", "updated_at": "2026-05-03T09:00:00+00:00"},
++        },
++    })
++
++    with ws._PTY_SESSIONS_LOCK:
++        ws._PTY_SESSIONS.clear()
++        ws._PTY_SESSIONS["pty-default"] = {
++            "id": "pty-default",
++            "profile": "default",
++            "pid": 111,
++            "started_at": now,
++            "last_activity": now,
++        }
++
++    client = _client_with_dashboard_token()
++    resp = client.get("/api/dashboard/overview")
++
++    assert resp.status_code == 200
++    data = resp.json()
++    assert data["semantics"]["historical_sessions"] == "session DB records across profiles"
++    assert data["semantics"]["active_terminals"] == "live dashboard PTY channels"
++    assert data["profiles"]["total"] >= 2
++    assert data["sessions"]["total"] >= 2
++    assert data["sessions"]["current_profile_total"] >= 1
++    assert data["terminals"]["active"] == 1
++    assert data["gateway"]["running"] is True
++    assert data["gateway"]["platforms"]["connected"] == 1
++    assert data["gateway"]["platforms"]["attention"] >= 1
++
++    payload = str(data).lower()
++    assert "default-active" not in payload
++    assert "ops-stale" not in payload
++    assert "prompt" not in payload
++    assert "message bodies" not in payload
++
++
++def test_dashboard_overview_is_protected():
++    try:
++        from starlette.testclient import TestClient
++    except Exception as exc:  # pragma: no cover
++        pytest.skip(f"starlette TestClient unavailable: {exc}")
++
++    import hermes_cli.web_server as ws
++
++    ws._SESSION_TOKEN = "overview-test-token"
++    ws.app.state.session_token = "overview-test-token"
++    resp = TestClient(ws.app).get("/api/dashboard/overview")
++    assert resp.status_code == 401
++
++
++def test_example_dashboard_plugin_is_hidden_by_default(monkeypatch):
++    import hermes_cli.web_server as ws
++
++    monkeypatch.delenv("HERMES_DASHBOARD_SHOW_EXAMPLES", raising=False)
++    plugins = ws._discover_dashboard_plugins()
++    assert all(plugin["name"] != "example" for plugin in plugins)
++
++
++def test_example_dashboard_plugin_can_be_enabled_for_development(monkeypatch):
++    import hermes_cli.web_server as ws
++
++    monkeypatch.setenv("HERMES_DASHBOARD_SHOW_EXAMPLES", "1")
++    plugins = ws._discover_dashboard_plugins()
++    assert any(plugin["name"] == "example" for plugin in plugins)
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index 38eec7fd0..bcef0e609 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -61,6 +61,7 @@ import ConfigPage from "@/pages/ConfigPage";
+ import DocsPage from "@/pages/DocsPage";
+ import EnvPage from "@/pages/EnvPage";
+ import SessionsPage from "@/pages/SessionsPage";
++import OverviewPage from "@/pages/OverviewPage";
+ import ProfilesPage from "@/pages/ProfilesPage";
+ import LogsPage from "@/pages/LogsPage";
+ import AnalyticsPage from "@/pages/AnalyticsPage";
+@@ -77,7 +78,7 @@ import { useTheme } from "@/themes";
+ import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
+ 
+ function RootRedirect() {
+-  return <Navigate to="/sessions" replace />;
++  return <Navigate to="/overview" replace />;
+ }
+ 
+ const CHAT_NAV_ITEM: NavItem = {
+@@ -98,6 +99,7 @@ const CHAT_NAV_ITEM: NavItem = {
+  */
+ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
+   "/": RootRedirect,
++  "/overview": OverviewPage,
+   "/sessions": SessionsPage,
+   "/profiles": ProfilesPage,
+   "/analytics": AnalyticsPage,
+@@ -119,6 +121,12 @@ function ChatRouteSink() {
+ }
+ 
+ const BUILTIN_NAV_REST: NavItem[] = [
++  {
++    path: "/overview",
++    labelKey: "overview",
++    label: "Overview",
++    icon: Activity,
++  },
+   {
+     path: "/sessions",
+     labelKey: "sessions",
+@@ -755,7 +763,7 @@ export default function App() {
+                   ))}
+                   <Route
+                     path="*"
+-                    element={<Navigate to="/sessions" replace />}
++                    element={<Navigate to="/overview" replace />}
+                   />
+                 </Routes>
+ 
+diff --git a/web/src/components/PlatformsCard.tsx b/web/src/components/PlatformsCard.tsx
+index 842a513b3..f67e388aa 100644
+--- a/web/src/components/PlatformsCard.tsx
++++ b/web/src/components/PlatformsCard.tsx
+@@ -29,12 +29,16 @@ export function PlatformsCard({ platforms }: PlatformsCardProps) {
+ 
+       <CardContent className="grid gap-3">
+         {platforms.map(([name, info]) => {
+-          const display = platformStateBadge[info.state] ?? {
+-            tone: "outline" as const,
+-            label: info.state,
+-          };
++          const stale = isStalePlatform(info.updated_at);
++          const display =
++            info.state === "connected" && stale
++              ? { tone: "warning" as const, label: "STALE" }
++              : platformStateBadge[info.state] ?? {
++                  tone: "outline" as const,
++                  label: info.state,
++                };
+           const IconComponent =
+-            info.state === "connected"
++            info.state === "connected" && !stale
+               ? Wifi
+               : info.state === "fatal"
+                 ? AlertTriangle
+@@ -48,7 +52,7 @@ export function PlatformsCard({ platforms }: PlatformsCardProps) {
+               <div className="flex items-center gap-3 min-w-0 w-full">
+                 <IconComponent
+                   className={`h-4 w-4 shrink-0 ${
+-                    info.state === "connected"
++                    info.state === "connected" && !stale
+                       ? "text-success"
+                       : info.state === "fatal"
+                         ? "text-destructive"
+@@ -79,7 +83,7 @@ export function PlatformsCard({ platforms }: PlatformsCardProps) {
+                 tone={display.tone}
+                 className="shrink-0 self-start sm:self-center"
+               >
+-                {display.tone === "success" && (
++                {display.tone === "success" && !stale && (
+                   <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                 )}
+                 {display.label}
+@@ -95,3 +99,10 @@ export function PlatformsCard({ platforms }: PlatformsCardProps) {
+ interface PlatformsCardProps {
+   platforms: [string, PlatformStatus][];
+ }
++
++function isStalePlatform(updatedAt?: string | null): boolean {
++  if (!updatedAt) return false;
++  const ts = Date.parse(updatedAt);
++  if (!Number.isFinite(ts)) return false;
++  return Date.now() - ts > 24 * 60 * 60 * 1000;
++}
+diff --git a/web/src/components/SidebarStatusStrip.tsx b/web/src/components/SidebarStatusStrip.tsx
+index b96603cec..11c0c386b 100644
+--- a/web/src/components/SidebarStatusStrip.tsx
++++ b/web/src/components/SidebarStatusStrip.tsx
+@@ -1,15 +1,13 @@
+ import { Link } from "react-router-dom";
+-import type { StatusResponse } from "@/lib/api";
++import type { DashboardOverviewResponse } from "@/lib/api";
+ import { useSidebarStatus } from "@/hooks/useSidebarStatus";
+ import { cn } from "@/lib/utils";
+-import { useI18n } from "@/i18n";
+ 
+-/** Gateway + session summary for the System sidebar block (no separate strip chrome). */
++/** Compact unified health summary for the app shell. */
+ export function SidebarStatusStrip() {
+-  const status = useSidebarStatus();
+-  const { t } = useI18n();
++  const overview = useSidebarStatus();
+ 
+-  if (status === null) {
++  if (overview === null) {
+     return (
+       <div className="px-5 py-1.5" aria-hidden>
+         <div className="h-2 w-[80%] max-w-full animate-pulse rounded-sm bg-midground/10" />
+@@ -17,13 +15,12 @@ export function SidebarStatusStrip() {
+     );
+   }
+ 
+-  const gw = gatewayLine(status, t);
+-  const { activeSessionsLabel, gatewayStatusLabel } = t.app;
++  const gw = gatewayLine(overview);
+ 
+   return (
+     <Link
+-      to="/sessions"
+-      title={t.app.statusOverview}
++      to="/overview"
++      title="Unified dashboard overview"
+       className={cn(
+         "block text-left",
+         "px-5 pb-2 pt-0.5",
+@@ -35,14 +32,21 @@ export function SidebarStatusStrip() {
+     >
+       <div className="flex flex-col gap-1 font-mondwest text-[0.55rem] leading-snug tracking-[0.12em]">
+         <p className="break-words">
+-          <span className="text-muted-foreground/50">{gatewayStatusLabel}</span>{" "}
++          <span className="text-muted-foreground/50">GATEWAY</span>{" "}
+           <span className={cn("font-medium", gw.tone)}>{gw.label}</span>
++          {overview.gateway.platforms.attention > 0 && (
++            <span className="text-warning"> · {overview.gateway.platforms.attention} ATTENTION</span>
++          )}
+         </p>
+ 
+         <p className="break-words">
+-          <span className="text-muted-foreground/50">{activeSessionsLabel}</span>{" "}
++          <span className="text-muted-foreground/50">TERMINALS</span>{" "}
+           <span className="tabular-nums text-muted-foreground/70">
+-            {status.active_sessions}
++            {overview.terminals.active}
++          </span>
++          <span className="text-muted-foreground/40"> · SESSIONS </span>
++          <span className="tabular-nums text-muted-foreground/70">
++            {overview.sessions.current_profile_total}/{overview.sessions.total}
+           </span>
+         </p>
+       </div>
+@@ -51,20 +55,17 @@ export function SidebarStatusStrip() {
+ }
+ 
+ function gatewayLine(
+-  status: StatusResponse,
+-  t: ReturnType<typeof useI18n>["t"],
++  overview: DashboardOverviewResponse,
+ ): { label: string; tone: string } {
+-  const g = t.app.gatewayStrip;
+-  const byState: Record<string, { label: string; tone: string }> = {
+-    running: { label: g.running, tone: "text-success" },
+-    starting: { label: g.starting, tone: "text-warning" },
+-    startup_failed: { label: g.failed, tone: "text-destructive" },
+-    stopped: { label: g.stopped, tone: "text-muted-foreground" },
+-  };
+-  if (status.gateway_state && byState[status.gateway_state]) {
+-    return byState[status.gateway_state];
++  if (overview.gateway.platforms.attention > 0) {
++    return { label: "NEEDS CHECK", tone: "text-warning" };
++  }
++  const state = overview.gateway.state;
++  if (state === "running" || overview.gateway.running) {
++    return { label: "RUNNING", tone: "text-success" };
++  }
++  if (state === "startup_failed") {
++    return { label: "FAILED", tone: "text-destructive" };
+   }
+-  return status.gateway_running
+-    ? { label: g.running, tone: "text-success" }
+-    : { label: g.off, tone: "text-muted-foreground" };
++  return { label: "OFF", tone: "text-muted-foreground" };
+ }
+diff --git a/web/src/hooks/useSidebarStatus.ts b/web/src/hooks/useSidebarStatus.ts
+index 42c204b55..9d23bf15d 100644
+--- a/web/src/hooks/useSidebarStatus.ts
++++ b/web/src/hooks/useSidebarStatus.ts
+@@ -1,21 +1,18 @@
+ import { useEffect, useState } from "react";
+ import { api } from "@/lib/api";
+-import type { StatusResponse } from "@/lib/api";
++import type { DashboardOverviewResponse } from "@/lib/api";
+ 
+ const POLL_MS = 10_000;
+ 
+-/**
+- * Light-weight status poll for the app shell (sidebar). The Status page uses
+- * its own faster interval; we keep this slower to avoid duplicate load.
+- */
++/** Unified control-plane summary for the app shell. */
+ export function useSidebarStatus() {
+-  const [status, setStatus] = useState<StatusResponse | null>(null);
++  const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
+ 
+   useEffect(() => {
+     const load = () => {
+       api
+-        .getStatus()
+-        .then(setStatus)
++        .getDashboardOverview()
++        .then(setOverview)
+         .catch(() => {});
+     };
+     load();
+@@ -23,5 +20,5 @@ export function useSidebarStatus() {
+     return () => clearInterval(id);
+   }, []);
+ 
+-  return status;
++  return overview;
+ }
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index 6a873461d..70c60807a 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -47,6 +47,8 @@ export const api = {
+   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+   getDashboardProfiles: () =>
+     fetchJSON<DashboardProfilesResponse>("/api/dashboard/profiles"),
++  getDashboardOverview: () =>
++    fetchJSON<DashboardOverviewResponse>("/api/dashboard/overview"),
+   getDashboardProfile: (name: string) =>
+     fetchJSON<DashboardProfileDetail>(
+       `/api/dashboard/profiles/${encodeURIComponent(name)}`,
+@@ -315,6 +317,79 @@ export interface StatusResponse {
+   version: string;
+ }
+ 
++
++export interface DashboardPtySession {
++  id: string;
++  channel?: string | null;
++  pid?: number | null;
++  profile: string;
++  resume?: string | null;
++  cwd?: string | null;
++  client_host?: string | null;
++  started_at?: number | null;
++  last_activity?: number | null;
++  cols?: number | null;
++  rows?: number | null;
++}
++
++export interface DashboardOverviewPlatformRow {
++  name: string;
++  state: string;
++  display_state: string;
++  needs_attention: boolean;
++  updated_at: string | null;
++  age_seconds: number | null;
++  error_code?: string | null;
++  error_message?: string | null;
++}
++
++export interface DashboardOverviewResponse {
++  generated_at: string;
++  version: string;
++  release_date: string;
++  active_profile: string;
++  model: {
++    provider: string | null;
++    name: string | null;
++  };
++  profiles: {
++    total: number;
++    active: number;
++    stale: number;
++    rows: DashboardAssemblyProfileAnalytics[];
++  };
++  sessions: {
++    total: number;
++    current_profile_total: number;
++    recently_active_db_records: number;
++    current_profile_recently_active_db_records: number;
++  };
++  terminals: {
++    active: number;
++    by_profile: Record<string, number>;
++    sessions: DashboardPtySession[];
++  };
++  gateway: {
++    running: boolean;
++    state: string | null;
++    pid: number | null;
++    updated_at: string | null;
++    platforms: {
++      total: number;
++      connected: number;
++      stale: number;
++      attention: number;
++    };
++    platform_rows: DashboardOverviewPlatformRow[];
++  };
++  runtime: {
++    dashboard_pid: number | null;
++    event_channels: number;
++    actions: number;
++  };
++  semantics: Record<string, string>;
++}
++
+ export interface DashboardProfileSummary {
+   name: string;
+   path: string;
+diff --git a/web/src/pages/OverviewPage.tsx b/web/src/pages/OverviewPage.tsx
+new file mode 100644
+index 000000000..98134a6f1
+--- /dev/null
++++ b/web/src/pages/OverviewPage.tsx
+@@ -0,0 +1,177 @@
++import { useCallback, useEffect, useState } from "react";
++import {
++  AlertTriangle,
++  Activity,
++  Database,
++  Radio,
++  RefreshCw,
++  Terminal,
++  Users,
++} from "lucide-react";
++import { Badge, Button, Spinner } from "@nous-research/ui";
++import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
++import { api } from "@/lib/api";
++import type { DashboardOverviewResponse } from "@/lib/api";
++import { isoTimeAgo } from "@/lib/utils";
++import { PluginSlot } from "@/plugins";
++
++function fmt(n: number): string {
++  return new Intl.NumberFormat(undefined, { notation: n >= 1_000_000 ? "compact" : "standard" }).format(n);
++}
++
++function platformTone(state: string): "success" | "warning" | "destructive" | "outline" {
++  if (state === "connected") return "success";
++  if (state === "stale" || state === "disconnected") return "warning";
++  if (state === "fatal" || state === "error") return "destructive";
++  return "outline";
++}
++
++export default function OverviewPage() {
++  const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  const load = useCallback(() => {
++    setLoading(true);
++    api
++      .getDashboardOverview()
++      .then((data) => {
++        setOverview(data);
++        setError(null);
++      })
++      .catch((err) => setError(String(err)))
++      .finally(() => setLoading(false));
++  }, []);
++
++  useEffect(() => {
++    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async fetch sets loading/data state.
++    load();
++    const id = window.setInterval(load, 10_000);
++    return () => window.clearInterval(id);
++  }, [load]);
++
++  if (loading && !overview) {
++    return (
++      <div className="flex items-center justify-center py-24" aria-busy="true">
++        <Spinner className="text-2xl text-primary" />
++      </div>
++    );
++  }
++
++  return (
++    <div className="flex flex-col gap-6" data-dashboard-control-plane-overview>
++      <PluginSlot name="overview:top" />
++
++      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++        <div>
++          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
++            Unified control plane
++          </p>
++          <h2 className="text-xl font-semibold tracking-tight">
++            {overview?.active_profile ?? "default"} profile overview
++          </h2>
++        </div>
++        <Button outlined size="sm" onClick={load} disabled={loading}>
++          {loading ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
++          Refresh
++        </Button>
++      </div>
++
++      {error && (
++        <div className="border border-destructive/30 bg-destructive/[0.06] p-3 text-sm text-destructive">
++          {error}
++        </div>
++      )}
++
++      {overview && (
++        <>
++          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
++            <MetricCard icon={Database} label="Historical sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.current_profile_total)} in current profile`} />
++            <MetricCard icon={Terminal} label="Active terminals" value={fmt(overview.terminals.active)} detail="Live dashboard PTY channels" />
++            <MetricCard icon={Users} label="Profiles" value={`${overview.profiles.active}/${overview.profiles.total}`} detail={`${overview.profiles.stale} stale`} />
++            <MetricCard icon={Radio} label="Gateway platforms" value={`${overview.gateway.platforms.connected}/${overview.gateway.platforms.total}`} detail={`${overview.gateway.platforms.attention} Needs attention`} />
++          </div>
++
++          <div className="grid gap-4 xl:grid-cols-[1.35fr_0.9fr]">
++            <Card>
++              <CardHeader>
++                <CardTitle className="text-base">Profile health</CardTitle>
++              </CardHeader>
++              <CardContent className="overflow-x-auto">
++                <table className="w-full text-sm">
++                  <thead className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
++                    <tr>
++                      <th className="py-2 pr-3 text-left">Profile</th>
++                      <th className="py-2 pr-3 text-left">Sessions</th>
++                      <th className="py-2 pr-3 text-left">Tokens</th>
++                      <th className="py-2 pr-3 text-left">Tools</th>
++                      <th className="py-2 text-left">Status</th>
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {overview.profiles.rows.map((profile) => (
++                      <tr key={profile.profile} className="border-t border-border/60">
++                        <td className="py-2 pr-3 font-medium uppercase">{profile.profile}</td>
++                        <td className="py-2 pr-3 tabular-nums">{fmt(profile.sessions)}</td>
++                        <td className="py-2 pr-3 tabular-nums">{fmt(profile.input_tokens + profile.output_tokens)}</td>
++                        <td className="py-2 pr-3 tabular-nums">{fmt(profile.tool_calls)}</td>
++                        <td className="py-2">
++                          <Badge tone={profile.stale ? "warning" : "success"} className="text-[10px]">
++                            {profile.stale ? "Stale" : "Active"}
++                          </Badge>
++                        </td>
++                      </tr>
++                    ))}
++                  </tbody>
++                </table>
++              </CardContent>
++            </Card>
++
++            <Card>
++              <CardHeader>
++                <CardTitle className="text-base">Platform freshness</CardTitle>
++              </CardHeader>
++              <CardContent className="grid gap-3">
++                {overview.gateway.platform_rows.length === 0 ? (
++                  <p className="text-sm text-muted-foreground">No gateway platforms reported.</p>
++                ) : (
++                  overview.gateway.platform_rows.map((platform) => (
++                    <div key={platform.name} className="flex items-center justify-between gap-3 border border-border p-3">
++                      <div className="min-w-0">
++                        <p className="truncate text-sm font-medium capitalize">{platform.name}</p>
++                        <p className="text-xs text-muted-foreground">
++                          {platform.updated_at ? `Last event ${isoTimeAgo(platform.updated_at)}` : "No heartbeat"}
++                        </p>
++                      </div>
++                      <Badge tone={platformTone(platform.display_state)} className="text-[10px] shrink-0">
++                        {platform.needs_attention && <AlertTriangle className="mr-1 h-3 w-3" />}
++                        {platform.display_state}
++                      </Badge>
++                    </div>
++                  ))
++                )}
++              </CardContent>
++            </Card>
++          </div>
++        </>
++      )}
++
++      <PluginSlot name="overview:bottom" />
++    </div>
++  );
++}
++
++function MetricCard({ icon: Icon, label, value, detail }: { icon: typeof Activity; label: string; value: string; detail: string }) {
++  return (
++    <Card>
++      <CardContent className="flex items-start gap-3 p-4">
++        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
++        <div className="min-w-0">
++          <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
++          <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
++          <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
++        </div>
++      </CardContent>
++    </Card>
++  );
++}
+diff --git a/web/src/pages/SessionsPage.tsx b/web/src/pages/SessionsPage.tsx
+index db67273a3..46141552d 100644
+--- a/web/src/pages/SessionsPage.tsx
++++ b/web/src/pages/SessionsPage.tsx
+@@ -29,11 +29,10 @@ import type {
+   SessionInfo,
+   SessionMessage,
+   SessionSearchResult,
+-  StatusResponse,
++  DashboardOverviewResponse,
+ } from "@/lib/api";
+ import { timeAgo } from "@/lib/utils";
+ import { Markdown } from "@/components/Markdown";
+-import { PlatformsCard } from "@/components/PlatformsCard";
+ import { Toast } from "@/components/Toast";
+ import { Button, ListItem, Spinner } from "@nous-research/ui";
+ import { Badge } from "@nous-research/ui";
+@@ -407,6 +406,18 @@ function SessionRow({
+   );
+ }
+ 
++function SessionMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
++  return (
++    <Card>
++      <CardContent className="p-3">
++        <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
++        <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
++        <p className="mt-1 text-[11px] text-muted-foreground">{detail}</p>
++      </CardContent>
++    </Card>
++  );
++}
++
+ export default function SessionsPage() {
+   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+   const [total, setTotal] = useState(0);
+@@ -421,7 +432,7 @@ export default function SessionsPage() {
+   const [searching, setSearching] = useState(false);
+   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+   const logScrollRef = useRef<HTMLPreElement | null>(null);
+-  const [status, setStatus] = useState<StatusResponse | null>(null);
++  const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
+   const [overviewSessions, setOverviewSessions] = useState<SessionInfo[]>([]);
+   const { toast, showToast } = useToast();
+   const { t } = useI18n();
+@@ -500,8 +511,8 @@ export default function SessionsPage() {
+   useEffect(() => {
+     const loadOverview = () => {
+       api
+-        .getStatus()
+-        .then(setStatus)
++        .getDashboardOverview()
++        .then(setOverview)
+         .catch(() => {});
+       api
+         .getSessions(50)
+@@ -583,32 +594,22 @@ export default function SessionsPage() {
+     ? sessions.filter((s) => snippetMap.has(s.id))
+     : sessions;
+ 
+-  const platformEntries = status
+-    ? Object.entries(status.gateway_platforms ?? {})
+-    : [];
+   const recentSessions = overviewSessions
+     .filter((s) => !s.is_active)
+     .slice(0, 5);
+ 
+   const alerts: { message: string; detail?: string }[] = [];
+-  if (status) {
+-    if (status.gateway_state === "startup_failed") {
++  if (overview) {
++    if (!overview.gateway.running || overview.gateway.state === "startup_failed") {
+       alerts.push({
+-        message: t.status.gatewayFailedToStart,
+-        detail: status.gateway_exit_reason ?? undefined,
++        message: "Gateway is not running cleanly",
++        detail: overview.gateway.state ?? "unknown",
+       });
+     }
+-    const failedPlatformEntries = platformEntries.filter(
+-      ([, info]) => info.state === "fatal" || info.state === "disconnected",
+-    );
+-    for (const [name, info] of failedPlatformEntries) {
+-      const stateLabel =
+-        info.state === "fatal"
+-          ? t.status.platformError
+-          : t.status.platformDisconnected;
++    for (const platform of overview.gateway.platform_rows.filter((p) => p.needs_attention)) {
+       alerts.push({
+-        message: `${name.charAt(0).toUpperCase() + name.slice(1)} ${stateLabel}`,
+-        detail: info.error_message ?? undefined,
++        message: `${platform.name.charAt(0).toUpperCase() + platform.name.slice(1)} needs attention`,
++        detail: platform.error_message ?? platform.display_state,
+       });
+     }
+   }
+@@ -725,9 +726,12 @@ export default function SessionsPage() {
+         </div>
+       )}
+ 
+-      {platformEntries.length > 0 && status && (
+-        <PlatformsCard platforms={platformEntries} />
+-      )}
++      <div className="grid gap-3 md:grid-cols-4" data-dashboard-sessions-summary>
++        <SessionMetric label="Total sessions" value={String(total)} detail="Current profile history" />
++        <SessionMetric label="Showing" value={String(filtered.length)} detail={search ? "Matching current page" : "Current page"} />
++        <SessionMetric label="Active terminals" value={String(overview?.terminals.active ?? 0)} detail="Live dashboard PTY channels" />
++        <SessionMetric label="Profiles total" value={String(overview?.profiles.total ?? "—")} detail="See Overview for assembly health" />
++      </div>
+ 
+       {recentSessions.length > 0 && (
+         <Card>
+-- 
+2.39.5
+

@@ -256,6 +256,24 @@ Careful mutation layer after read-only UI is proven.
 
 Почему последним в first wave: mutation without observability is dangerous.
 
+### `211-dashboard-control-plane-unification`
+
+Стабилизационный slice после первой feature wave. Это не ещё один отдельный widget, а выравнивание dashboard на один язык и одну semantic model.
+
+Реализованный состав:
+
+- authenticated `/api/dashboard/overview` становится общим read-only semantic contract для control-plane counters и health;
+- новая страница `/overview` становится default landing route dashboard;
+- sidebar status strip использует тот же overview contract вместо смеси `/api/status`, analytics и runtime counters;
+- Sessions page честно разделяет current-profile history и live `Active terminals`;
+- gateway platform rows теперь отделяют `CONNECTED` от stale/attention state;
+- bundled `example` dashboard plugin скрыт в production по умолчанию и включается только через `HERMES_DASHBOARD_SHOW_EXAMPLES=1|true|yes`;
+- safety boundary: overview отдаёт только counts/metadata, без session IDs, message bodies, prompts, tool args/results, env, auth, memory, logs или secrets.
+
+Статус: exported как PatchKit unit `211-dashboard-control-plane-unification`; runtime commit `cd84e8812`, depends on `200`–`210`. Validation: focused dashboard suite returned `25 passed`; `npm run build`; focused ESLint for new/touched control-plane files; `py_compile` for `hermes_cli/web_server.py`. Live dashboard smoke фиксируется после service restart.
+
+Почему после controlled actions: когда частей стало достаточно, главной user-visible проблемой стала не нехватка фич, а конфликтующая семантика. Этот patch делает следующий visual polish (`212-dashboard-visual-polish`) безопасным: он не будет маскировать путаницу в данных.
+
 ## Acceptance criteria for first milestone
 
 Минимально полезный UI milestone — patches `200`–`203`:

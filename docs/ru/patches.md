@@ -93,6 +93,7 @@ Release manifest намеренно не включает patch units, кото�
 | `208-dashboard-terminal-workspace-tabs` | exported | App-level multi-terminal workspace tabs: default Chat and profile terminals remain separate mounted PTY panes, switching tabs does not kill other terminals, and closing a tab requires confirmation before terminating exactly that PTY via `DELETE /api/dashboard/runtimes/pty/{id}`. |
 | `209-dashboard-assembly-analytics` | exported | Authenticated safe whole-assembly analytics across all profiles: profile activity/staleness, token and cost totals, API/tool-call counts, top profiles и model/provider distribution без session IDs, message bodies, tool args, logs, env или secrets. |
 | `210-dashboard-controlled-actions` | exported | Auth-gated allowlisted dashboard mutation layer: `/api/dashboard/actions` lists exact-confirmation actions, а `/api/dashboard/actions/{id}/run` запускает только confirmed gateway restart / Hermes update actions с existing detached action status logs. |
+| `211-dashboard-control-plane-unification` | exported | Стабилизирует dashboard как единый control plane: authenticated `/api/dashboard/overview` становится общей semantic source для sidebar, Overview, Sessions, profiles, terminals и gateway platforms; stale platform rows требуют attention, а bundled example plugin скрыт до явного dev opt-in. |
 
 ## Workflow-фичи
 

@@ -256,6 +256,24 @@ Status: exported as PatchKit unit `210-dashboard-controlled-actions`; runtime co
 
 Why last in the first wave: mutation without observability is dangerous.
 
+### `211-dashboard-control-plane-unification`
+
+Stabilization slice after the first feature wave. This patch is not another isolated widget; it makes the dashboard speak one language.
+
+Implemented scope:
+
+- authenticated `/api/dashboard/overview` becomes the shared read-only semantic contract for control-plane counts and health;
+- new `/overview` page is the default dashboard landing route;
+- sidebar status strip uses the same overview contract instead of mixing `/api/status` counters with analytics/runtime counters;
+- Sessions page labels distinguish current-profile history from live `Active terminals`;
+- gateway platform rows now separate `CONNECTED` from stale/attention state;
+- bundled `example` dashboard plugin is hidden in production by default and can be enabled only with `HERMES_DASHBOARD_SHOW_EXAMPLES=1|true|yes`;
+- safety boundary: overview returns counts and metadata only, without session IDs, message bodies, prompts, tool args/results, env, auth, memory, logs or secrets.
+
+Status: exported as PatchKit unit `211-dashboard-control-plane-unification`; runtime commit `cd84e8812`, depends on `200`–`210`. Validation: focused dashboard suite returned `25 passed`; `npm run build`; focused ESLint for new/touched control-plane files; `py_compile` for `hermes_cli/web_server.py`. Live dashboard smoke after restarting `hermes-dashboard.service` on `10.50.50.28:9119` passed: root and `/api/status` returned 200, unauthenticated `/api/dashboard/overview` returned 401, authenticated overview returned 200 with 4 profiles, 392 sessions, `active_terminals=0`, `platform_attention=4`, and browser smoke showed no example/demo banner.
+
+Why after controlled actions: once enough pieces existed, the user-visible problem was no longer missing functionality but conflicting semantics. This patch makes later visual polish (`212-dashboard-visual-polish`) safe to do without hiding data-model confusion.
+
 ## Acceptance criteria for the first milestone
 
 The minimally useful UI milestone is patches `200`–`203`:
