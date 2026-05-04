@@ -12,6 +12,7 @@
     "dashboard-terminal-workspace-tabs",
     "dashboard-assembly-analytics",
     "dashboard-controlled-actions",
-    "dashboard-control-plane-unification"
+    "dashboard-control-plane-unification",
+    "dashboard-visual-polish"
   ]
 }

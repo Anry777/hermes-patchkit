@@ -274,6 +274,23 @@ Careful mutation layer after read-only UI is proven.
 
 Почему после controlled actions: когда частей стало достаточно, главной user-visible проблемой стала не нехватка фич, а конфликтующая семантика. Этот patch делает следующий visual polish (`212-dashboard-visual-polish`) безопасным: он не будет маскировать путаницу в данных.
 
+### `212-dashboard-visual-polish`
+
+Визуальная полировка после `211`. Этот patch не меняет semantic model; он делает уже унифицированный control plane менее шумным и более читабельным.
+
+Реализованный состав:
+
+- shared CSS primitives для dashboard content shell, panel cards, overview hero, metric grid, density table, freshness rows и sidebar status;
+- Overview page получила более сильный hero/header, аккуратнее собранные KPI cards, более регулярные gutters и более читаемую profile health table;
+- Card primitive теперь получает единый dashboard panel treatment: мягкий background, border contrast, inset highlight, blur/shadow;
+- sidebar status strip стал отдельным grouped status block с чуть лучшим contrast/spacing;
+- source-contract tests фиксируют, что visual polish живёт в shared primitives, а не в случайных per-page one-off classes;
+- data contract `/api/dashboard/overview`, терминология `historical sessions / active terminals / gateway platforms / needs attention` и safety boundary не менялись.
+
+Статус: exported как PatchKit unit `212-dashboard-visual-polish`; runtime commit `57067b399`, depends on `200`–`211`. Validation: RED source-contract tests сначала падали, затем focused dashboard suite returned `27 passed`; `npm run build`; focused ESLint for `OverviewPage.tsx`, `SidebarStatusStrip.tsx`, `card.tsx`, `App.tsx`; `git diff --check`; live smoke на `10.50.50.28:9119/overview?smoke=212` подтвердил root `200`, unauthenticated overview `401`, visual CSS marker в built assets, browser console без ошибок и более чистую hierarchy/spacing без очевидных layout regressions.
+
+Почему после `211`: только после унификации semantic model можно полировать внешний вид, не маскируя конфликтующие источники правды.
+
 ## Acceptance criteria for first milestone
 
 Минимально полезный UI milestone — patches `200`–`203`:

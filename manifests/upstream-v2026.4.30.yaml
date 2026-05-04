@@ -605,6 +605,51 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-visual-polish",
+      "file": "patches/v2026.4.30/212-dashboard-visual-polish.patch",
+      "title_en": "Dashboard visual polish",
+      "title_ru": "Визуальная полировка dashboard",
+      "description_en": "Polishes the unified dashboard control plane after 211 with shared visual primitives for the content shell, panel cards, overview hero, KPI grid, density table, freshness rows, and sidebar status block so spacing, contrast, hierarchy, and card treatment are consistent without changing the underlying overview data contract.",
+      "description_ru": "Полирует unified dashboard control plane после 211: добавляет общие visual primitives для content shell, panel cards, overview hero, KPI grid, density table, freshness rows и sidebar status block, чтобы spacing, contrast, hierarchy и card treatment были едиными без изменения overview data contract.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle",
+        "dashboard-session-log-inspector",
+        "dashboard-terminal-workspace-tabs",
+        "dashboard-assembly-analytics",
+        "dashboard-controlled-actions",
+        "dashboard-control-plane-unification"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_dashboard_overview.py",
+          "tests/hermes_cli/test_web_server_assembly_analytics.py",
+          "tests/hermes_cli/test_web_server_controlled_actions.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/OverviewPage.tsx src/components/SidebarStatusStrip.tsx src/components/ui/card.tsx src/App.tsx"
+        ],
+        "live_smoke": "Live dashboard smoke on http://10.50.50.28:9119/overview?smoke=212: root returned 200, unauthenticated /api/dashboard/overview returned 401, built CSS contained dashboard-content-shell, browser console had no errors, and visual smoke confirmed cleaner overview hierarchy/spacing with no obvious layout regressions."
+      },
+      "exported_from": "57067b399",
+      "base_runtime": "cd84e8812",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

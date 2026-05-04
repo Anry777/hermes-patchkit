@@ -274,6 +274,23 @@ Status: exported as PatchKit unit `211-dashboard-control-plane-unification`; run
 
 Why after controlled actions: once enough pieces existed, the user-visible problem was no longer missing functionality but conflicting semantics. This patch makes later visual polish (`212-dashboard-visual-polish`) safe to do without hiding data-model confusion.
 
+### `212-dashboard-visual-polish`
+
+Visual polish after `211`. This patch does not change the semantic model; it makes the now-unified control plane less noisy and easier to scan.
+
+Implemented scope:
+
+- shared CSS primitives for the dashboard content shell, panel cards, overview hero, metric grid, density table, freshness rows, and sidebar status;
+- Overview page gets a stronger hero/header, better grouped KPI cards, more regular gutters, and a more readable profile health table;
+- the Card primitive gets one consistent dashboard panel treatment: softer background, clearer border contrast, inset highlight, blur, and shadow;
+- sidebar status strip becomes a grouped status block with slightly better contrast and spacing;
+- source-contract tests ensure the polish lives in shared primitives rather than random per-page one-off classes;
+- `/api/dashboard/overview`, terminology (`historical sessions / active terminals / gateway platforms / needs attention`), and the safety boundary stay unchanged.
+
+Status: exported as PatchKit unit `212-dashboard-visual-polish`; runtime commit `57067b399`, depends on `200`–`211`. Validation: RED source-contract tests failed first, then the focused dashboard suite returned `27 passed`; `npm run build`; focused ESLint for `OverviewPage.tsx`, `SidebarStatusStrip.tsx`, `card.tsx`, and `App.tsx`; `git diff --check`; live smoke on `10.50.50.28:9119/overview?smoke=212` confirmed root `200`, unauthenticated overview `401`, visual CSS marker in built assets, no browser console errors, and a cleaner hierarchy/spacing with no obvious layout regressions.
+
+Why after `211`: only after the semantic model is unified can visual polish improve the UI without hiding conflicting sources of truth.
+
 ## Acceptance criteria for the first milestone
 
 The minimally useful UI milestone is patches `200`–`203`:

@@ -72,7 +72,7 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
 - `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`/`201`/`202`/`203`/`204`.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`–`212`.
 
 ## Planned `200`+ UI line
 
@@ -94,6 +94,7 @@ Initial sequence:
 | `209-dashboard-assembly-analytics` | exported | Authenticated safe whole-assembly analytics across all profiles: profile activity/staleness, token and cost totals, API/tool-call counts, top profiles, and model/provider distribution without session IDs, message bodies, tool args, logs, env or secrets. |
 | `210-dashboard-controlled-actions` | exported | Auth-gated allowlisted dashboard mutation layer: `/api/dashboard/actions` lists exact-confirmation actions and `/api/dashboard/actions/{id}/run` runs only confirmed gateway restart / Hermes update actions while preserving detached action status logs. |
 | `211-dashboard-control-plane-unification` | exported | Stabilizes the dashboard into one control plane: authenticated `/api/dashboard/overview` becomes the shared semantic source for sidebar, Overview, Sessions, profiles, terminals and gateway platforms; stale platform rows require attention and the bundled example plugin is hidden unless explicitly enabled for development. |
+| `212-dashboard-visual-polish` | exported | Polishes the unified dashboard overview after `211`: shared visual primitives for the content shell, cards, hero, KPI grid, density table, freshness rows, and sidebar status improve spacing/contrast/hierarchy without changing the data contract. |
 
 ## Workflow features
 
