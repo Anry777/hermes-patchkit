@@ -291,6 +291,25 @@ Status: exported as PatchKit unit `212-dashboard-visual-polish`; runtime commit 
 
 Why after `211`: only after the semantic model is unified can visual polish improve the UI without hiding conflicting sources of truth.
 
+### `213-dashboard-overview-semantic-cleanup`
+
+Semantic cleanup after `212`. This patch changes the Overview language and contract shape where `211`/`212` still left assembly-level data looking like a default-profile page.
+
+Implemented scope:
+
+- `/api/dashboard/overview` now declares `scope: assembly` and includes explicit `selected_profile` context;
+- backend response adds structured `attention_items[]` with source, severity, reason, message, action, target kind/id and route;
+- backend response adds `runtime_health[]` for service/API components such as `provider-proxy`, using API/process evidence where available instead of session recency;
+- platform rows keep backward-compatible counters but include actionable attention metadata;
+- Overview copy is product-facing (`Hermes control plane...`) and separates assembly rollup from selected profile context;
+- Sidebar status now uses action-required semantics instead of ambiguous attention wording;
+- English number formatting is stabilized with `en-US`;
+- safety boundary remains metadata-only: no session IDs, message bodies, prompts, tool args/results, env, auth, memory, logs or secrets.
+
+Status: exported as PatchKit unit `213-dashboard-overview-semantic-cleanup`; runtime commit `044c33c68`, depends on `200`–`212`. Validation: RED source-contract/API tests failed first, then focused dashboard suite returned `148 passed`; targeted PTY websocket retry passed after an unrelated xdist timing flake; `npm run build`; focused ESLint for `OverviewPage.tsx`, `api.ts`, and `SidebarStatusStrip.tsx`; `py_compile`; `git diff --check`; live smoke on `127.0.0.1:9119/overview?smoke=213` confirmed root `200`, unauthenticated overview `401`, authenticated overview `scope=assembly`, selected profile context, provider_proxy runtime health, structured action-required items, and no browser console errors.
+
+Why after `212`: the visual pass made the ambiguity easier to see. This patch fixes the remaining semantic mismatch before adding new dashboard widgets.
+
 ## Acceptance criteria for the first milestone
 
 The minimally useful UI milestone is patches `200`–`203`:

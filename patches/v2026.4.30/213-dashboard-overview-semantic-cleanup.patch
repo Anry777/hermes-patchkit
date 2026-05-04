@@ -1,0 +1,653 @@
+From 044c33c68afb82ab352dbd876fb10d7760955442 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Mon, 4 May 2026 21:37:47 +0300
+Subject: [PATCH] feat: clean up dashboard overview semantics
+
+---
+ hermes_cli/web_server.py                      | 163 +++++++++++++++++-
+ ...est_dashboard_profile_selector_frontend.py |  26 ++-
+ .../test_web_server_dashboard_overview.py     |  33 +++-
+ web/src/components/SidebarStatusStrip.tsx     |   8 +-
+ web/src/lib/api.ts                            |  43 +++++
+ web/src/pages/OverviewPage.tsx                | 142 +++++++++++----
+ 6 files changed, 369 insertions(+), 46 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 220aab5f4..27f27d3cc 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -937,6 +937,7 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+     platforms = (runtime or {}).get("platforms") or {}
+     rows: List[Dict[str, Any]] = []
+     stale_after_seconds = 24 * 3600
++    healthy_states = {"connected", "running", "ok"}
+     for name, raw in sorted(platforms.items()):
+         info = raw if isinstance(raw, dict) else {}
+         state = str(info.get("state") or "unknown")
+@@ -944,13 +945,29 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+         updated_ts = _parse_dashboard_iso_timestamp(updated_at)
+         age_seconds = None if updated_ts is None else max(0, int(now - updated_ts))
+         stale = age_seconds is not None and age_seconds > stale_after_seconds
+-        needs_attention = state not in {"connected", "running", "ok"} or stale
++        needs_attention = state not in healthy_states or stale
+         display_state = "STALE" if state == "connected" and stale else state.upper()
++
++        attention_reason = None
++        attention_severity = None
++        attention_action = None
++        if state not in healthy_states:
++            attention_reason = f"Gateway platform state is {state}"
++            attention_severity = "warning" if state in {"disconnected", "unknown", "stopped"} else "error"
++            attention_action = "Open gateway status and platform logs"
++        elif stale:
++            attention_reason = "No gateway platform heartbeat for more than 24 hours"
++            attention_severity = "info"
++            attention_action = "Check gateway freshness before taking action"
++
+         rows.append({
+             "name": str(name),
+             "state": state,
+             "display_state": display_state,
+             "needs_attention": needs_attention,
++            "attention_reason": attention_reason,
++            "attention_severity": attention_severity,
++            "attention_action": attention_action,
+             "updated_at": updated_at,
+             "age_seconds": age_seconds,
+             "error_code": info.get("error_code"),
+@@ -959,6 +976,130 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+     return rows
+ 
+ 
++def _dashboard_provider_proxy_evidence(profile: str) -> Dict[str, Any]:
++    """Return best-effort service/API evidence for a provider-proxy profile.
++
++    Keep this metadata-only: probe a public health/model endpoint and process
++    command lines, never env values, logs, request bodies, or auth material.
++    """
++    if profile != "provider-proxy":
++        return {}
++
++    url = (
++        os.getenv("HERMES_PROVIDER_PROXY_HEALTH_URL")
++        or os.getenv("PROVIDER_PROXY_HEALTH_URL")
++        or "http://127.0.0.1:8642/v1/models"
++    )
++    try:
++        req = urllib.request.Request(url, method="GET")
++        with urllib.request.urlopen(req, timeout=0.5) as resp:
++            if 200 <= resp.status < 300:
++                return {
++                    "state": "running",
++                    "source": "api probe",
++                    "message": "provider_proxy API is reachable",
++                }
++    except Exception:
++        pass
++
++    proc_root = Path("/proc")
++    try:
++        for cmdline_path in proc_root.glob("[0-9]*/cmdline"):
++            try:
++                cmdline = cmdline_path.read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace")
++            except OSError:
++                continue
++            lower = cmdline.lower()
++            if "provider-proxy" in lower or "provider_proxy" in lower:
++                return {
++                    "state": "running",
++                    "source": "process list",
++                    "message": "provider_proxy process is present",
++                }
++    except Exception:
++        pass
++
++    return {
++        "state": "unknown",
++        "source": "service probe",
++        "message": "provider_proxy service evidence unavailable",
++    }
++
++
++def _dashboard_runtime_health(
++    profile_rows: List[Dict[str, Any]],
++    pty_sessions: List[Dict[str, Any]],
++    now: float,
++) -> List[Dict[str, Any]]:
++    rows: List[Dict[str, Any]] = []
++    pty_profiles = {str(session.get("profile") or "default") for session in pty_sessions}
++
++    for profile_row in profile_rows:
++        profile = str(profile_row.get("profile") or "")
++        if profile != "provider-proxy":
++            continue
++        evidence = _dashboard_provider_proxy_evidence(profile)
++        state = str(evidence.get("state") or "unknown")
++        reason = str(evidence.get("message") or "provider_proxy service evidence unavailable")
++        rows.append({
++            "id": profile,
++            "component": "provider_proxy",
++            "profile": profile,
++            "kind": "service_api",
++            "state": state,
++            "healthy": state in {"running", "ok", "connected"},
++            "source": str(evidence.get("source") or "service probe"),
++            "reason": reason,
++            "message": reason,
++            "profile_stale": bool(profile_row.get("stale")),
++            "has_live_terminal": profile in pty_profiles,
++            "checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
++            "route": f"/profiles?profile={urllib.parse.quote(profile)}",
++        })
++    return rows
++
++
++def _dashboard_attention_items(
++    platform_rows: List[Dict[str, Any]],
++    runtime_health: List[Dict[str, Any]],
++) -> List[Dict[str, Any]]:
++    items: List[Dict[str, Any]] = []
++    for row in platform_rows:
++        reason = row.get("attention_reason")
++        if not row.get("needs_attention") or not reason:
++            continue
++        name = str(row.get("name") or "unknown")
++        items.append({
++            "id": f"gateway-platform:{name}",
++            "source": "gateway",
++            "severity": row.get("attention_severity") or "warning",
++            "reason": reason,
++            "message": f"{name} gateway platform: {reason}",
++            "action": row.get("attention_action") or "Open gateway status",
++            "target_kind": "gateway_platform",
++            "target_id": name,
++            "route": "/platforms",
++        })
++
++    for row in runtime_health:
++        if row.get("healthy") or row.get("state") == "unknown":
++            continue
++        profile = str(row.get("profile") or row.get("id") or "runtime")
++        reason = str(row.get("reason") or "Runtime component is not healthy")
++        items.append({
++            "id": f"runtime:{profile}",
++            "source": "runtime",
++            "severity": "warning",
++            "reason": reason,
++            "message": f"{profile}: {reason}",
++            "action": "Open runtime details",
++            "target_kind": "runtime_health",
++            "target_id": profile,
++            "route": row.get("route") or "/overview",
++        })
++    return items
++
++
+ def _serialize_dashboard_overview() -> Dict[str, Any]:
+     """Unified read-only dashboard control-plane summary.
+ 
+@@ -994,12 +1135,25 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         if not gateway_running:
+             gateway_state = gateway_state if gateway_state in ("stopped", "startup_failed") else "stopped"
+     platform_rows = _dashboard_platform_rows(runtime_status, now) if gateway_running else []
++    runtime_health = _dashboard_runtime_health(profile_rows, pty_sessions, now)
++    attention_items = _dashboard_attention_items(platform_rows, runtime_health)
++    selected_profile = {
++        "name": active_profile,
++        "provider": current_profile_row.get("provider"),
++        "model": current_profile_row.get("model"),
++        "sessions": int(current_profile_row.get("sessions") or 0),
++        "recently_active_db_records": int(current_profile_row.get("active_sessions") or 0),
++        "active_terminals": terminals_by_profile.get(active_profile, 0),
++        "route": f"/profiles?profile={urllib.parse.quote(active_profile)}",
++    }
+ 
+     return {
+         "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+         "version": __version__,
+         "release_date": __release_date__,
++        "scope": "assembly",
+         "active_profile": active_profile,
++        "selected_profile": selected_profile,
+         "model": {
+             "provider": current_profile_row.get("provider"),
+             "name": current_profile_row.get("model"),
+@@ -1039,12 +1193,17 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+             "event_channels": int((runtime_registry.get("counts") or {}).get("event_channels") or 0),
+             "actions": int((runtime_registry.get("counts") or {}).get("actions") or 0),
+         },
++        "runtime_health": runtime_health,
++        "attention_items": attention_items,
+         "semantics": {
++            "scope": "assembly-wide dashboard summary with selected profile context",
++            "selected_profile": "profile context currently selected for drilldowns",
+             "historical_sessions": "session DB records across profiles",
+             "recently_active_db_records": "unended session DB records active in the last five minutes",
+             "active_terminals": "live dashboard PTY channels",
+             "connected_platforms": "gateway platform adapters currently reporting connected",
+-            "needs_attention": "disconnected, failed, unknown, or stale gateway platform rows",
++            "action_required": "items with explicit reason, source, severity, message, and action",
++            "runtime_health": "service or API health evidence for dashboard-managed components",
+         },
+     }
+ 
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index 31f072dbc..c77e9977e 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -179,7 +179,29 @@ def test_dashboard_control_plane_unification_contract():
+     assert "dashboard-control-plane-overview" in overview
+     assert "Historical sessions" in overview
+     assert "Active terminals" in overview
+-    assert "Needs attention" in overview
++    assert "Action required" in overview
++
++
++def test_overview_semantic_cleanup_contract():
++    api = _read("lib/api.ts")
++    overview = _read("pages/OverviewPage.tsx")
++    sidebar = _read("components/SidebarStatusStrip.tsx")
++
++    assert "scope: \"assembly\" | \"profile\"" in api
++    assert "selected_profile" in api
++    assert "runtime_health" in api
++    assert "attention_items" in api
++    assert "new Intl.NumberFormat(\"en-US\"" in overview
++    assert "Hermes control plane for profiles, terminals, gateway platforms, and runtime health." in overview
++    assert "Assembly overview" in overview
++    assert "Selected profile" in overview
++    assert "provider-proxy" in overview
++    assert "ACTION REQUIRED" in sidebar
++    assert "attention_items.length" in sidebar
++    assert "Polished operator overview" not in overview
++    assert "profile overview" not in overview
++    assert "Needs attention" not in overview
++    assert "NEEDS CHECK" not in sidebar
+ 
+ 
+ def test_dashboard_visual_polish_uses_shared_layout_primitives():
+@@ -208,4 +230,4 @@ def test_overview_page_uses_polished_hierarchy_and_spacing():
+     assert "dashboard-panel-grid" in overview
+     assert "dashboard-density-table" in overview
+     assert "dashboard-row-card" in overview
+-    assert "Polished operator overview" in overview
++    assert "Hermes control plane" in overview
+diff --git a/tests/hermes_cli/test_web_server_dashboard_overview.py b/tests/hermes_cli/test_web_server_dashboard_overview.py
+index e8f2cbcb3..b02a5676e 100644
+--- a/tests/hermes_cli/test_web_server_dashboard_overview.py
++++ b/tests/hermes_cli/test_web_server_dashboard_overview.py
+@@ -53,6 +53,12 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     profile_dir = home / "profiles" / "ops"
+     profile_dir.mkdir(parents=True)
+     (profile_dir / "config.yaml").write_text("model:\n  provider: openai-codex\n  default: gpt-5.5\n", encoding="utf-8")
++    provider_proxy_dir = home / "profiles" / "provider-proxy"
++    provider_proxy_dir.mkdir(parents=True)
++    (provider_proxy_dir / "config.yaml").write_text(
++        "model:\n  provider: openai-codex\n  default: gpt-5.4\n",
++        encoding="utf-8",
++    )
+ 
+     now = time.time()
+     _seed_session(home, "default-active", last_active=now)
+@@ -67,6 +73,11 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+             "discord": {"state": "disconnected", "updated_at": "2026-05-03T09:00:00+00:00"},
+         },
+     })
++    monkeypatch.setattr(ws, "_dashboard_provider_proxy_evidence", lambda profile: {
++        "state": "running",
++        "source": "test probe",
++        "message": "provider_proxy API is reachable",
++    })
+ 
+     with ws._PTY_SESSIONS_LOCK:
+         ws._PTY_SESSIONS.clear()
+@@ -83,9 +94,12 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+ 
+     assert resp.status_code == 200
+     data = resp.json()
++    assert data["scope"] == "assembly"
++    assert data["selected_profile"]["name"] == "default"
+     assert data["semantics"]["historical_sessions"] == "session DB records across profiles"
+     assert data["semantics"]["active_terminals"] == "live dashboard PTY channels"
+-    assert data["profiles"]["total"] >= 2
++    assert data["semantics"]["selected_profile"] == "profile context currently selected for drilldowns"
++    assert data["profiles"]["total"] >= 3
+     assert data["sessions"]["total"] >= 2
+     assert data["sessions"]["current_profile_total"] >= 1
+     assert data["terminals"]["active"] == 1
+@@ -93,9 +107,26 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     assert data["gateway"]["platforms"]["connected"] == 1
+     assert data["gateway"]["platforms"]["attention"] >= 1
+ 
++    provider_proxy_health = next(
++        item for item in data["runtime_health"] if item["id"] == "provider-proxy"
++    )
++    assert provider_proxy_health["state"] == "running"
++    assert provider_proxy_health["reason"] == "provider_proxy API is reachable"
++    assert provider_proxy_health["profile_stale"] is True
++    assert "stale" not in provider_proxy_health["message"].lower()
++
++    assert data["attention_items"]
++    assert all(item.get("reason") for item in data["attention_items"])
++    assert all(item.get("source") for item in data["attention_items"])
++    assert all(item.get("severity") for item in data["attention_items"])
++    assert all(item.get("message") for item in data["attention_items"])
++    assert all(item.get("action") for item in data["attention_items"])
++
+     payload = str(data).lower()
+     assert "default-active" not in payload
+     assert "ops-stale" not in payload
++    assert "api_key" not in payload
++    assert "secret" not in payload
+     assert "prompt" not in payload
+     assert "message bodies" not in payload
+ 
+diff --git a/web/src/components/SidebarStatusStrip.tsx b/web/src/components/SidebarStatusStrip.tsx
+index cce680871..27a486a96 100644
+--- a/web/src/components/SidebarStatusStrip.tsx
++++ b/web/src/components/SidebarStatusStrip.tsx
+@@ -34,8 +34,8 @@ export function SidebarStatusStrip() {
+         <p className="break-words">
+           <span className="text-muted-foreground/50">GATEWAY</span>{" "}
+           <span className={cn("font-medium", gw.tone)}>{gw.label}</span>
+-          {overview.gateway.platforms.attention > 0 && (
+-            <span className="text-warning"> · {overview.gateway.platforms.attention} ATTENTION</span>
++          {overview.attention_items.length > 0 && (
++            <span className="text-warning"> · {overview.attention_items.length} ITEMS</span>
+           )}
+         </p>
+ 
+@@ -57,8 +57,8 @@ export function SidebarStatusStrip() {
+ function gatewayLine(
+   overview: DashboardOverviewResponse,
+ ): { label: string; tone: string } {
+-  if (overview.gateway.platforms.attention > 0) {
+-    return { label: "NEEDS CHECK", tone: "text-warning" };
++  if (overview.attention_items.length > 0) {
++    return { label: "ACTION REQUIRED", tone: "text-warning" };
+   }
+   const state = overview.gateway.state;
+   if (state === "running" || overview.gateway.running) {
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index 70c60807a..e64f03069 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -337,17 +337,58 @@ export interface DashboardOverviewPlatformRow {
+   state: string;
+   display_state: string;
+   needs_attention: boolean;
++  attention_reason?: string | null;
++  attention_severity?: string | null;
++  attention_action?: string | null;
+   updated_at: string | null;
+   age_seconds: number | null;
+   error_code?: string | null;
+   error_message?: string | null;
+ }
+ 
++export interface DashboardOverviewRuntimeHealth {
++  id: string;
++  component: string;
++  profile: string;
++  kind: string;
++  state: string;
++  healthy: boolean;
++  source: string;
++  reason: string;
++  message: string;
++  profile_stale: boolean;
++  has_live_terminal: boolean;
++  checked_at: string;
++  route?: string | null;
++}
++
++export interface DashboardOverviewAttentionItem {
++  id: string;
++  source: string;
++  severity: string;
++  reason: string;
++  message: string;
++  action: string;
++  target_kind: string;
++  target_id: string;
++  route?: string | null;
++}
++
+ export interface DashboardOverviewResponse {
+   generated_at: string;
+   version: string;
+   release_date: string;
++  scope: "assembly" | "profile";
+   active_profile: string;
++  selected_profile: {
++    name: string;
++    provider: string | null;
++    model: string | null;
++    sessions: number;
++    recently_active_db_records: number;
++    active_terminals: number;
++    route: string;
++  };
+   model: {
+     provider: string | null;
+     name: string | null;
+@@ -387,6 +428,8 @@ export interface DashboardOverviewResponse {
+     event_channels: number;
+     actions: number;
+   };
++  runtime_health: DashboardOverviewRuntimeHealth[];
++  attention_items: DashboardOverviewAttentionItem[];
+   semantics: Record<string, string>;
+ }
+ 
+diff --git a/web/src/pages/OverviewPage.tsx b/web/src/pages/OverviewPage.tsx
+index 74ad16ddf..b59543fdd 100644
+--- a/web/src/pages/OverviewPage.tsx
++++ b/web/src/pages/OverviewPage.tsx
+@@ -15,17 +15,27 @@ import type { DashboardOverviewResponse } from "@/lib/api";
+ import { isoTimeAgo } from "@/lib/utils";
+ import { PluginSlot } from "@/plugins";
+ 
++const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact" });
++const standardFormatter = new Intl.NumberFormat("en-US");
++
+ function fmt(n: number): string {
+-  return new Intl.NumberFormat(undefined, { notation: n >= 1_000_000 ? "compact" : "standard" }).format(n);
++  return (n >= 1_000_000 ? compactFormatter : standardFormatter).format(n);
+ }
+ 
+ function platformTone(state: string): "success" | "warning" | "destructive" | "outline" {
+-  if (state === "connected") return "success";
+-  if (state === "stale" || state === "disconnected") return "warning";
+-  if (state === "fatal" || state === "error") return "destructive";
++  const normalized = state.toLowerCase();
++  if (normalized === "connected") return "success";
++  if (normalized === "stale" || normalized === "disconnected") return "warning";
++  if (normalized === "fatal" || normalized === "error") return "destructive";
+   return "outline";
+ }
+ 
++function healthTone(healthy: boolean, state: string): "success" | "warning" | "destructive" | "outline" {
++  if (healthy) return "success";
++  if (state === "unknown") return "outline";
++  return "warning";
++}
++
+ export default function OverviewPage() {
+   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
+   const [loading, setLoading] = useState(true);
+@@ -58,6 +68,9 @@ export default function OverviewPage() {
+     );
+   }
+ 
++  const actionRequired = overview?.attention_items.length ?? 0;
++  const selectedProfileName = overview?.selected_profile.name ?? overview?.active_profile ?? "default";
++
+   return (
+     <div className="flex flex-col gap-6 xl:gap-7" data-dashboard-control-plane-overview data-dashboard-visual-polish>
+       <PluginSlot name="overview:top" />
+@@ -65,14 +78,16 @@ export default function OverviewPage() {
+       <section className="dashboard-overview-hero flex flex-col gap-4 p-4 sm:p-5 xl:flex-row xl:items-end xl:justify-between">
+         <div className="max-w-3xl">
+           <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+-            Unified control plane
++            Assembly overview
+           </p>
+           <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+-            {overview?.active_profile ?? "default"} profile overview
++            Hermes control plane
+           </h2>
+           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground/85">
+-            Polished operator overview across historical sessions, live terminals,
+-            profiles, and gateway freshness.
++            Hermes control plane for profiles, terminals, gateway platforms, and runtime health.
++          </p>
++          <p className="mt-3 text-xs text-muted-foreground">
++            Selected profile: <span className="font-medium text-foreground">{selectedProfileName}</span>
+           </p>
+         </div>
+         <Button outlined size="sm" onClick={load} disabled={loading} className="self-start xl:self-auto">
+@@ -90,10 +105,10 @@ export default function OverviewPage() {
+       {overview && (
+         <>
+           <div className="dashboard-metric-grid grid md:grid-cols-2 xl:grid-cols-4">
+-            <MetricCard icon={Database} label="Historical sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.current_profile_total)} in current profile`} />
++            <MetricCard icon={Database} label="Historical sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.current_profile_total)} in selected profile`} />
+             <MetricCard icon={Terminal} label="Active terminals" value={fmt(overview.terminals.active)} detail="Live dashboard PTY channels" />
+-            <MetricCard icon={Users} label="Profiles" value={`${overview.profiles.active}/${overview.profiles.total}`} detail={`${overview.profiles.stale} stale`} />
+-            <MetricCard icon={Radio} label="Gateway platforms" value={`${overview.gateway.platforms.connected}/${overview.gateway.platforms.total}`} detail={`${overview.gateway.platforms.attention} Needs attention`} />
++            <MetricCard icon={Users} label="Profiles" value={`${overview.profiles.active}/${overview.profiles.total}`} detail={`${overview.profiles.stale} with no recent session activity`} />
++            <MetricCard icon={Radio} label="Gateway platforms" value={`${overview.gateway.platforms.connected}/${overview.gateway.platforms.total}`} detail={actionRequired > 0 ? `${fmt(actionRequired)} Action required` : "No action required"} />
+           </div>
+ 
+           <div className="dashboard-panel-grid grid xl:grid-cols-[1.35fr_0.9fr]">
+@@ -102,6 +117,9 @@ export default function OverviewPage() {
+                 <CardTitle className="text-base">Profile health</CardTitle>
+               </CardHeader>
+               <CardContent className="overflow-x-auto">
++                <div className="mb-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
++                  <span className="font-medium text-foreground">Selected profile</span>: {overview.selected_profile.name} · {fmt(overview.selected_profile.sessions)} sessions · {fmt(overview.selected_profile.active_terminals)} live terminals
++                </div>
+                 <table className="dashboard-density-table w-full text-sm">
+                   <thead className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                     <tr>
+@@ -120,8 +138,8 @@ export default function OverviewPage() {
+                         <td className="py-2 pr-3 tabular-nums">{fmt(profile.input_tokens + profile.output_tokens)}</td>
+                         <td className="py-2 pr-3 tabular-nums">{fmt(profile.tool_calls)}</td>
+                         <td className="py-2">
+-                          <Badge tone={profile.stale ? "warning" : "success"} className="text-[10px]">
+-                            {profile.stale ? "Stale" : "Active"}
++                          <Badge tone={profile.stale ? "outline" : "success"} className="text-[10px]">
++                            {profile.stale ? "No recent sessions" : "Recent activity"}
+                           </Badge>
+                         </td>
+                       </tr>
+@@ -131,31 +149,81 @@ export default function OverviewPage() {
+               </CardContent>
+             </Card>
+ 
+-            <Card>
+-              <CardHeader>
+-                <CardTitle className="text-base">Platform freshness</CardTitle>
+-              </CardHeader>
+-              <CardContent className="grid gap-3">
+-                {overview.gateway.platform_rows.length === 0 ? (
+-                  <p className="text-sm text-muted-foreground">No gateway platforms reported.</p>
+-                ) : (
+-                  overview.gateway.platform_rows.map((platform) => (
+-                    <div key={platform.name} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
+-                      <div className="min-w-0">
+-                        <p className="truncate text-sm font-medium capitalize">{platform.name}</p>
+-                        <p className="text-xs text-muted-foreground">
+-                          {platform.updated_at ? `Last event ${isoTimeAgo(platform.updated_at)}` : "No heartbeat"}
+-                        </p>
++            <div className="grid gap-4">
++              <Card>
++                <CardHeader>
++                  <CardTitle className="text-base">Action required</CardTitle>
++                </CardHeader>
++                <CardContent className="grid gap-3">
++                  {overview.attention_items.length === 0 ? (
++                    <p className="text-sm text-muted-foreground">No actionable dashboard items right now.</p>
++                  ) : (
++                    overview.attention_items.map((item) => (
++                      <div key={item.id} className="dashboard-row-card border p-3.5">
++                        <div className="flex items-center justify-between gap-4">
++                          <p className="truncate text-sm font-medium">{item.message}</p>
++                          <Badge tone={item.severity === "error" ? "destructive" : "warning"} className="text-[10px] shrink-0">
++                            <AlertTriangle className="mr-1 h-3 w-3" />
++                            {item.severity}
++                          </Badge>
++                        </div>
++                        <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>
++                        <p className="mt-2 text-xs font-medium text-muted-foreground">{item.action}</p>
+                       </div>
+-                      <Badge tone={platformTone(platform.display_state)} className="text-[10px] shrink-0">
+-                        {platform.needs_attention && <AlertTriangle className="mr-1 h-3 w-3" />}
+-                        {platform.display_state}
+-                      </Badge>
+-                    </div>
+-                  ))
+-                )}
+-              </CardContent>
+-            </Card>
++                    ))
++                  )}
++                </CardContent>
++              </Card>
++
++              <Card>
++                <CardHeader>
++                  <CardTitle className="text-base">Runtime health</CardTitle>
++                </CardHeader>
++                <CardContent className="grid gap-3">
++                  {overview.runtime_health.length === 0 ? (
++                    <p className="text-sm text-muted-foreground">No service/API health rows reported.</p>
++                  ) : (
++                    overview.runtime_health.map((item) => (
++                      <div key={item.id} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
++                        <div className="min-w-0">
++                          <p className="truncate text-sm font-medium">{item.profile === "provider-proxy" ? "provider-proxy" : item.profile}</p>
++                          <p className="text-xs text-muted-foreground">{item.message}</p>
++                        </div>
++                        <Badge tone={healthTone(item.healthy, item.state)} className="text-[10px] shrink-0">
++                          {item.state}
++                        </Badge>
++                      </div>
++                    ))
++                  )}
++                </CardContent>
++              </Card>
++
++              <Card>
++                <CardHeader>
++                  <CardTitle className="text-base">Platform freshness</CardTitle>
++                </CardHeader>
++                <CardContent className="grid gap-3">
++                  {overview.gateway.platform_rows.length === 0 ? (
++                    <p className="text-sm text-muted-foreground">No gateway platforms reported.</p>
++                  ) : (
++                    overview.gateway.platform_rows.map((platform) => (
++                      <div key={platform.name} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
++                        <div className="min-w-0">
++                          <p className="truncate text-sm font-medium capitalize">{platform.name}</p>
++                          <p className="text-xs text-muted-foreground">
++                            {platform.attention_reason ?? (platform.updated_at ? `Last event ${isoTimeAgo(platform.updated_at)}` : "No heartbeat")}
++                          </p>
++                        </div>
++                        <Badge tone={platformTone(platform.display_state)} className="text-[10px] shrink-0">
++                          {platform.needs_attention && <AlertTriangle className="mr-1 h-3 w-3" />}
++                          {platform.display_state}
++                        </Badge>
++                      </div>
++                    ))
++                  )}
++                </CardContent>
++              </Card>
++            </div>
+           </div>
+         </>
+       )}
+-- 
+2.39.5
+

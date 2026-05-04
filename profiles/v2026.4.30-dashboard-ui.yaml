@@ -13,6 +13,7 @@
     "dashboard-assembly-analytics",
     "dashboard-controlled-actions",
     "dashboard-control-plane-unification",
-    "dashboard-visual-polish"
+    "dashboard-visual-polish",
+    "dashboard-overview-semantic-cleanup"
   ]
 }

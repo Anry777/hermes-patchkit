@@ -291,6 +291,25 @@ Careful mutation layer after read-only UI is proven.
 
 Почему после `211`: только после унификации semantic model можно полировать внешний вид, не маскируя конфликтующие источники правды.
 
+### `213-dashboard-overview-semantic-cleanup`
+
+Semantic cleanup после `212`. Этот patch меняет язык Overview и форму contract там, где после `211`/`212` assembly-level данные всё ещё выглядели как страница default profile.
+
+Реализованный состав:
+
+- `/api/dashboard/overview` теперь явно отдаёт `scope: assembly` и `selected_profile` context;
+- backend response добавляет structured `attention_items[]` с source, severity, reason, message, action, target kind/id и route;
+- backend response добавляет `runtime_health[]` для service/API components вроде `provider-proxy`, используя API/process evidence where available вместо session recency;
+- platform rows сохраняют backward-compatible counters, но получают actionable attention metadata;
+- Overview copy теперь product-facing (`Hermes control plane...`) и разделяет assembly rollup от selected profile context;
+- Sidebar status использует action-required semantics вместо ambiguous attention wording;
+- английский number formatting стабилизирован через `en-US`;
+- safety boundary остаётся metadata-only: без session IDs, message bodies, prompts, tool args/results, env, auth, memory, logs или secrets.
+
+Статус: exported как PatchKit unit `213-dashboard-overview-semantic-cleanup`; runtime commit `044c33c68`, depends on `200`–`212`. Validation: RED source-contract/API tests сначала падали, затем focused dashboard suite returned `148 passed`; targeted PTY websocket retry passed после unrelated xdist timing flake; `npm run build`; focused ESLint for `OverviewPage.tsx`, `api.ts`, `SidebarStatusStrip.tsx`; `py_compile`; `git diff --check`; live smoke на `127.0.0.1:9119/overview?smoke=213` подтвердил root `200`, unauthenticated overview `401`, authenticated overview `scope=assembly`, selected profile context, provider_proxy runtime health, structured action-required items и отсутствие browser console errors.
+
+Почему после `212`: visual pass сделал ambiguity заметнее. Этот patch закрывает оставшийся semantic mismatch перед добавлением новых dashboard widgets.
+
 ## Acceptance criteria for first milestone
 
 Минимально полезный UI milestone — patches `200`–`203`:
