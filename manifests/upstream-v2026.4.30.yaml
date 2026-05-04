@@ -741,6 +741,53 @@
       "refreshed_for": "v2026.4.30"
     },
     {
+      "id": "dashboard-system-overview-semantics",
+      "file": "patches/v2026.4.30/215-dashboard-system-overview-semantics.patch",
+      "title_en": "Dashboard system overview semantics",
+      "title_ru": "Общесистемная semantics Overview для dashboard",
+      "description_en": "Makes Overview a system-wide runtime summary instead of a selected-profile page, adds safe memory/provider inventory, and probes Hindsight bank counts as metadata without exposing memory contents.",
+      "description_ru": "Делает Overview общесистемной runtime-сводкой вместо страницы selected profile, добавляет безопасный inventory memory/provider и запрашивает счётчики Hindsight bank как metadata без раскрытия содержимого памяти.",
+      "category": "dashboard",
+      "track": "upstream-candidate",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "dashboard-profile-api",
+        "dashboard-profile-selector",
+        "dashboard-profile-aware-pty",
+        "dashboard-terminal-workspace",
+        "dashboard-runtime-registry",
+        "dashboard-worker-roster",
+        "dashboard-terminal-profile-lifecycle",
+        "dashboard-session-log-inspector",
+        "dashboard-terminal-workspace-tabs",
+        "dashboard-assembly-analytics",
+        "dashboard-controlled-actions",
+        "dashboard-control-plane-unification",
+        "dashboard-visual-polish",
+        "dashboard-overview-semantic-cleanup",
+        "dashboard-messaging-adapters-semantics"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_web_server_dashboard_overview.py",
+          "tests/hermes_cli/test_web_server.py",
+          "tests/hermes_cli/test_dashboard_profile_selector_frontend.py"
+        ],
+        "frontend": [
+          "npm run build",
+          "npx eslint src/pages/OverviewPage.tsx src/lib/api.ts src/components/SidebarStatusStrip.tsx"
+        ],
+        "live_smoke": "Live dashboard smoke after restarting hermes-dashboard.service on http://10.50.50.28:9119/overview?smoke=215-async: service active with NRestarts=0, root returned 200, authenticated /api/dashboard/overview returned system_summary and memory rows/providers/external_banks, Hindsight bank infra returned record_count=3620 with usage_state=tracked/source=hindsight_api, browser rendered System overview / Profiles / Memory inventory without selected-profile hero copy, and browser console had no errors."
+      },
+      "exported_from": "1e17b8776",
+      "base_runtime": "fa9cef2cb",
+      "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
+      "refreshed_for": "v2026.4.30"
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/v2026.4.30/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",

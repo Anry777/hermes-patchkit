@@ -327,6 +327,24 @@ Status: exported as PatchKit unit `214-dashboard-messaging-adapters-semantics`; 
 
 Why after `213`: `213` created structured action items; `214` fixes the remaining adapter vocabulary so stale-but-connected messaging adapters are not shown as urgent problems.
 
+### `215-dashboard-system-overview-semantics`
+
+Follow-up semantic slice after `214`. This patch fixes the Overview page model itself: it is a system overview, not a selected-profile page.
+
+Implemented scope:
+
+- `/api/dashboard/overview` adds `system_summary` for top-level profile, session, runtime, messaging-adapter, and memory counts;
+- backend adds safe `memory` inventory across profiles and external banks: enabled/user-profile flags, provider, external provider, storage type, local profile counts, live Hindsight bank counts, byte usage, and usage state without reading or returning memory contents;
+- profile rows get compact memory metadata so the Profiles table is a whole-system inventory;
+- `selected_profile` remains as a backward-compatible field, but Overview UI no longer promotes it in the hero/cards;
+- Overview hero/copy says `System overview`, top cards are system-wide, and `Profile health` is renamed to `Profiles`;
+- sidebar status shows the whole-system session count instead of a current-profile/total split;
+- safety boundary remains metadata-only: no memory contents, session IDs, message bodies, prompts, tool args/results, env, auth, logs, or secrets.
+
+Status: exported as PatchKit unit `215-dashboard-system-overview-semantics`; runtime commit `1e17b8776`, depends on `200`–`214`. Validation: RED source-contract/API tests first failed for missing `system_summary`/`memory`, then the focused dashboard suite passed; `npm run build`; focused ESLint for `OverviewPage.tsx`, `api.ts`, and `SidebarStatusStrip.tsx`; `py_compile`; `git diff --check`; live smoke on `10.50.50.28:9119/overview?smoke=215-async` confirmed the system-wide Overview, `external_banks`/Hindsight live count (`infra`, 3620 records, `source=hindsight_api`), and no browser console errors.
+
+Why after `214`: once adapter semantics were cleaned up, the remaining mismatch was that Overview still modeled itself around the selected profile. `215` restores it as the control-plane system summary.
+
 ## Acceptance criteria for the first milestone
 
 The minimally useful UI milestone is patches `200`–`203`:

@@ -15,6 +15,7 @@
     "dashboard-control-plane-unification",
     "dashboard-visual-polish",
     "dashboard-overview-semantic-cleanup",
-    "dashboard-messaging-adapters-semantics"
+    "dashboard-messaging-adapters-semantics",
+    "dashboard-system-overview-semantics"
   ]
 }

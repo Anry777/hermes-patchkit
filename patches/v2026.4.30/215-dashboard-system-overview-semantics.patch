@@ -1,0 +1,1114 @@
+From 1e17b877611f9637ded78c80cb0ff542a007c7e3 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Mon, 4 May 2026 22:47:37 +0300
+Subject: [PATCH] feat: make dashboard overview system-wide
+
+---
+ hermes_cli/web_server.py                      | 478 +++++++++++++++++-
+ ...est_dashboard_profile_selector_frontend.py |  29 +-
+ .../test_web_server_dashboard_overview.py     | 106 +++-
+ web/src/components/SidebarStatusStrip.tsx     |   2 +-
+ web/src/lib/api.ts                            | 104 +++-
+ web/src/pages/OverviewPage.tsx                | 116 ++++-
+ 6 files changed, 800 insertions(+), 35 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index a45d0ae22..044dbe8f5 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -987,6 +987,419 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+     return rows
+ 
+ 
++def _read_dashboard_profile_config(profile_dir: Path) -> Dict[str, Any]:
++    """Read profile config.yaml for safe dashboard metadata."""
++    config_path = profile_dir / "config.yaml"
++    if not config_path.exists():
++        return {}
++    try:
++        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
++    except Exception:
++        _log.exception("Failed to read dashboard profile config for %s", profile_dir)
++        return {}
++    return raw if isinstance(raw, dict) else {}
++
++
++def _safe_dashboard_file_stat(path: Path) -> tuple[int, int, int]:
++    """Return (size_bytes, char_count, entry_count) without exposing contents."""
++    if not path.exists() or not path.is_file():
++        return 0, 0, 0
++    try:
++        text = path.read_text(encoding="utf-8", errors="replace")
++        size_bytes = path.stat().st_size
++    except OSError:
++        return 0, 0, 0
++    stripped = text.strip()
++    if not stripped:
++        return size_bytes, 0, 0
++    entries = [item for item in text.split("\n§\n") if item.strip()]
++    return size_bytes, len(text), len(entries)
++
++
++def _memory_bucket_usage(path: Path, limit: int) -> Dict[str, Any]:
++    size_bytes, chars, entries = _safe_dashboard_file_stat(path)
++    usage_percent = None
++    if limit > 0:
++        usage_percent = min(100.0, round((chars / limit) * 100, 2))
++    return {
++        "entries": entries,
++        "chars": chars,
++        "limit": limit,
++        "usage_percent": usage_percent,
++        "size_bytes": size_bytes,
++        "exists": path.exists(),
++    }
++
++
++def _safe_dashboard_directory_size(root: Path, *, excluded_names: Optional[set[str]] = None) -> int:
++    """Best-effort byte count for local provider storage, excluding config/secret files."""
++    if not root.exists() or not root.is_dir():
++        return 0
++    excluded = excluded_names or set()
++    total = 0
++    try:
++        paths = list(root.rglob("*"))
++    except OSError:
++        return 0
++    for path in paths:
++        if not path.is_file() or path.name in excluded:
++            continue
++        try:
++            total += path.stat().st_size
++        except OSError:
++            continue
++    return total
++
++
++def _read_dashboard_hindsight_config(profile_dir: Path) -> Dict[str, Any]:
++    config_path = profile_dir / "hindsight" / "config.json"
++    if not config_path.exists():
++        return {}
++    try:
++        raw = json.loads(config_path.read_text(encoding="utf-8"))
++    except Exception:
++        return {}
++    return raw if isinstance(raw, dict) else {}
++
++
++def _hindsight_budget(config: Dict[str, Any]) -> Optional[str]:
++    banks = config.get("banks")
++    if isinstance(banks, dict):
++        for bank in banks.values():
++            if not isinstance(bank, dict):
++                continue
++            if bank.get("enabled", True) is False:
++                continue
++            budget = bank.get("budget")
++            if budget:
++                return str(budget)
++    budget = config.get("recall_budget") or config.get("budget")
++    return str(budget) if budget else None
++
++
++def _hindsight_bank_id(config: Dict[str, Any]) -> str:
++    bank_id = config.get("bank_id") or config.get("bankId")
++    if bank_id:
++        return str(bank_id)
++    banks = config.get("banks")
++    if isinstance(banks, dict):
++        for bank in banks.values():
++            if not isinstance(bank, dict):
++                continue
++            if bank.get("enabled", True) is False:
++                continue
++            bank_id = bank.get("bankId") or bank.get("bank_id")
++            if bank_id:
++                return str(bank_id)
++    return "hermes"
++
++
++def _hindsight_api_url(config: Dict[str, Any]) -> str:
++    return str(config.get("api_url") or config.get("apiUrl") or "https://api.hindsight.vectorize.io")
++
++
++def _safe_dashboard_endpoint_label(url: str) -> str:
++    try:
++        parsed = urllib.parse.urlparse(url)
++    except Exception:
++        return "configured endpoint"
++    return parsed.netloc or parsed.path or "configured endpoint"
++
++
++def _probe_dashboard_hindsight_memory_stats(api_url: str, bank_id: str, timeout: float = 2.0) -> Dict[str, Any]:
++    """Return safe Hindsight bank metadata without exposing memory contents."""
++    try:
++        from hindsight_client import Hindsight  # type: ignore
++    except Exception as exc:
++        return {
++            "record_count": None,
++            "usage_state": "unknown",
++            "source": "hindsight_client",
++            "error": f"hindsight client unavailable: {type(exc).__name__}",
++        }
++
++    client = None
++    try:
++        client = Hindsight(base_url=api_url, timeout=float(timeout))
++        response = client.list_memories(bank_id=bank_id, limit=1, offset=0)
++        total = getattr(response, "total", None)
++        if isinstance(total, int):
++            return {
++                "record_count": total,
++                "usage_state": "tracked",
++                "source": "hindsight_api",
++            }
++        return {
++            "record_count": None,
++            "usage_state": "unknown",
++            "source": "hindsight_api",
++            "error": "hindsight response did not include total",
++        }
++    except Exception as exc:
++        return {
++            "record_count": None,
++            "usage_state": "unknown",
++            "source": "hindsight_api",
++            "error": f"hindsight stats unavailable: {type(exc).__name__}",
++        }
++    finally:
++        if client is not None:
++            try:
++                client.close()
++            except Exception:
++                pass
++
++
++def _dashboard_external_memory_summary(
++    profile_dir: Path,
++    provider: Optional[str],
++    external_cache: Optional[Dict[Tuple[str, str, str], Dict[str, Any]]] = None,
++) -> Optional[Dict[str, Any]]:
++    if not provider:
++        return None
++    provider_name = str(provider)
++    if provider_name == "hindsight":
++        cfg = _read_dashboard_hindsight_config(profile_dir)
++        mode = str(cfg.get("mode") or "cloud")
++        api_url = _hindsight_api_url(cfg)
++        bank_id = _hindsight_bank_id(cfg)
++        storage_type = "cloud" if mode == "cloud" else "external_api"
++        endpoint_label = _safe_dashboard_endpoint_label(api_url)
++        local_bytes = 0
++        cache_key = (provider_name, api_url, bank_id)
++        if mode == "cloud" and not (cfg.get("apiKey") or cfg.get("api_key") or os.getenv("HINDSIGHT_API_KEY")):
++            stats = {
++                "record_count": None,
++                "usage_state": "unknown",
++                "source": "hindsight_api",
++                "error": "hindsight cloud api key unavailable",
++            }
++        elif external_cache is not None and cache_key in external_cache:
++            stats = external_cache[cache_key]
++        else:
++            timeout = float(cfg.get("timeout") or 2.0)
++            stats = _probe_dashboard_hindsight_memory_stats(api_url, bank_id, timeout=min(timeout, 2.0))
++            if external_cache is not None:
++                external_cache[cache_key] = stats
++
++        if mode in {"local", "local_embedded"}:
++            local_bytes = _safe_dashboard_directory_size(
++                profile_dir / "hindsight",
++                excluded_names={"config.json", ".env"},
++            )
++        record_count = stats.get("record_count") if isinstance(stats, dict) else None
++        if isinstance(record_count, int):
++            usage_state = "tracked"
++        elif local_bytes:
++            usage_state = "tracked"
++        else:
++            usage_state = str((stats or {}).get("usage_state") or "unknown")
++        return {
++            "provider": provider_name,
++            "mode": mode,
++            "storage_type": storage_type,
++            "bank_id": bank_id,
++            "endpoint": endpoint_label,
++            "source_key": f"{provider_name}|{endpoint_label}|{bank_id}",
++            "budget": _hindsight_budget(cfg),
++            "storage_bytes": local_bytes,
++            "record_count": record_count if isinstance(record_count, int) else None,
++            "usage_percent": None,
++            "usage_state": usage_state,
++            "source": (stats or {}).get("source"),
++            "error": (stats or {}).get("error"),
++        }
++    provider_dir = profile_dir / provider_name
++    local_bytes = _safe_dashboard_directory_size(
++        provider_dir,
++        excluded_names={"config.json", ".env"},
++    )
++    return {
++        "provider": provider_name,
++        "mode": "unknown",
++        "storage_type": "local" if local_bytes else "unknown",
++        "budget": None,
++        "storage_bytes": local_bytes,
++        "record_count": None,
++        "usage_percent": None,
++        "usage_state": "tracked" if local_bytes else "unknown",
++    }
++
++
++def _dashboard_profile_memory_summary(
++    profile: str,
++    profile_dir: Path,
++    external_cache: Optional[Dict[Tuple[str, str, str], Dict[str, Any]]] = None,
++) -> Dict[str, Any]:
++    config = _read_dashboard_profile_config(profile_dir)
++    mem_cfg = config.get("memory") if isinstance(config.get("memory"), dict) else {}
++    if not isinstance(mem_cfg, dict):
++        mem_cfg = {}
++    enabled = bool(mem_cfg.get("memory_enabled", DEFAULT_CONFIG["memory"].get("memory_enabled", True)))
++    user_profile_enabled = bool(mem_cfg.get(
++        "user_profile_enabled",
++        DEFAULT_CONFIG["memory"].get("user_profile_enabled", True),
++    ))
++    external_provider_raw = mem_cfg.get("provider", DEFAULT_CONFIG["memory"].get("provider", ""))
++    external_provider = str(external_provider_raw).strip() or None
++    provider = external_provider or "builtin"
++    memory_limit = int(mem_cfg.get("memory_char_limit", DEFAULT_CONFIG["memory"].get("memory_char_limit", 2200)) or 0)
++    user_limit = int(mem_cfg.get("user_char_limit", DEFAULT_CONFIG["memory"].get("user_char_limit", 1375)) or 0)
++
++    memories_dir = profile_dir / "memories"
++    memory_bucket = _memory_bucket_usage(memories_dir / "MEMORY.md", memory_limit)
++    user_bucket = _memory_bucket_usage(memories_dir / "USER.md", user_limit)
++    builtin_storage_bytes = int(memory_bucket["size_bytes"] or 0) + int(user_bucket["size_bytes"] or 0)
++    builtin_record_count = int(memory_bucket["entries"] or 0) + int(user_bucket["entries"] or 0)
++    external = _dashboard_external_memory_summary(profile_dir, external_provider, external_cache)
++    external_storage_bytes = int((external or {}).get("storage_bytes") or 0)
++    external_record_count = (external or {}).get("record_count")
++
++    usage_state = "disabled" if not enabled else "tracked"
++    if enabled and external_provider and (external or {}).get("usage_state") == "unknown":
++        usage_state = "partial" if builtin_record_count or builtin_storage_bytes else "unknown"
++
++    return {
++        "profile": profile,
++        "enabled": enabled,
++        "user_profile_enabled": user_profile_enabled,
++        "provider": provider,
++        "external_provider": external_provider,
++        "builtin_provider": "builtin",
++        "local_record_count": builtin_record_count,
++        "builtin": {
++            "provider": "builtin",
++            "storage_type": "local_files",
++            "storage_bytes": builtin_storage_bytes,
++            "record_count": builtin_record_count,
++            "memory": memory_bucket,
++            "user": user_bucket,
++            "usage_state": "tracked" if builtin_storage_bytes or builtin_record_count else "empty",
++        },
++        "external": external,
++        "storage_bytes": builtin_storage_bytes + external_storage_bytes,
++        "known_record_count": builtin_record_count + (int(external_record_count) if isinstance(external_record_count, int) else 0),
++        "usage_percent": None,
++        "usage_state": usage_state,
++    }
++
++
++def _dashboard_memory_overview(memory_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
++    providers: Dict[str, Dict[str, Any]] = {}
++    external_banks_by_key: Dict[str, Dict[str, Any]] = {}
++    provider_seen_sources: Dict[str, set[str]] = {}
++    enabled_rows = [row for row in memory_rows if row.get("enabled")]
++    builtin_storage_bytes = 0
++    builtin_record_count = 0
++
++    for row in enabled_rows:
++        builtin_bucket = providers.setdefault("builtin", {
++            "provider": "builtin",
++            "profiles": 0,
++            "storage_bytes": 0,
++            "known_record_count": 0,
++            "usage_state": "tracked",
++        })
++        builtin_bucket["profiles"] += 1
++        source = row.get("builtin") or {}
++        local_bytes = int(source.get("storage_bytes") or 0)
++        local_records = int(source.get("record_count") or 0)
++        builtin_storage_bytes += local_bytes
++        builtin_record_count += local_records
++        builtin_bucket["storage_bytes"] += local_bytes
++        builtin_bucket["known_record_count"] += local_records
++
++        provider_name = row.get("external_provider")
++        external = row.get("external") or {}
++        if not provider_name or not isinstance(external, dict):
++            continue
++        name = str(provider_name)
++        bucket = providers.setdefault(name, {
++            "provider": name,
++            "profiles": 0,
++            "storage_bytes": 0,
++            "known_record_count": 0,
++            "usage_state": "tracked",
++        })
++        bucket["profiles"] += 1
++        source_key = str(
++            external.get("source_key")
++            or f"{name}|{external.get('endpoint') or ''}|{external.get('bank_id') or row.get('profile') or ''}"
++        )
++        if source_key not in external_banks_by_key:
++            external_banks_by_key[source_key] = {
++                "provider": name,
++                "mode": external.get("mode"),
++                "bank_id": external.get("bank_id"),
++                "endpoint": external.get("endpoint"),
++                "budget": external.get("budget"),
++                "storage_type": external.get("storage_type"),
++                "storage_bytes": int(external.get("storage_bytes") or 0),
++                "record_count": external.get("record_count") if isinstance(external.get("record_count"), int) else None,
++                "usage_percent": external.get("usage_percent"),
++                "usage_state": external.get("usage_state") or "unknown",
++                "profiles": [],
++                "source": external.get("source"),
++                "error": external.get("error"),
++            }
++        bank = external_banks_by_key[source_key]
++        profile = str(row.get("profile") or "")
++        if profile and profile not in bank["profiles"]:
++            bank["profiles"].append(profile)
++
++        seen = provider_seen_sources.setdefault(name, set())
++        if source_key not in seen:
++            seen.add(source_key)
++            bucket["storage_bytes"] += int(external.get("storage_bytes") or 0)
++            record_count = external.get("record_count")
++            if isinstance(record_count, int):
++                bucket["known_record_count"] += record_count
++            if external.get("usage_state") == "unknown":
++                bucket["usage_state"] = "unknown"
++
++    external_banks = sorted(
++        external_banks_by_key.values(),
++        key=lambda item: (
++            str(item.get("provider") or ""),
++            str(item.get("endpoint") or ""),
++            str(item.get("bank_id") or ""),
++        ),
++    )
++    for bank in external_banks:
++        bank["profiles"] = sorted(bank.get("profiles") or [])
++        bank["profile_count"] = len(bank["profiles"])
++
++    external_storage_bytes = sum(int(bank.get("storage_bytes") or 0) for bank in external_banks)
++    external_record_count = sum(
++        int(bank.get("record_count") or 0)
++        for bank in external_banks
++        if isinstance(bank.get("record_count"), int)
++    )
++    storage_bytes = builtin_storage_bytes + external_storage_bytes
++    known_record_count = builtin_record_count + external_record_count
++    if not enabled_rows:
++        usage_state = "disabled"
++    elif any(bank.get("usage_state") == "unknown" for bank in external_banks):
++        usage_state = "partial" if known_record_count or storage_bytes else "unknown"
++    else:
++        usage_state = "tracked"
++
++    return {
++        "enabled_profiles": len(enabled_rows),
++        "disabled_profiles": len(memory_rows) - len(enabled_rows),
++        "user_profile_enabled_profiles": sum(1 for row in memory_rows if row.get("user_profile_enabled")),
++        "providers": sorted(providers.values(), key=lambda item: str(item.get("provider") or "")),
++        "external_banks": external_banks,
++        "rows": memory_rows,
++        "storage_bytes": storage_bytes,
++        "known_record_count": known_record_count,
++        "local_record_count": builtin_record_count,
++        "external_record_count": external_record_count,
++        "usage_percent": None,
++        "usage_state": usage_state,
++    }
++
++
+ def _dashboard_provider_proxy_evidence(profile: str) -> Dict[str, Any]:
+     """Return best-effort service/API evidence for a provider-proxy profile.
+ 
+@@ -1121,9 +1534,47 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+     now = time.time()
+     analytics = _serialize_dashboard_assembly_analytics(days=30)
+     runtime_registry = _serialize_dashboard_runtime_registry()
++    from hermes_cli.profiles import get_profile_dir
++
+     active_profile = str(analytics.get("active_profile") or "default")
+     profile_rows = list(analytics.get("profiles") or [])
+     totals = dict(analytics.get("totals") or {})
++    memory_rows_by_profile: Dict[str, Dict[str, Any]] = {}
++    memory_external_cache: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
++    for profile_row in profile_rows:
++        profile_name = str(profile_row.get("profile") or "")
++        if not profile_name:
++            continue
++        try:
++            memory_rows_by_profile[profile_name] = _dashboard_profile_memory_summary(
++                profile_name,
++                get_profile_dir(profile_name),
++                memory_external_cache,
++            )
++        except Exception:
++            _log.exception("Failed to summarize dashboard memory for profile %s", profile_name)
++            memory_rows_by_profile[profile_name] = {
++                "profile": profile_name,
++                "enabled": False,
++                "user_profile_enabled": False,
++                "provider": "unknown",
++                "external_provider": None,
++                "builtin_provider": "builtin",
++                "builtin": None,
++                "external": None,
++                "storage_bytes": 0,
++                "known_record_count": 0,
++                "usage_percent": None,
++                "usage_state": "unknown",
++                "error": "memory metadata unavailable",
++            }
++    for profile_row in profile_rows:
++        profile_name = str(profile_row.get("profile") or "")
++        if profile_name in memory_rows_by_profile:
++            profile_row["memory"] = memory_rows_by_profile[profile_name]
++    memory_overview = _dashboard_memory_overview(
++        [memory_rows_by_profile[name] for name in sorted(memory_rows_by_profile)]
++    )
+     current_profile_row = next(
+         (row for row in profile_rows if str(row.get("profile")) == active_profile),
+         {},
+@@ -1158,6 +1609,19 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         "active_terminals": terminals_by_profile.get(active_profile, 0),
+         "route": f"/profiles?profile={urllib.parse.quote(active_profile)}",
+     }
++    system_summary = {
++        "title": "System overview",
++        "scope": "assembly",
++        "profiles": int(totals.get("profiles") or len(profile_rows)),
++        "recent_profiles": int(totals.get("active_profiles") or 0),
++        "sessions": int(totals.get("total_sessions") or 0),
++        "recently_active_db_records": int(totals.get("active_sessions") or 0),
++        "active_terminals": len(pty_sessions),
++        "messaging_adapters": len(adapter_rows),
++        "action_required": len(attention_items),
++        "memory_enabled_profiles": int(memory_overview.get("enabled_profiles") or 0),
++        "memory_providers": [str(item.get("provider")) for item in memory_overview.get("providers") or []],
++    }
+ 
+     return {
+         "generated_at": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+@@ -1166,6 +1630,7 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         "scope": "assembly",
+         "active_profile": active_profile,
+         "selected_profile": selected_profile,
++        "system_summary": system_summary,
+         "model": {
+             "provider": current_profile_row.get("provider"),
+             "name": current_profile_row.get("model"),
+@@ -1178,10 +1643,9 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         },
+         "sessions": {
+             "total": int(totals.get("total_sessions") or 0),
+-            "current_profile_total": int(current_profile_row.get("sessions") or 0),
+             "recently_active_db_records": int(totals.get("active_sessions") or 0),
+-            "current_profile_recently_active_db_records": int(current_profile_row.get("active_sessions") or 0),
+         },
++        "memory": memory_overview,
+         "terminals": {
+             "active": len(pty_sessions),
+             "by_profile": terminals_by_profile,
+@@ -1216,13 +1680,13 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         "runtime_health": runtime_health,
+         "attention_items": attention_items,
+         "semantics": {
+-            "scope": "assembly-wide dashboard summary with selected profile context",
+-            "selected_profile": "profile context currently selected for drilldowns",
+-            "historical_sessions": "session DB records across profiles",
+-            "recently_active_db_records": "unended session DB records active in the last five minutes",
++            "scope": "assembly-wide system summary",
++            "historical_sessions": "session DB records across all profiles",
++            "recently_active_db_records": "unended session DB records active in the last five minutes across all profiles",
+             "active_terminals": "live dashboard PTY channels",
+             "connected_platforms": "backward-compatible count of gateway messaging adapters reporting connected",
+             "messaging_adapters": "gateway adapter availability; stale event freshness is metadata, not action by itself",
++            "memory": "profile memory configuration, provider, and safe storage usage metadata without memory contents",
+             "action_required": "items with explicit reason, source, severity, message, and action",
+             "runtime_health": "service or API health evidence for dashboard-managed components",
+         },
+@@ -1233,7 +1697,7 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+ async def get_dashboard_overview():
+     """Return the unified dashboard control-plane overview."""
+     try:
+-        return _serialize_dashboard_overview()
++        return await asyncio.to_thread(_serialize_dashboard_overview)
+     except Exception:
+         _log.exception("GET /api/dashboard/overview failed")
+         raise HTTPException(status_code=500, detail="Internal server error")
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index 6205ddb3a..7ac2b1985 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -177,7 +177,8 @@ def test_dashboard_control_plane_unification_contract():
+     assert "ConnectedPlatforms" not in sessions
+     assert "getStatus()" not in sessions
+     assert "dashboard-control-plane-overview" in overview
+-    assert "Historical sessions" in overview
++    assert "System overview" in overview
++    assert "Sessions" in overview
+     assert "Active terminals" in overview
+     assert "Action required" in overview
+ 
+@@ -188,7 +189,14 @@ def test_overview_semantic_cleanup_contract():
+     sidebar = _read("components/SidebarStatusStrip.tsx")
+ 
+     assert "scope: \"assembly\" | \"profile\"" in api
+-    assert "selected_profile" in api
++    assert "selected_profile" in api  # backward-compatible API field only
++    assert "system_summary" in api
++    assert "DashboardOverviewMemory" in api
++    assert "DashboardOverviewExternalMemoryBank" in api
++    assert "external_banks" in api
++    assert "external_record_count" in api
++    assert "local_record_count" in api
++    assert "memory:" in api
+     assert "runtime_health" in api
+     assert "attention_items" in api
+     assert "messaging_adapters" in api
+@@ -196,9 +204,15 @@ def test_overview_semantic_cleanup_contract():
+     assert "event_freshness" in api
+     assert "action_required" in api
+     assert "new Intl.NumberFormat(\"en-US\"" in overview
+-    assert "Hermes control plane for profiles, terminals, messaging adapters, and runtime health." in overview
+-    assert "Assembly overview" in overview
+-    assert "Selected profile" in overview
++    assert "System overview" in overview
++    assert "Hermes runtime summary across profiles, memory, sessions, terminals, messaging adapters, and runtime health." in overview
++    assert "Memory" in overview
++    assert "Memory inventory" in overview
++    assert "external memories" in overview
++    assert "memoryRowDetail" in overview
++    assert "bank {bank.bank_id" in overview
++    assert "usage unknown" in overview
++    assert "Profiles" in overview
+     assert "Messaging adapters" in overview
+     assert "Adapter freshness" in overview
+     assert "Check freshness" in overview
+@@ -206,9 +220,14 @@ def test_overview_semantic_cleanup_contract():
+     assert "Gateway platforms" not in overview
+     assert "provider-proxy" in overview
+     assert "ACTION REQUIRED" in sidebar
++    assert "overview.sessions.total" in sidebar
++    assert "current_profile_total" not in sidebar
+     assert "attention_items.length" in sidebar
+     assert "Polished operator overview" not in overview
+     assert "profile overview" not in overview
++    assert "Profile health" not in overview
++    assert "Selected profile" not in overview
++    assert "selected profile" not in overview
+     assert "Needs attention" not in overview
+     assert "NEEDS CHECK" not in sidebar
+ 
+diff --git a/tests/hermes_cli/test_web_server_dashboard_overview.py b/tests/hermes_cli/test_web_server_dashboard_overview.py
+index 91bf7a3fc..b96b11345 100644
+--- a/tests/hermes_cli/test_web_server_dashboard_overview.py
++++ b/tests/hermes_cli/test_web_server_dashboard_overview.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import asyncio
+ import time
+ from pathlib import Path
+ 
+@@ -50,13 +51,42 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     monkeypatch.setenv("HERMES_HOME", str(home))
+     monkeypatch.setenv("HERMES_ACTIVE_PROFILE", "default")
+ 
++    (home / "config.yaml").write_text(
++        "model:\n  provider: openai-codex\n  default: gpt-5.5\n"
++        "memory:\n  memory_enabled: true\n  user_profile_enabled: true\n"
++        "  provider: hindsight\n  memory_char_limit: 2200\n  user_char_limit: 1375\n",
++        encoding="utf-8",
++    )
++    memory_dir = home / "memories"
++    memory_dir.mkdir()
++    (memory_dir / "MEMORY.md").write_text("ops convention\n§\nruntime note", encoding="utf-8")
++    (memory_dir / "USER.md").write_text("user preference", encoding="utf-8")
++    hindsight_dir = home / "hindsight"
++    hindsight_dir.mkdir()
++    (hindsight_dir / "config.json").write_text(
++        '{"mode":"local_external","api_url":"http://127.0.0.1:8888","bank_id":"infra","recall_budget":"mid"}',
++        encoding="utf-8",
++    )
++
+     profile_dir = home / "profiles" / "ops"
+     profile_dir.mkdir(parents=True)
+-    (profile_dir / "config.yaml").write_text("model:\n  provider: openai-codex\n  default: gpt-5.5\n", encoding="utf-8")
++    (profile_dir / "config.yaml").write_text(
++        "model:\n  provider: openai-codex\n  default: gpt-5.5\n"
++        "memory:\n  memory_enabled: false\n  user_profile_enabled: false\n  provider: ''\n",
++        encoding="utf-8",
++    )
+     provider_proxy_dir = home / "profiles" / "provider-proxy"
+     provider_proxy_dir.mkdir(parents=True)
+     (provider_proxy_dir / "config.yaml").write_text(
+-        "model:\n  provider: openai-codex\n  default: gpt-5.4\n",
++        "model:\n  provider: openai-codex\n  default: gpt-5.4\n"
++        "memory:\n  memory_enabled: true\n  user_profile_enabled: true\n"
++        "  provider: hindsight\n",
++        encoding="utf-8",
++    )
++    provider_proxy_hindsight = provider_proxy_dir / "hindsight"
++    provider_proxy_hindsight.mkdir()
++    (provider_proxy_hindsight / "config.json").write_text(
++        '{"mode":"local_external","api_url":"http://127.0.0.1:8888","bank_id":"infra","recall_budget":"mid"}',
+         encoding="utf-8",
+     )
+ 
+@@ -79,6 +109,13 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+         "source": "test probe",
+         "message": "provider_proxy API is reachable",
+     })
++    hindsight_probes = []
++
++    def fake_hindsight_stats(api_url: str, bank_id: str, timeout: float = 2.0):
++        hindsight_probes.append((api_url, bank_id, timeout))
++        return {"record_count": 3553, "usage_state": "tracked", "source": "hindsight_api"}
++
++    monkeypatch.setattr(ws, "_probe_dashboard_hindsight_memory_stats", fake_hindsight_stats)
+ 
+     with ws._PTY_SESSIONS_LOCK:
+         ws._PTY_SESSIONS.clear()
+@@ -96,14 +133,52 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     assert resp.status_code == 200
+     data = resp.json()
+     assert data["scope"] == "assembly"
+-    assert data["selected_profile"]["name"] == "default"
+-    assert data["semantics"]["historical_sessions"] == "session DB records across profiles"
+-    assert data["semantics"]["active_terminals"] == "live dashboard PTY channels"
+-    assert data["semantics"]["selected_profile"] == "profile context currently selected for drilldowns"
++    assert data["system_summary"]["title"] == "System overview"
++    assert data["system_summary"]["scope"] == "assembly"
++    assert data["semantics"]["scope"] == "assembly-wide system summary"
++    assert "selected profile" not in data["semantics"]["scope"].lower()
++    assert data["semantics"]["memory"] == "profile memory configuration, provider, and safe storage usage metadata without memory contents"
+     assert data["profiles"]["total"] >= 3
+     assert data["sessions"]["total"] >= 2
+-    assert data["sessions"]["current_profile_total"] >= 1
++    assert "current_profile_total" not in data["sessions"]
+     assert data["terminals"]["active"] == 1
++    assert data["memory"]["enabled_profiles"] == 2
++    assert data["memory"]["disabled_profiles"] >= 1
++    assert data["memory"]["user_profile_enabled_profiles"] == 2
++    assert data["memory"]["storage_bytes"] > 0
++    assert data["memory"]["local_record_count"] == 3
++    assert data["memory"]["external_record_count"] == 3553
++    assert data["memory"]["known_record_count"] == 3556
++    assert data["memory"]["usage_state"] == "tracked"
++    assert hindsight_probes == [("http://127.0.0.1:8888", "infra", 2.0)]
++    assert {provider["provider"] for provider in data["memory"]["providers"]} >= {"hindsight", "builtin"}
++    hindsight_provider = next(provider for provider in data["memory"]["providers"] if provider["provider"] == "hindsight")
++    assert hindsight_provider["profiles"] == 2
++    assert hindsight_provider["known_record_count"] == 3553
++    assert len(data["memory"]["external_banks"]) == 1
++    external_bank = data["memory"]["external_banks"][0]
++    assert external_bank["provider"] == "hindsight"
++    assert external_bank["bank_id"] == "infra"
++    assert external_bank["endpoint"] == "127.0.0.1:8888"
++    assert external_bank["record_count"] == 3553
++    assert external_bank["profile_count"] == 2
++    assert external_bank["profiles"] == ["default", "provider-proxy"]
++    default_memory = next(row for row in data["memory"]["rows"] if row["profile"] == "default")
++    assert default_memory["enabled"] is True
++    assert default_memory["provider"] == "hindsight"
++    assert default_memory["external_provider"] == "hindsight"
++    assert default_memory["builtin"]["memory"]["entries"] == 2
++    assert default_memory["builtin"]["user"]["entries"] == 1
++    assert default_memory["external"]["mode"] == "local_external"
++    assert default_memory["external"]["bank_id"] == "infra"
++    assert default_memory["external"]["record_count"] == 3553
++    assert default_memory["external"]["usage_percent"] is None
++    assert default_memory["external"]["usage_state"] == "tracked"
++    ops_memory = next(row for row in data["memory"]["rows"] if row["profile"] == "ops")
++    assert ops_memory["enabled"] is False
++    assert ops_memory["provider"] == "builtin"
++    default_profile = next(row for row in data["profiles"]["rows"] if row["profile"] == "default")
++    assert default_profile["memory"]["provider"] == "hindsight"
+     assert data["gateway"]["running"] is True
+     assert data["gateway"]["platforms"]["connected"] == 2
+     assert data["gateway"]["platforms"]["stale"] == 2
+@@ -151,6 +226,23 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     assert "message bodies" not in payload
+ 
+ 
++def test_dashboard_overview_runs_sync_serializer_off_event_loop(monkeypatch):
++    import hermes_cli.web_server as ws
++
++    def fake_serializer():
++        with pytest.raises(RuntimeError):
++            asyncio.get_running_loop()
++        return {"ok": True}
++
++    monkeypatch.setattr(ws, "_serialize_dashboard_overview", fake_serializer)
++
++    client = _client_with_dashboard_token()
++    resp = client.get("/api/dashboard/overview")
++
++    assert resp.status_code == 200
++    assert resp.json() == {"ok": True}
++
++
+ def test_dashboard_overview_is_protected():
+     try:
+         from starlette.testclient import TestClient
+diff --git a/web/src/components/SidebarStatusStrip.tsx b/web/src/components/SidebarStatusStrip.tsx
+index 27a486a96..15cb6b587 100644
+--- a/web/src/components/SidebarStatusStrip.tsx
++++ b/web/src/components/SidebarStatusStrip.tsx
+@@ -46,7 +46,7 @@ export function SidebarStatusStrip() {
+           </span>
+           <span className="text-muted-foreground/40"> · SESSIONS </span>
+           <span className="tabular-nums text-muted-foreground/70">
+-            {overview.sessions.current_profile_total}/{overview.sessions.total}
++            {overview.sessions.total}
+           </span>
+         </p>
+       </div>
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index 876bc21ae..bd243bee3 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -379,6 +379,93 @@ export interface DashboardOverviewAttentionItem {
+   route?: string | null;
+ }
+ 
++export interface DashboardOverviewMemoryBucket {
++  entries: number;
++  chars: number;
++  limit: number;
++  usage_percent: number | null;
++  size_bytes: number;
++  exists: boolean;
++}
++
++export interface DashboardOverviewMemoryProviderSummary {
++  provider: string;
++  profiles: number;
++  storage_bytes: number;
++  known_record_count: number;
++  usage_state: string;
++}
++
++export interface DashboardOverviewExternalMemoryBank {
++  provider: string;
++  mode: string;
++  bank_id: string | null;
++  endpoint: string | null;
++  budget: string | null;
++  storage_type: string;
++  storage_bytes: number;
++  record_count: number | null;
++  usage_percent: number | null;
++  usage_state: string;
++  profiles: string[];
++  profile_count: number;
++  source?: string | null;
++  error?: string | null;
++}
++
++export interface DashboardOverviewMemoryRow {
++  profile: string;
++  enabled: boolean;
++  user_profile_enabled: boolean;
++  provider: string;
++  external_provider: string | null;
++  builtin_provider: string;
++  builtin: {
++    provider: string;
++    storage_type: string;
++    storage_bytes: number;
++    record_count: number;
++    memory: DashboardOverviewMemoryBucket;
++    user: DashboardOverviewMemoryBucket;
++    usage_state: string;
++  } | null;
++  external: {
++    provider: string;
++    mode: string;
++    storage_type: string;
++    bank_id?: string | null;
++    endpoint?: string | null;
++    budget: string | null;
++    storage_bytes: number;
++    record_count: number | null;
++    usage_percent: number | null;
++    usage_state: string;
++    source?: string | null;
++    error?: string | null;
++  } | null;
++  local_record_count?: number;
++  storage_bytes: number;
++  known_record_count: number;
++  usage_percent: number | null;
++  usage_state: string;
++  error?: string;
++}
++
++export interface DashboardOverviewMemory {
++  enabled_profiles: number;
++  disabled_profiles: number;
++  user_profile_enabled_profiles: number;
++  providers: DashboardOverviewMemoryProviderSummary[];
++  external_banks: DashboardOverviewExternalMemoryBank[];
++  rows: DashboardOverviewMemoryRow[];
++  storage_bytes: number;
++  known_record_count: number;
++  local_record_count?: number;
++  external_record_count?: number;
++  usage_percent: number | null;
++  usage_state: string;
++}
++
+ export interface DashboardOverviewResponse {
+   generated_at: string;
+   version: string;
+@@ -394,6 +481,19 @@ export interface DashboardOverviewResponse {
+     active_terminals: number;
+     route: string;
+   };
++  system_summary: {
++    title: string;
++    scope: string;
++    profiles: number;
++    recent_profiles: number;
++    sessions: number;
++    recently_active_db_records: number;
++    active_terminals: number;
++    messaging_adapters: number;
++    action_required: number;
++    memory_enabled_profiles: number;
++    memory_providers: string[];
++  };
+   model: {
+     provider: string | null;
+     name: string | null;
+@@ -406,10 +506,9 @@ export interface DashboardOverviewResponse {
+   };
+   sessions: {
+     total: number;
+-    current_profile_total: number;
+     recently_active_db_records: number;
+-    current_profile_recently_active_db_records: number;
+   };
++  memory: DashboardOverviewMemory;
+   terminals: {
+     active: number;
+     by_profile: Record<string, number>;
+@@ -725,6 +824,7 @@ export interface DashboardAssemblyProfileAnalytics {
+   tool_calls: number;
+   last_active: number | null;
+   stale: boolean;
++  memory?: DashboardOverviewMemoryRow;
+   error?: string;
+ }
+ 
+diff --git a/web/src/pages/OverviewPage.tsx b/web/src/pages/OverviewPage.tsx
+index 32b35bd54..7237b82a1 100644
+--- a/web/src/pages/OverviewPage.tsx
++++ b/web/src/pages/OverviewPage.tsx
+@@ -3,7 +3,6 @@ import {
+   AlertTriangle,
+   Activity,
+   Database,
+-  Radio,
+   RefreshCw,
+   Terminal,
+   Users,
+@@ -36,6 +35,32 @@ function healthTone(healthy: boolean, state: string): "success" | "warning" | "d
+   return "warning";
+ }
+ 
++function memoryUsageLabel(row: DashboardOverviewResponse["memory"]["rows"][number]): string {
++  if (!row.enabled) return "disabled";
++  if (typeof row.external?.record_count === "number") return "tracked";
++  if (typeof row.usage_percent === "number") return `${row.usage_percent}% used`;
++  if (row.usage_state === "unknown") return "usage unknown";
++  if (row.usage_state === "partial") return "partial usage";
++  return row.usage_state;
++}
++
++function memoryRowDetail(row: DashboardOverviewResponse["memory"]["rows"][number]): string {
++  const localRecords = row.local_record_count ?? row.builtin?.record_count ?? 0;
++  const external = row.external;
++  if (!external) return `${fmt(localRecords)} local records · local files`;
++  const bank = external.bank_id ? `bank ${external.bank_id}` : external.mode;
++  const externalCount = typeof external.record_count === "number"
++    ? `${fmt(external.record_count)} memories`
++    : "external count unavailable";
++  return `${fmt(localRecords)} local records · ${external.provider} ${bank} · ${externalCount}`;
++}
++
++function providerList(overview: DashboardOverviewResponse): string {
++  const providers = overview.memory.providers.map((provider) => provider.provider);
++  if (providers.length === 0) return "No memory providers enabled";
++  return providers.join(", ");
++}
++
+ export default function OverviewPage() {
+   const [overview, setOverview] = useState<DashboardOverviewResponse | null>(null);
+   const [loading, setLoading] = useState(true);
+@@ -69,7 +94,6 @@ export default function OverviewPage() {
+   }
+ 
+   const actionRequired = overview?.attention_items.length ?? 0;
+-  const selectedProfileName = overview?.selected_profile.name ?? overview?.active_profile ?? "default";
+ 
+   return (
+     <div className="flex flex-col gap-6 xl:gap-7" data-dashboard-control-plane-overview data-dashboard-visual-polish>
+@@ -78,16 +102,13 @@ export default function OverviewPage() {
+       <section className="dashboard-overview-hero flex flex-col gap-4 p-4 sm:p-5 xl:flex-row xl:items-end xl:justify-between">
+         <div className="max-w-3xl">
+           <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+-            Assembly overview
++            System overview
+           </p>
+           <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
+             Hermes control plane
+           </h2>
+           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground/85">
+-            Hermes control plane for profiles, terminals, messaging adapters, and runtime health.
+-          </p>
+-          <p className="mt-3 text-xs text-muted-foreground">
+-            Selected profile: <span className="font-medium text-foreground">{selectedProfileName}</span>
++            Hermes runtime summary across profiles, memory, sessions, terminals, messaging adapters, and runtime health.
+           </p>
+         </div>
+         <Button outlined size="sm" onClick={load} disabled={loading} className="self-start xl:self-auto">
+@@ -105,21 +126,18 @@ export default function OverviewPage() {
+       {overview && (
+         <>
+           <div className="dashboard-metric-grid grid md:grid-cols-2 xl:grid-cols-4">
+-            <MetricCard icon={Database} label="Historical sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.current_profile_total)} in selected profile`} />
++            <MetricCard icon={Database} label="Sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.recently_active_db_records)} recently active DB records`} />
+             <MetricCard icon={Terminal} label="Active terminals" value={fmt(overview.terminals.active)} detail="Live dashboard PTY channels" />
+             <MetricCard icon={Users} label="Profiles" value={`${overview.profiles.active}/${overview.profiles.total}`} detail={`${overview.profiles.stale} with no recent session activity`} />
+-            <MetricCard icon={Radio} label="Messaging adapters" value={`${overview.gateway.messaging_adapters.connected}/${overview.gateway.messaging_adapters.total}`} detail={actionRequired > 0 ? `${fmt(actionRequired)} Action required` : `${fmt(overview.gateway.messaging_adapters.check_freshness)} Check freshness`} />
++            <MetricCard icon={Activity} label="Memory" value={`${overview.memory.enabled_profiles}/${overview.profiles.total}`} detail={providerList(overview)} />
+           </div>
+ 
+           <div className="dashboard-panel-grid grid xl:grid-cols-[1.35fr_0.9fr]">
+             <Card>
+               <CardHeader>
+-                <CardTitle className="text-base">Profile health</CardTitle>
++                <CardTitle className="text-base">Profiles</CardTitle>
+               </CardHeader>
+               <CardContent className="overflow-x-auto">
+-                <div className="mb-3 rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+-                  <span className="font-medium text-foreground">Selected profile</span>: {overview.selected_profile.name} · {fmt(overview.selected_profile.sessions)} sessions · {fmt(overview.selected_profile.active_terminals)} live terminals
+-                </div>
+                 <table className="dashboard-density-table w-full text-sm">
+                   <thead className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                     <tr>
+@@ -127,6 +145,7 @@ export default function OverviewPage() {
+                       <th className="py-2 pr-3 text-left">Sessions</th>
+                       <th className="py-2 pr-3 text-left">Tokens</th>
+                       <th className="py-2 pr-3 text-left">Tools</th>
++                      <th className="py-2 pr-3 text-left">Memory</th>
+                       <th className="py-2 text-left">Status</th>
+                     </tr>
+                   </thead>
+@@ -137,6 +156,11 @@ export default function OverviewPage() {
+                         <td className="py-2 pr-3 tabular-nums">{fmt(profile.sessions)}</td>
+                         <td className="py-2 pr-3 tabular-nums">{fmt(profile.input_tokens + profile.output_tokens)}</td>
+                         <td className="py-2 pr-3 tabular-nums">{fmt(profile.tool_calls)}</td>
++                        <td className="py-2 pr-3">
++                          <Badge tone={profile.memory?.enabled ? "success" : "outline"} className="text-[10px]">
++                            {profile.memory?.enabled ? profile.memory.provider : "disabled"}
++                          </Badge>
++                        </td>
+                         <td className="py-2">
+                           <Badge tone={profile.stale ? "outline" : "success"} className="text-[10px]">
+                             {profile.stale ? "No recent sessions" : "Recent activity"}
+@@ -150,6 +174,72 @@ export default function OverviewPage() {
+             </Card>
+ 
+             <div className="grid gap-4">
++              <Card>
++                <CardHeader>
++                  <CardTitle className="text-base">Memory inventory</CardTitle>
++                </CardHeader>
++                <CardContent className="grid gap-3">
++                  <div className="rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
++                    <span className="font-medium text-foreground">Memory</span>: {fmt(overview.memory.enabled_profiles)} enabled profiles · {fmt(overview.memory.local_record_count ?? 0)} local profile records · {fmt(overview.memory.external_record_count ?? 0)} external memories
++                  </div>
++                  {overview.memory.external_banks.length > 0 && (
++                    <div className="grid gap-2">
++                      {overview.memory.external_banks.map((bank) => (
++                        <div key={`${bank.provider}-${bank.endpoint ?? ""}-${bank.bank_id ?? ""}`} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
++                          <div className="min-w-0">
++                            <p className="truncate text-sm font-medium">
++                              {bank.provider} bank {bank.bank_id ?? "default"}
++                            </p>
++                            <p className="text-xs text-muted-foreground">
++                              {bank.mode} · {bank.endpoint ?? "configured endpoint"} · used by {fmt(bank.profile_count)} profiles
++                            </p>
++                          </div>
++                          <Badge tone={bank.usage_state === "tracked" ? "success" : "outline"} className="text-[10px] shrink-0">
++                            {typeof bank.record_count === "number" ? `${fmt(bank.record_count)} memories` : "count unavailable"}
++                          </Badge>
++                        </div>
++                      ))}
++                    </div>
++                  )}
++                  {overview.memory.rows.length === 0 ? (
++                    <p className="text-sm text-muted-foreground">No memory configuration reported.</p>
++                  ) : (
++                    overview.memory.rows.map((row) => (
++                      <div key={row.profile} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
++                        <div className="min-w-0">
++                          <p className="truncate text-sm font-medium uppercase">{row.profile}</p>
++                          <p className="text-xs text-muted-foreground">
++                            {memoryRowDetail(row)}
++                          </p>
++                        </div>
++                        <Badge tone={row.enabled ? "success" : "outline"} className="text-[10px] shrink-0">
++                          {memoryUsageLabel(row)}
++                        </Badge>
++                      </div>
++                    ))
++                  )}
++                </CardContent>
++              </Card>
++
++              <Card>
++                <CardHeader>
++                  <CardTitle className="text-base">Messaging adapters</CardTitle>
++                </CardHeader>
++                <CardContent>
++                  <div className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5">
++                    <div className="min-w-0">
++                      <p className="text-sm font-medium">Adapter availability</p>
++                      <p className="text-xs text-muted-foreground">
++                        {fmt(overview.gateway.messaging_adapters.connected)} connected · {fmt(overview.gateway.messaging_adapters.total)} total
++                      </p>
++                    </div>
++                    <Badge tone={actionRequired > 0 ? "warning" : "success"} className="text-[10px] shrink-0">
++                      {actionRequired > 0 ? `${fmt(actionRequired)} Action required` : `${fmt(overview.gateway.messaging_adapters.check_freshness)} Check freshness`}
++                    </Badge>
++                  </div>
++                </CardContent>
++              </Card>
++
+               <Card>
+                 <CardHeader>
+                   <CardTitle className="text-base">Action required</CardTitle>
+-- 
+2.39.5
+
