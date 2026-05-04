@@ -1,0 +1,303 @@
+From fa9cef2cb342e3ce83b375233f297d4375f8aa68 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Mon, 4 May 2026 22:03:31 +0300
+Subject: [PATCH] feat: clarify dashboard messaging adapter semantics
+
+---
+ hermes_cli/web_server.py                      | 55 +++++++++++++------
+ ...est_dashboard_profile_selector_frontend.py | 11 +++-
+ .../test_web_server_dashboard_overview.py     | 26 ++++++++-
+ web/src/lib/api.ts                            | 13 +++++
+ web/src/pages/OverviewPage.tsx                | 28 +++++-----
+ 5 files changed, 98 insertions(+), 35 deletions(-)
+
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+index 27f27d3cc..a45d0ae22 100644
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -938,6 +938,7 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+     rows: List[Dict[str, Any]] = []
+     stale_after_seconds = 24 * 3600
+     healthy_states = {"connected", "running", "ok"}
++    warning_states = {"disconnected", "unknown", "stopped"}
+     for name, raw in sorted(platforms.items()):
+         info = raw if isinstance(raw, dict) else {}
+         state = str(info.get("state") or "unknown")
+@@ -945,26 +946,36 @@ def _dashboard_platform_rows(runtime: Optional[Dict[str, Any]], now: float) -> L
+         updated_ts = _parse_dashboard_iso_timestamp(updated_at)
+         age_seconds = None if updated_ts is None else max(0, int(now - updated_ts))
+         stale = age_seconds is not None and age_seconds > stale_after_seconds
+-        needs_attention = state not in healthy_states or stale
+-        display_state = "STALE" if state == "connected" and stale else state.upper()
++        healthy = state in healthy_states
++        action_required = not healthy
++        availability = "available" if healthy else state
++        event_freshness = "unknown" if age_seconds is None else ("stale" if stale else "fresh")
++        display_state = "CONNECTED" if healthy else state.upper()
++
++        freshness_reason = None
++        if event_freshness == "stale":
++            freshness_reason = "No adapter event for more than 24 hours"
++        elif event_freshness == "unknown":
++            freshness_reason = "No adapter heartbeat timestamp reported"
+ 
+         attention_reason = None
+         attention_severity = None
+         attention_action = None
+-        if state not in healthy_states:
+-            attention_reason = f"Gateway platform state is {state}"
+-            attention_severity = "warning" if state in {"disconnected", "unknown", "stopped"} else "error"
+-            attention_action = "Open gateway status and platform logs"
+-        elif stale:
+-            attention_reason = "No gateway platform heartbeat for more than 24 hours"
+-            attention_severity = "info"
+-            attention_action = "Check gateway freshness before taking action"
++        if action_required:
++            attention_reason = f"Messaging adapter state is {state}"
++            attention_severity = "warning" if state in warning_states else "error"
++            attention_action = "Open gateway status and adapter logs"
+ 
+         rows.append({
+             "name": str(name),
++            "kind": "messaging_adapter",
+             "state": state,
++            "availability": availability,
++            "event_freshness": event_freshness,
++            "freshness_reason": freshness_reason,
+             "display_state": display_state,
+-            "needs_attention": needs_attention,
++            "needs_attention": action_required,
++            "action_required": action_required,
+             "attention_reason": attention_reason,
+             "attention_severity": attention_severity,
+             "attention_action": attention_action,
+@@ -1070,13 +1081,13 @@ def _dashboard_attention_items(
+             continue
+         name = str(row.get("name") or "unknown")
+         items.append({
+-            "id": f"gateway-platform:{name}",
+-            "source": "gateway",
++            "id": f"messaging-adapter:{name}",
++            "source": "messaging_adapter",
+             "severity": row.get("attention_severity") or "warning",
+             "reason": reason,
+-            "message": f"{name} gateway platform: {reason}",
++            "message": f"{name} messaging adapter: {reason}",
+             "action": row.get("attention_action") or "Open gateway status",
+-            "target_kind": "gateway_platform",
++            "target_kind": "messaging_adapter",
+             "target_id": name,
+             "route": "/platforms",
+         })
+@@ -1135,6 +1146,7 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+         if not gateway_running:
+             gateway_state = gateway_state if gateway_state in ("stopped", "startup_failed") else "stopped"
+     platform_rows = _dashboard_platform_rows(runtime_status, now) if gateway_running else []
++    adapter_rows = platform_rows
+     runtime_health = _dashboard_runtime_health(profile_rows, pty_sessions, now)
+     attention_items = _dashboard_attention_items(platform_rows, runtime_health)
+     selected_profile = {
+@@ -1183,9 +1195,17 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+             "platforms": {
+                 "total": len(platform_rows),
+                 "connected": sum(1 for row in platform_rows if row.get("state") == "connected"),
+-                "stale": sum(1 for row in platform_rows if row.get("display_state") == "STALE"),
++                "stale": sum(1 for row in platform_rows if row.get("event_freshness") == "stale"),
+                 "attention": sum(1 for row in platform_rows if row.get("needs_attention")),
+             },
++            "messaging_adapters": {
++                "total": len(adapter_rows),
++                "connected": sum(1 for row in adapter_rows if row.get("availability") == "available"),
++                "disconnected": sum(1 for row in adapter_rows if row.get("availability") == "disconnected"),
++                "check_freshness": sum(1 for row in adapter_rows if row.get("event_freshness") == "stale"),
++                "action_required": sum(1 for row in adapter_rows if row.get("action_required")),
++            },
++            "adapter_rows": adapter_rows,
+             "platform_rows": platform_rows,
+         },
+         "runtime": {
+@@ -1201,7 +1221,8 @@ def _serialize_dashboard_overview() -> Dict[str, Any]:
+             "historical_sessions": "session DB records across profiles",
+             "recently_active_db_records": "unended session DB records active in the last five minutes",
+             "active_terminals": "live dashboard PTY channels",
+-            "connected_platforms": "gateway platform adapters currently reporting connected",
++            "connected_platforms": "backward-compatible count of gateway messaging adapters reporting connected",
++            "messaging_adapters": "gateway adapter availability; stale event freshness is metadata, not action by itself",
+             "action_required": "items with explicit reason, source, severity, message, and action",
+             "runtime_health": "service or API health evidence for dashboard-managed components",
+         },
+diff --git a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+index c77e9977e..6205ddb3a 100644
+--- a/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
++++ b/tests/hermes_cli/test_dashboard_profile_selector_frontend.py
+@@ -191,10 +191,19 @@ def test_overview_semantic_cleanup_contract():
+     assert "selected_profile" in api
+     assert "runtime_health" in api
+     assert "attention_items" in api
++    assert "messaging_adapters" in api
++    assert "adapter_rows" in api
++    assert "event_freshness" in api
++    assert "action_required" in api
+     assert "new Intl.NumberFormat(\"en-US\"" in overview
+-    assert "Hermes control plane for profiles, terminals, gateway platforms, and runtime health." in overview
++    assert "Hermes control plane for profiles, terminals, messaging adapters, and runtime health." in overview
+     assert "Assembly overview" in overview
+     assert "Selected profile" in overview
++    assert "Messaging adapters" in overview
++    assert "Adapter freshness" in overview
++    assert "Check freshness" in overview
++    assert "gateway platforms" not in overview
++    assert "Gateway platforms" not in overview
+     assert "provider-proxy" in overview
+     assert "ACTION REQUIRED" in sidebar
+     assert "attention_items.length" in sidebar
+diff --git a/tests/hermes_cli/test_web_server_dashboard_overview.py b/tests/hermes_cli/test_web_server_dashboard_overview.py
+index b02a5676e..91bf7a3fc 100644
+--- a/tests/hermes_cli/test_web_server_dashboard_overview.py
++++ b/tests/hermes_cli/test_web_server_dashboard_overview.py
+@@ -70,7 +70,8 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+         "updated_at": "2026-05-03T10:00:00+00:00",
+         "platforms": {
+             "telegram": {"state": "connected", "updated_at": "2026-05-01T10:00:00+00:00"},
+-            "discord": {"state": "disconnected", "updated_at": "2026-05-03T09:00:00+00:00"},
++            "discord": {"state": "disconnected", "updated_at": "2026-05-04T18:00:00+00:00"},
++            "api_server": {"state": "connected", "updated_at": "2026-05-01T09:00:00+00:00"},
+         },
+     })
+     monkeypatch.setattr(ws, "_dashboard_provider_proxy_evidence", lambda profile: {
+@@ -104,8 +105,27 @@ def test_dashboard_overview_unifies_counts_and_safe_terms(tmp_path, monkeypatch)
+     assert data["sessions"]["current_profile_total"] >= 1
+     assert data["terminals"]["active"] == 1
+     assert data["gateway"]["running"] is True
+-    assert data["gateway"]["platforms"]["connected"] == 1
+-    assert data["gateway"]["platforms"]["attention"] >= 1
++    assert data["gateway"]["platforms"]["connected"] == 2
++    assert data["gateway"]["platforms"]["stale"] == 2
++    assert data["gateway"]["platforms"]["attention"] == 1
++    assert data["gateway"]["messaging_adapters"]["connected"] == 2
++    assert data["gateway"]["messaging_adapters"]["action_required"] == 1
++    assert data["gateway"]["messaging_adapters"]["check_freshness"] == 2
++
++    api_server = next(row for row in data["gateway"]["adapter_rows"] if row["name"] == "api_server")
++    assert api_server["kind"] == "messaging_adapter"
++    assert api_server["availability"] == "available"
++    assert api_server["event_freshness"] == "stale"
++    assert api_server["needs_attention"] is False
++    assert api_server["action_required"] is False
++    assert api_server["attention_reason"] is None
++    assert api_server["freshness_reason"] == "No adapter event for more than 24 hours"
++
++    discord = next(row for row in data["gateway"]["adapter_rows"] if row["name"] == "discord")
++    assert discord["availability"] == "disconnected"
++    assert discord["action_required"] is True
++    assert discord["attention_reason"] == "Messaging adapter state is disconnected"
++    assert {item["target_id"] for item in data["attention_items"]} == {"discord"}
+ 
+     provider_proxy_health = next(
+         item for item in data["runtime_health"] if item["id"] == "provider-proxy"
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index e64f03069..876bc21ae 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -334,9 +334,14 @@ export interface DashboardPtySession {
+ 
+ export interface DashboardOverviewPlatformRow {
+   name: string;
++  kind: string;
+   state: string;
++  availability: string;
++  event_freshness: string;
++  freshness_reason?: string | null;
+   display_state: string;
+   needs_attention: boolean;
++  action_required: boolean;
+   attention_reason?: string | null;
+   attention_severity?: string | null;
+   attention_action?: string | null;
+@@ -421,6 +426,14 @@ export interface DashboardOverviewResponse {
+       stale: number;
+       attention: number;
+     };
++    messaging_adapters: {
++      total: number;
++      connected: number;
++      disconnected: number;
++      check_freshness: number;
++      action_required: number;
++    };
++    adapter_rows: DashboardOverviewPlatformRow[];
+     platform_rows: DashboardOverviewPlatformRow[];
+   };
+   runtime: {
+diff --git a/web/src/pages/OverviewPage.tsx b/web/src/pages/OverviewPage.tsx
+index b59543fdd..32b35bd54 100644
+--- a/web/src/pages/OverviewPage.tsx
++++ b/web/src/pages/OverviewPage.tsx
+@@ -22,10 +22,10 @@ function fmt(n: number): string {
+   return (n >= 1_000_000 ? compactFormatter : standardFormatter).format(n);
+ }
+ 
+-function platformTone(state: string): "success" | "warning" | "destructive" | "outline" {
+-  const normalized = state.toLowerCase();
+-  if (normalized === "connected") return "success";
+-  if (normalized === "stale" || normalized === "disconnected") return "warning";
++function platformTone(platform: { availability: string; action_required: boolean }): "success" | "warning" | "destructive" | "outline" {
++  const normalized = platform.availability.toLowerCase();
++  if (!platform.action_required && normalized === "available") return "success";
++  if (normalized === "disconnected" || normalized === "unknown" || normalized === "stopped") return "warning";
+   if (normalized === "fatal" || normalized === "error") return "destructive";
+   return "outline";
+ }
+@@ -84,7 +84,7 @@ export default function OverviewPage() {
+             Hermes control plane
+           </h2>
+           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground/85">
+-            Hermes control plane for profiles, terminals, gateway platforms, and runtime health.
++            Hermes control plane for profiles, terminals, messaging adapters, and runtime health.
+           </p>
+           <p className="mt-3 text-xs text-muted-foreground">
+             Selected profile: <span className="font-medium text-foreground">{selectedProfileName}</span>
+@@ -108,7 +108,7 @@ export default function OverviewPage() {
+             <MetricCard icon={Database} label="Historical sessions" value={fmt(overview.sessions.total)} detail={`${fmt(overview.sessions.current_profile_total)} in selected profile`} />
+             <MetricCard icon={Terminal} label="Active terminals" value={fmt(overview.terminals.active)} detail="Live dashboard PTY channels" />
+             <MetricCard icon={Users} label="Profiles" value={`${overview.profiles.active}/${overview.profiles.total}`} detail={`${overview.profiles.stale} with no recent session activity`} />
+-            <MetricCard icon={Radio} label="Gateway platforms" value={`${overview.gateway.platforms.connected}/${overview.gateway.platforms.total}`} detail={actionRequired > 0 ? `${fmt(actionRequired)} Action required` : "No action required"} />
++            <MetricCard icon={Radio} label="Messaging adapters" value={`${overview.gateway.messaging_adapters.connected}/${overview.gateway.messaging_adapters.total}`} detail={actionRequired > 0 ? `${fmt(actionRequired)} Action required` : `${fmt(overview.gateway.messaging_adapters.check_freshness)} Check freshness`} />
+           </div>
+ 
+           <div className="dashboard-panel-grid grid xl:grid-cols-[1.35fr_0.9fr]">
+@@ -200,23 +200,23 @@ export default function OverviewPage() {
+ 
+               <Card>
+                 <CardHeader>
+-                  <CardTitle className="text-base">Platform freshness</CardTitle>
++                  <CardTitle className="text-base">Adapter freshness</CardTitle>
+                 </CardHeader>
+                 <CardContent className="grid gap-3">
+-                  {overview.gateway.platform_rows.length === 0 ? (
+-                    <p className="text-sm text-muted-foreground">No gateway platforms reported.</p>
++                  {overview.gateway.adapter_rows.length === 0 ? (
++                    <p className="text-sm text-muted-foreground">No messaging adapters reported.</p>
+                   ) : (
+-                    overview.gateway.platform_rows.map((platform) => (
++                    overview.gateway.adapter_rows.map((platform) => (
+                       <div key={platform.name} className="dashboard-row-card flex items-center justify-between gap-4 border p-3.5 transition-colors">
+                         <div className="min-w-0">
+                           <p className="truncate text-sm font-medium capitalize">{platform.name}</p>
+                           <p className="text-xs text-muted-foreground">
+-                            {platform.attention_reason ?? (platform.updated_at ? `Last event ${isoTimeAgo(platform.updated_at)}` : "No heartbeat")}
++                            {platform.attention_reason ?? platform.freshness_reason ?? (platform.updated_at ? `Last event ${isoTimeAgo(platform.updated_at)}` : "No adapter heartbeat")}
+                           </p>
+                         </div>
+-                        <Badge tone={platformTone(platform.display_state)} className="text-[10px] shrink-0">
+-                          {platform.needs_attention && <AlertTriangle className="mr-1 h-3 w-3" />}
+-                          {platform.display_state}
++                        <Badge tone={platformTone(platform)} className="text-[10px] shrink-0">
++                          {platform.action_required && <AlertTriangle className="mr-1 h-3 w-3" />}
++                          {platform.action_required ? platform.display_state : platform.event_freshness}
+                         </Badge>
+                       </div>
+                     ))
+-- 
+2.39.5
+

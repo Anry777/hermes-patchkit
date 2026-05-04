@@ -310,6 +310,23 @@ Status: exported as PatchKit unit `213-dashboard-overview-semantic-cleanup`; run
 
 Why after `212`: the visual pass made the ambiguity easier to see. This patch fixes the remaining semantic mismatch before adding new dashboard widgets.
 
+### `214-dashboard-messaging-adapters-semantics`
+
+Follow-up semantic slice after `213`. This patch removes the remaining “gateway platforms” wording from Overview and makes messaging adapter status less alarmist.
+
+Implemented scope:
+
+- `/api/dashboard/overview` keeps backward-compatible `gateway.platforms`/`platform_rows`, but adds `messaging_adapters` counters and `adapter_rows`;
+- each adapter row now separates `availability` from `event_freshness`;
+- connected adapters with stale events are marked for freshness review, not Action required;
+- unhealthy adapter state still creates structured action-required items with source `messaging_adapter`;
+- Overview copy and cards use “Messaging adapters” and “Adapter freshness” instead of “Gateway platforms”;
+- safety boundary remains metadata-only.
+
+Status: exported as PatchKit unit `214-dashboard-messaging-adapters-semantics`; runtime commit `fa9cef2cb`, depends on `200`–`213`. Validation: RED tests failed first for missing adapter semantics, then focused dashboard suite returned `148 passed`; `npm run build`; focused ESLint for `OverviewPage.tsx`, `api.ts`, and `SidebarStatusStrip.tsx`; `py_compile`; `git diff --check`. Live smoke is recorded in the manifest after the dashboard restart.
+
+Why after `213`: `213` created structured action items; `214` fixes the remaining adapter vocabulary so stale-but-connected messaging adapters are not shown as urgent problems.
+
 ## Acceptance criteria for the first milestone
 
 The minimally useful UI milestone is patches `200`–`203`:

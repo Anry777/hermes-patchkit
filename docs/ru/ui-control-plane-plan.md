@@ -310,6 +310,23 @@ Semantic cleanup после `212`. Этот patch меняет язык Overview
 
 Почему после `212`: visual pass сделал ambiguity заметнее. Этот patch закрывает оставшийся semantic mismatch перед добавлением новых dashboard widgets.
 
+### `214-dashboard-messaging-adapters-semantics`
+
+Follow-up semantic slice после `213`. Этот patch убирает остаточный wording “gateway platforms” из Overview и делает status messaging adapters менее alarmist.
+
+Реализованный состав:
+
+- `/api/dashboard/overview` сохраняет backward-compatible `gateway.platforms`/`platform_rows`, но добавляет `messaging_adapters` counters и `adapter_rows`;
+- каждая adapter row теперь разделяет `availability` и `event_freshness`;
+- connected adapters со stale events помечаются для freshness review, а не как Action required;
+- unhealthy adapter state всё ещё создаёт structured action-required items с source `messaging_adapter`;
+- Overview copy/cards используют “Messaging adapters” и “Adapter freshness” вместо “Gateway platforms”;
+- safety boundary остаётся metadata-only.
+
+Статус: exported как PatchKit unit `214-dashboard-messaging-adapters-semantics`; runtime commit `fa9cef2cb`, depends on `200`–`213`. Validation: RED tests сначала падали на отсутствующей adapter semantics, затем focused dashboard suite returned `148 passed`; `npm run build`; focused ESLint for `OverviewPage.tsx`, `api.ts`, `SidebarStatusStrip.tsx`; `py_compile`; `git diff --check`. Live smoke фиксируется в manifest после dashboard restart.
+
+Почему после `213`: `213` добавил structured action items; `214` добивает vocabulary adapters, чтобы stale-but-connected messaging adapters не выглядели urgent problems.
+
 ## Acceptance criteria for first milestone
 
 Минимально полезный UI milestone — patches `200`–`203`:

@@ -72,7 +72,7 @@ The release manifest intentionally excludes patch units that no longer fit the o
 - `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
 - `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
 - MAX local-overlay patches `070`-`077` are not in the `v2026.4.30` release manifest yet; the official release has no MAX adapter, so that chain needs a fresh sequential refresh from `070` onward.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`–`213`.
+- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, optional `080`, and UI/control-plane `200`–`214`.
 
 ## Planned `200`+ UI line
 
@@ -96,6 +96,7 @@ Initial sequence:
 | `211-dashboard-control-plane-unification` | exported | Stabilizes the dashboard into one control plane: authenticated `/api/dashboard/overview` becomes the shared semantic source for sidebar, Overview, Sessions, profiles, terminals and gateway platforms; stale platform rows require attention and the bundled example plugin is hidden unless explicitly enabled for development. |
 | `212-dashboard-visual-polish` | exported | Polishes the unified dashboard overview after `211`: shared visual primitives for the content shell, cards, hero, KPI grid, density table, freshness rows, and sidebar status improve spacing/contrast/hierarchy without changing the data contract. |
 | `213-dashboard-overview-semantic-cleanup` | exported | Clarifies unified Overview semantics: assembly-wide scope, selected-profile context, structured Action required items, and runtime health evidence instead of mixing profile staleness with urgent alerts. Stale session history stays metadata; active alert items carry source, severity, reason, message and action; provider-proxy is shown as service/API health evidence. |
+| `214-dashboard-messaging-adapters-semantics` | exported | Renames Gateway platforms to Messaging adapters and separates adapter availability from event freshness. Connected-but-stale adapters remain check-freshness metadata; only unhealthy adapter state creates Action required items. |
 
 ## Workflow features
 
