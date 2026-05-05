@@ -15,7 +15,7 @@ index 832f5cb2f..4c7770c16 100644
      # Tier 4 — batch or non-interactive delivery
      "email":           _TIER_MINIMAL,
 diff --git a/gateway/run.py b/gateway/run.py
-index 9107f6c48..4545ed263 100644
+index 9107f6c48..52f0c33a2 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
 @@ -480,6 +480,29 @@ logger = logging.getLogger(__name__)
@@ -48,7 +48,35 @@ index 9107f6c48..4545ed263 100644
  def _resolve_runtime_agent_kwargs() -> dict:
      """Resolve provider credentials for gateway-created AIAgent instances.
  
-@@ -10834,9 +10857,11 @@ class GatewayRunner:
+@@ -10787,7 +10810,11 @@ class GatewayRunner:
+             # "all" / "new" modes: short preview, respects tool_preview_length
+             # config (defaults to 40 chars when unset to keep gateway messages
+             # compact — unlike CLI spinners, these persist as permanent messages).
+-            if preview:
++            # MAX keeps non-verbose progress intentionally preview-free: raw
++            # terminal probes such as `date` are useful in logs but read like
++            # internal implementation noise in the messenger chat. Users can
++            # still opt into details with tool_progress=verbose.
++            if preview and platform_key != "max":
+                 from agent.display import get_tool_preview_max_len
+                 _pl = get_tool_preview_max_len()
+                 _cap = _pl if _pl > 0 else 40
+@@ -10824,8 +10851,14 @@ class GatewayRunner:
+         else:
+             _progress_thread_id = source.thread_id
+         _progress_metadata = {"thread_id": _progress_thread_id} if _progress_thread_id else None
++        # MAX's client makes newly-sent bot messages visually prominent; a
++        # short first-send debounce lets bursty service tools (date/context
++        # probes followed by real work) coalesce into the first editable status
++        # bubble instead of flashing as an orphan line.
++        _progress_initial_delay = 0.8 if platform_key == "max" else 0.0
+ 
+         async def send_progress_messages():
++            nonlocal _progress_initial_delay
+             if not progress_queue:
+                 return
+ 
+@@ -10834,9 +10867,11 @@ class GatewayRunner:
                  return
  
              # Skip tool progress for platforms that don't support message
@@ -63,7 +91,7 @@ index 9107f6c48..4545ed263 100644
                  while not progress_queue.empty():
                      try:
                          progress_queue.get_nowait()
-@@ -10846,7 +10871,7 @@ class GatewayRunner:
+@@ -10846,7 +10881,7 @@ class GatewayRunner:
  
              progress_lines = []      # Accumulated tool lines
              progress_msg_id = None   # ID of the progress message to edit
@@ -72,6 +100,23 @@ index 9107f6c48..4545ed263 100644
              _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
              _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
  
+@@ -10918,6 +10953,16 @@ class GatewayRunner:
+                     if not _run_still_current():
+                         return
+ 
++                    if can_edit and progress_msg_id is None and _progress_initial_delay > 0:
++                        # Delay only the first MAX progress bubble. If the run
++                        # finishes quickly, the final answer is enough and the
++                        # cancellation drain intentionally leaves this unsent;
++                        # otherwise, subsequent queued tools are batched into
++                        # the first editable message.
++                        await asyncio.sleep(_progress_initial_delay)
++                        _progress_initial_delay = 0.0
++                        continue
++
+                     if can_edit and progress_msg_id is not None:
+                         # Try to edit the existing progress message
+                         full_text = "\n".join(progress_lines)
 diff --git a/plugins/platforms/max/__init__.py b/plugins/platforms/max/__init__.py
 new file mode 100644
 index 000000000..d4f1d7bf0
@@ -1450,6 +1495,86 @@ index 07d5c82a5..c483d4813 100644
      def test_minimal_tier_platforms(self):
          """Email, SMS, webhook default to 'off' tool progress."""
          from gateway.display_config import resolve_display_setting
+diff --git a/tests/gateway/test_run_progress_topics.py b/tests/gateway/test_run_progress_topics.py
+index 478a9e277..f2188526e 100644
+--- a/tests/gateway/test_run_progress_topics.py
++++ b/tests/gateway/test_run_progress_topics.py
+@@ -14,6 +14,18 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
+ from gateway.session import SessionSource
+ 
+ 
++class _PluginPlatform:
++    """Minimal platform-like object for plugin-defined platform keys in tests."""
++
++    value = "max"
++
++    def __repr__(self):
++        return "PluginPlatform(max)"
++
++
++MAX_PLUGIN_PLATFORM = _PluginPlatform()
++
++
+ class ProgressCaptureAdapter(BasePlatformAdapter):
+     def __init__(self, platform=Platform.TELEGRAM):
+         super().__init__(PlatformConfig(enabled=True, token="***"), platform)
+@@ -123,6 +135,25 @@ class DelayedProgressAgent:
+         }
+ 
+ 
++class MaxBurstProgressAgent:
++    def __init__(self, **kwargs):
++        self.tool_progress_callback = kwargs.get("tool_progress_callback")
++        self.tools = []
++
++    def run_conversation(self, message, conversation_history=None, task_id=None):
++        cb = self.tool_progress_callback
++        if cb is not None:
++            cb("tool.started", "terminal", "date '+%Y-%m-%d %H:%M:%S %Z'", {})
++            time.sleep(0.25)
++            cb("tool.started", "web_extract", "https://example.com/rates", {})
++            time.sleep(1.1)
++        return {
++            "final_response": "done",
++            "messages": [],
++            "api_calls": 1,
++        }
++
++
+ class DelayedInterimAgent:
+     def __init__(self, **kwargs):
+         self.interim_assistant_callback = kwargs.get("interim_assistant_callback")
+@@ -573,6 +604,30 @@ async def _run_with_agent(
+     return adapter, result
+ 
+ 
++@pytest.mark.asyncio
++async def test_run_agent_max_progress_coalesces_first_burst_without_raw_previews(monkeypatch, tmp_path):
++    adapter, result = await _run_with_agent(
++        monkeypatch,
++        tmp_path,
++        MaxBurstProgressAgent,
++        session_id="sess-max-compact-progress",
++        config_data={"display": {"tool_progress": "all"}},
++        platform=MAX_PLUGIN_PLATFORM,
++        chat_id="777",
++        chat_type="group",
++        thread_id=None,
++    )
++
++    assert result["final_response"] == "done"
++    assert len(adapter.sent) == 1
++    content = adapter.sent[0]["content"]
++    assert "terminal..." in content
++    assert "web_extract..." in content
++    assert "date" not in content
++    assert "https://example.com/rates" not in content
++    assert '"' not in content
++
++
+ @pytest.mark.asyncio
+ async def test_run_agent_surfaces_real_interim_commentary(monkeypatch, tmp_path):
+     adapter, result = await _run_with_agent(
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
 index 000000000..a21970081

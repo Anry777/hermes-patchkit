@@ -99,7 +99,7 @@ PatchKit возвращает эту границу:
 
 - Grok2API sidecar bridge — protocol-level интеграция: grok2api остаётся снаружи Hermes, а наружу его выводит `080` provider_proxy gateway, включая автоматическую синхронизацию `/v1/models` → Hermes catalog. См. [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md).
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов. IDE path покрывает streaming, tool calls, inline images, RooCode `reasoning_effort` и фильтрацию Codex sampling parameters.
-- `070-max-platform-plugin` — release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval-кнопки и edit-in-place tool progress.
+- `070-max-platform-plugin` — release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval-кнопки и компактный edit-in-place tool progress без raw non-verbose command previews.
 
 ## Быстрый старт
 
