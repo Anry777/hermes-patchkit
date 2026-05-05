@@ -2028,3 +2028,105 @@ index 000000000..a21970081
 +    assert event.message_type.value == "audio"
 +    assert event.media_urls == ["https://files.example/voice.ogg"]
 +    assert event.media_types == ["audio/ogg"]
+
+diff --git a/gateway/config.py b/gateway/config.py
+index f857ba778..21ba4dc41 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -1608,9 +1608,10 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+             pass
+ 
+     # Registry-driven enable for plugin platforms.  Built-ins have explicit
+-    # blocks above; plugins expose check_fn() which is the single source of
+-    # truth for "are my env vars set?".  When it returns True, ensure the
+-    # platform is enabled so start() will create its adapter.
++    # blocks above.  For plugins, dependency availability (check_fn) is not the
++    # same as platform configuration: a bundled adapter may be importable while
++    # its token/server setting is absent.  Only auto-enable a plugin when its
++    # configured PlatformConfig passes validate_config/is_connected.
+     try:
+         from hermes_cli.plugins import discover_plugins
+         discover_plugins()  # idempotent
+@@ -1623,8 +1624,21 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+                 logger.debug("check_fn for %s raised: %s", entry.name, e)
+                 continue
+             platform = Platform(entry.name)
++            plugin_config = config.platforms.get(platform) or PlatformConfig()
++            try:
++                if entry.is_connected is not None:
++                    configured = entry.is_connected(plugin_config)
++                elif entry.validate_config is not None:
++                    configured = entry.validate_config(plugin_config)
++                else:
++                    configured = True
++            except Exception as e:
++                logger.debug("validate_config for %s raised: %s", entry.name, e)
++                configured = False
++            if not configured:
++                continue
+             if platform not in config.platforms:
+-                config.platforms[platform] = PlatformConfig()
++                config.platforms[platform] = plugin_config
+             config.platforms[platform].enabled = True
+     except Exception as e:
+         logger.debug("Plugin platform enable pass failed: %s", e)
+diff --git a/tests/gateway/test_platform_registry.py b/tests/gateway/test_platform_registry.py
+index e6bb823aa..d1351341e 100644
+--- a/tests/gateway/test_platform_registry.py
++++ b/tests/gateway/test_platform_registry.py
+@@ -394,3 +394,55 @@ class TestPlatformsMerge:
+             assert "LabelTest" in label
+         finally:
+             _reg.unregister("labeltest")
++
++def test_load_gateway_config_does_not_auto_enable_invalid_plugin(monkeypatch, tmp_path):
++    """Bundled plugin adapters should not enable themselves without config."""
++    from gateway.config import load_gateway_config
++    from gateway.platform_registry import PlatformEntry, platform_registry as _reg
++
++    test_entry = PlatformEntry(
++        name="needs_token",
++        label="NeedsToken",
++        adapter_factory=lambda cfg: MagicMock(),
++        check_fn=lambda: True,
++        validate_config=lambda cfg: bool((cfg.token or "").strip() or cfg.extra.get("token")),
++        source="plugin",
++    )
++    _reg.register(test_entry)
++    try:
++        home = tmp_path / ".hermes"
++        home.mkdir()
++        (home / "config.yaml").write_text("plugins:\n  enabled: []\n", encoding="utf-8")
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        cfg = load_gateway_config()
++        assert "needs_token" not in {p.value for p, pcfg in cfg.platforms.items() if pcfg.enabled}
++    finally:
++        _reg.unregister("needs_token")
++
++
++def test_load_gateway_config_auto_enables_valid_plugin(monkeypatch, tmp_path):
++    """Plugin auto-enable still works when validate_config sees config/env."""
++    from gateway.config import load_gateway_config
++    from gateway.platform_registry import PlatformEntry, platform_registry as _reg
++
++    test_entry = PlatformEntry(
++        name="has_token",
++        label="HasToken",
++        adapter_factory=lambda cfg: MagicMock(),
++        check_fn=lambda: True,
++        validate_config=lambda cfg: bool((cfg.token or "").strip() or cfg.extra.get("token")),
++        source="plugin",
++    )
++    _reg.register(test_entry)
++    try:
++        home = tmp_path / ".hermes"
++        home.mkdir()
++        (home / "config.yaml").write_text(
++            "platforms:\n  has_token:\n    token: configured\n",
++            encoding="utf-8",
++        )
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        cfg = load_gateway_config()
++        assert "has_token" in {p.value for p, pcfg in cfg.platforms.items() if pcfg.enabled}
++    finally:
++        _reg.unregister("has_token")
