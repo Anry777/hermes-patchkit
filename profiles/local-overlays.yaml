@@ -1,13 +1,6 @@
 {
   "name": "local-overlays",
   "patches": [
-    "max-gateway-text-mvp",
-    "max-gateway-image-input",
-    "max-gateway-oneme-url-safety",
-    "max-gateway-image-output",
-    "max-send-message-media-routing",
-    "max-gateway-file-attachments",
-    "max-media-directive-safety",
-    "max-markdown-formatting"
+    "max-platform-plugin"
   ]
 }

@@ -14,6 +14,7 @@ RELEASE_2026_4_30_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.30.yaml
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
+RELEASE_MAX_PLATFORM_PLUGIN_PATCH = RELEASE_2026_4_30_PATCH_DIR / "070-max-platform-plugin.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
 MAX_MARKDOWN_FORMATTING_PATCH = REPO_ROOT / "patches" / "077-max-markdown-formatting.patch"
@@ -69,7 +70,7 @@ class PatchCatalogTests(unittest.TestCase):
 
         ids = [patch["id"] for patch in manifest["patches"]]
         self.assertEqual(
-            ids,
+            ids[:6],
             [
                 "auth-profile-root-fallback",
                 "credential-pool-recovery",
@@ -77,19 +78,38 @@ class PatchCatalogTests(unittest.TestCase):
                 "homeassistant-tool-config-url",
                 "codex-auxiliary-tool-role-flattening",
                 "api-server-provider-proxy",
-                "max-gateway-text-mvp",
-                "max-gateway-image-input",
-                "max-gateway-oneme-url-safety",
-                "max-gateway-image-output",
-                "max-send-message-media-routing",
-                "max-gateway-file-attachments",
-                "max-media-directive-safety",
-                "max-markdown-formatting",
             ],
         )
+        self.assertIn("max-platform-plugin", ids)
+        for old_max_id in (
+            "max-gateway-text-mvp",
+            "max-gateway-image-input",
+            "max-gateway-oneme-url-safety",
+            "max-gateway-image-output",
+            "max-send-message-media-routing",
+            "max-gateway-file-attachments",
+            "max-media-directive-safety",
+            "max-markdown-formatting",
+        ):
+            self.assertNotIn(old_max_id, ids)
         self.assertNotIn("cli-tui-idle-refresh-fix", ids)
         self.assertNotIn("codex-memory-flush-responses-contract", ids)
         self.assertTrue((RELEASE_2026_4_30_PATCH_DIR / "040-telegram-free-response-target-gating.patch").exists())
+        max_entry = next(patch for patch in manifest["patches"] if patch["id"] == "max-platform-plugin")
+        self.assertEqual(max_entry["track"], "local-overlay")
+        self.assertEqual(max_entry["depends_on"], [])
+
+        max_patch_text = RELEASE_MAX_PLATFORM_PLUGIN_PATCH.read_text(encoding="utf-8")
+        self.assertNotIn("PLACEHOLDER PATCH", max_patch_text)
+        self.assertIn("diff --git", max_patch_text)
+        self.assertIn("plugins/platforms/max/plugin.yaml", max_patch_text)
+        self.assertIn("plugins/platforms/max/adapter.py", max_patch_text)
+        self.assertIn("tests/plugins/test_max_platform_plugin.py", max_patch_text)
+        self.assertIn("ctx.register_platform", max_patch_text)
+        self.assertIn("MAX_BOT_TOKEN", max_patch_text)
+        self.assertNotIn("gateway/platforms/max.py", max_patch_text)
+        self.assertNotIn("Platform.MAX", max_patch_text)
+
         for entry in manifest["patches"]:
             self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
             self.assertTrue(entry["file"].startswith("patches/v2026.4.30/"))

@@ -7,9 +7,8 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
+- `070-max-platform-plugin`: consolidates the release-pinned MAX support from eight split core-gateway patches into one official Hermes platform plugin patch (`plugins/platforms/max/*`, `ctx.register_platform(...)`), while preserving webhook-first delivery, polling fallback, native media/file attachments, safe `MEDIA:` handling, `send_message` media routing, and MAX Markdown formatting.
 - `080-api-server-provider-proxy`: provider_proxy mode now supports a wider OpenAI-compatible IDE surface for RooCode and similar clients: Chat Completions streaming when `allow_streaming: true` is configured, `openai-codex` Responses stream adaptation into `chat.completion.chunk` SSE events, function/tool calls with tool-result roundtrips, inline image content parts, RooCode-style `reasoning_effort`, and filtering for sampling parameters such as `temperature` that ChatGPT Codex rejects; `/v1/responses` and `/v1/runs` remain fail-closed.
-- `072-max-gateway-oneme-url-safety`: MAX inbound photos from `i.oneme.ru` are no longer blocked by URL safety when that exact HTTPS CDN host resolves to `198.18.0.0/15`; subdomains, HTTP, and unrelated benchmark/private-style hosts remain blocked.
-- `070-max-gateway-text-mvp`: MAX polling now gives HTTP reads timeout headroom over the long-poll `timeout` parameter and treats idle `ReadTimeout` as an empty poll instead of logging repeated error stack traces; startup allowlist diagnostics also recognize `MAX_ALLOWED_USERS`, `MAX_GROUP_ALLOWED_USERS`, and `MAX_ALLOW_ALL_USERS`.
 
 ### Added
 - refreshed existing patch `215-dashboard-system-overview-semantics` instead of creating a new dashboard unit: Overview now separates shared Hindsight banks from local profile memory, fetches live Hindsight bank counts as metadata without exposing memory contents, and runs the sync Hindsight probe off the FastAPI event loop to avoid `RuntimeError` count fallbacks.
@@ -35,13 +34,7 @@ The format follows Keep a Changelog.
 - `scripts/grok2api_bridge.py list-models` and `sync-models` can now discover `/v1/models` from a running grok2api sidecar, filter chat-compatible ids, and generate/write the Hermes provider_proxy catalog with optional config backup.
 - Grok2API sidecar bridge pack on top of `080-api-server-provider-proxy`: dedicated profiles, EN/RU docs, loopback Docker Compose/config examples, third-party MIT notice, and `scripts/grok2api_bridge.py` for config rendering/profile skeletons/endpoint doctor checks
 - real exported upstream-candidate patch `080-api-server-provider-proxy`, adding an opt-in `provider_proxy` mode for the OpenAI-compatible API Server with explicit model catalog routing, OpenAI-compatible Chat Completions passthrough, Codex Responses compatibility, and fail-closed unsupported endpoints
-- real exported local-overlay patch `077-max-markdown-formatting`, defaulting MAX outgoing text/captions to official Markdown formatting with `MAX_TEXT_FORMAT` configuration, MAX-safe Markdown prompt guidance, and live MAX Markdown/HTML rendering confirmation from fresh runtime sends
-- real exported local-overlay patch `076-max-media-directive-safety`, preventing MAX `MEDIA:` documentation examples, placeholder paths, inline code, and fenced code blocks from being misrouted as native attachments
-- real exported local-overlay patch `075-max-gateway-file-attachments`, adding MAX native file/document upload for non-image `MEDIA:/path` attachments and inbound file attachment caching as Hermes document events
-- real exported local-overlay patch `074-max-send-message-media-routing`, routing `send_message` tool `MEDIA:/path` raster images for MAX through native image upload/send instead of omitting attachments as unsupported media
-- real exported local-overlay patch `073-max-gateway-image-output`, adding MAX outbound image upload/send support for local `MEDIA:/path` images and markdown image URLs, with caption support and `attachment.not.ready` retry handling
-- real exported local-overlay patch `071-max-gateway-image-input`, extending MAX inbound handling to image/photo attachments and image-only messages, with local image caching for Hermes vision tools
-- real exported local-overlay patch `070-max-gateway-text-mvp` for a webhook-first, text-only MAX messenger gateway with explicit `MAX_TRANSPORT=polling` local-test fallback, configurable `MAX_POLL_TIMEOUT` / `MAX_POLL_IDLE_SLEEP` polling cadence, and CLI/status operator diagnostics for MAX setup without a live approved bot
+- real exported local-overlay patch `070-max-platform-plugin`, adding MAX messenger as an official Hermes platform plugin instead of patching core gateway files; it replaces the release `v2026.4.30` split MAX chain `070`–`077` with one patch unit.
 - dedicated patch/feature catalog docs: `docs/en/patches.md` and `docs/ru/patches.md`
 - `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
 - `scripts/tui.py`, a small terminal UI/guide over the update checker
