@@ -7,6 +7,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
+- `020-auth-profile-root-fallback`: refreshed the existing auth patch unit instead of adding a new one; `auth.json` and `auth.lock` now resolve to the root Hermes home for every profile, so OAuth refreshes and credential-pool state stay shared while config, sessions, skills and logs remain profile-local.
 - `070-max-platform-plugin`: consolidates the release-pinned MAX support from eight split core-gateway patches into one official Hermes platform plugin patch (`plugins/platforms/max/*`, `ctx.register_platform(...)`), while preserving webhook-first delivery, polling fallback, native media/file attachments, safe `MEDIA:` handling, `send_message` media routing, MAX Markdown formatting, MAX group-chat typing indicators via `POST /chats/{chatId}/actions`, configurable in-chat tool progress for MAX (`display.platforms.max.tool_progress`, default `new`, disable with `off`) now edited in-place through `PUT /messages?message_id=...` when possible, compact/coalesced MAX progress that hides raw non-verbose tool previews such as service `date` probes, and native MAX approval buttons via inline keyboard callbacks / `POST /answers?callback_id=...`.
 - `080-api-server-provider-proxy`: provider_proxy mode now supports a wider OpenAI-compatible IDE surface for RooCode and similar clients: Chat Completions streaming when `allow_streaming: true` is configured, `openai-codex` Responses stream adaptation into `chat.completion.chunk` SSE events, function/tool calls with tool-result roundtrips, inline image content parts, RooCode-style `reasoning_effort`, and filtering for sampling parameters such as `temperature` that ChatGPT Codex rejects; `/v1/responses` and `/v1/runs` remain fail-closed.
 
@@ -38,7 +39,7 @@ The format follows Keep a Changelog.
 - dedicated patch/feature catalog docs: `docs/en/patches.md` and `docs/ru/patches.md`
 - `scripts/update.py`, a safe upstream compatibility checker that tests selected patches against a temporary upstream clone and writes markdown reports
 - `scripts/tui.py`, a small terminal UI/guide over the update checker
-- real exported upstream-fix patch `020-auth-profile-root-fallback`, including profile-to-root auth fallback tests
+- real exported upstream-fix patch `020-auth-profile-root-fallback`, now refreshed to make `auth.json`/`auth.lock` a shared root-global store for all profiles while keeping profile-local config/sessions/skills/logs
 - real exported upstream-fix patch `030-credential-pool-recovery`, transplanted from the legacy fork credential-pool recovery commits
 - real exported upstream-fix patches `060-codex-memory-flush-responses-contract` and `061-codex-auxiliary-tool-role-flattening`
 - pinned manifest/profile entries for the exported auth, credential-pool and Codex patches

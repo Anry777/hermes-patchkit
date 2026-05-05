@@ -9,10 +9,10 @@
     {
       "id": "auth-profile-root-fallback",
       "file": "patches/v2026.4.30/020-auth-profile-root-fallback.patch",
-      "title_en": "Profile auth.json fallback to root store",
-      "title_ru": "Фолбэк profile auth.json на root auth store",
-      "description_en": "Let profiles reuse the root auth store when they do not have their own auth.json yet.",
-      "description_ru": "Позволяет профилям использовать root auth store, если у профиля ещё нет своего auth.json.",
+      "title_en": "Shared root auth.json for profiles",
+      "title_ru": "Единый root auth.json для профилей",
+      "description_en": "Makes auth.json and auth.lock root-global so all profiles share provider OAuth state and credential pools instead of forking profile-local auth stores.",
+      "description_ru": "Делает auth.json и auth.lock root-global: все профили разделяют OAuth state и credential pools вместо fork profile-local auth stores.",
       "category": "auth",
       "track": "upstream-fix",
       "optional": true,
@@ -24,12 +24,11 @@
       "transplanted_from_commit": "2fc930be",
       "verification": {
         "focused_tests": [
-          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_falls_back_to_root_when_profile_auth_missing",
-          "tests/hermes_cli/test_auth_commands.py::test_load_auth_store_keeps_two_profile_auth_stores_isolated",
-          "tests/hermes_cli/test_auth_commands.py::test_profile_first_auth_write_forks_from_root_without_mutating_root",
-          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_falls_back_to_root_auth_when_profile_auth_missing",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_reads_shared_root_store_even_when_profile_auth_exists",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_writes_mutate_shared_root_store_not_profile_store",
+          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_reads_shared_root_auth_from_profile",
           "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
-          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_falls_back_to_root_auth_when_profile_missing"
+          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_reads_shared_root_auth_from_profile"
         ]
       },
       "base_upstream": "73bf3ab1b22314ed9dfecbb59242c03742fe72af",
