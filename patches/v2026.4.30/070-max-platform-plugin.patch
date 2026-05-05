@@ -83,10 +83,10 @@ index 000000000..d4f1d7bf0
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 000000000..eb6840cac
+index 000000000..a670be505
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1105 @@
+@@ -0,0 +1,1294 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -111,6 +111,7 @@ index 000000000..eb6840cac
 +from __future__ import annotations
 +
 +import asyncio
++import itertools
 +import logging
 +import mimetypes
 +import os
@@ -149,7 +150,7 @@ index 000000000..eb6840cac
 +DEFAULT_WEBHOOK_HOST = "127.0.0.1"
 +DEFAULT_WEBHOOK_PORT = 8647
 +DEFAULT_WEBHOOK_PATH = "/max-webhook"
-+DEFAULT_UPDATE_TYPES = ("message_created", "bot_started")
++DEFAULT_UPDATE_TYPES = ("message_created", "message_callback", "bot_started")
 +DEFAULT_TRANSPORT = "webhook"
 +TRANSPORT_WEBHOOK = "webhook"
 +TRANSPORT_POLLING = "polling"
@@ -211,10 +212,15 @@ index 000000000..eb6840cac
 +
 +
 +def _env_bool(name: str, default: bool = False) -> bool:
-+    value = os.getenv(name)
++    return _coerce_bool(os.getenv(name), default)
++
++
++def _coerce_bool(value: Any, default: bool = False) -> bool:
 +    if value is None:
 +        return default
-+    return value.strip().lower() in {"1", "true", "yes", "on"}
++    if isinstance(value, bool):
++        return value
++    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 +
 +
 +def _split_csv(value: Any) -> list[str]:
@@ -322,12 +328,21 @@ index 000000000..eb6840cac
 +            extra.get("poll_idle_sleep") or os.getenv("MAX_POLL_IDLE_SLEEP"),
 +            DEFAULT_POLL_IDLE_SLEEP,
 +        )
-+        self.auto_subscribe = bool(
-+            extra.get("auto_subscribe")
-+            if "auto_subscribe" in extra
-+            else _env_bool("MAX_AUTO_SUBSCRIBE", True)
++        self.auto_subscribe = _coerce_bool(
++            extra.get("auto_subscribe") if "auto_subscribe" in extra else os.getenv("MAX_AUTO_SUBSCRIBE"),
++            True,
 +        )
 +        self.update_types = _split_csv(extra.get("update_types") or os.getenv("MAX_UPDATE_TYPES")) or list(DEFAULT_UPDATE_TYPES)
++        self.allow_all_users = _coerce_bool(
++            extra.get("allow_all_users") if "allow_all_users" in extra else os.getenv("MAX_ALLOW_ALL_USERS"),
++            False,
++        )
++        self.allowed_users = set(_split_csv(extra.get("allow_from") or extra.get("allowed_users") or os.getenv("MAX_ALLOWED_USERS")))
++        self.group_allowed_users = set(
++            _split_csv(extra.get("group_allow_from") or extra.get("group_allowed_users") or os.getenv("MAX_GROUP_ALLOWED_USERS"))
++        )
++        self._approval_counter = itertools.count(1)
++        self._approval_state: Dict[int, str] = {}
 +        self._client: Optional[httpx.AsyncClient] = None
 +        self._runner = None
 +        self._polling_task: Optional[asyncio.Task] = None
@@ -591,6 +606,79 @@ index 000000000..eb6840cac
 +        except Exception as exc:
 +            logger.debug("[MAX] send_typing failed for chat %s: %s", target_chat_id, exc)
 +
++    async def send_exec_approval(
++        self,
++        chat_id: str,
++        command: str,
++        session_key: str,
++        description: str = "dangerous command",
++        metadata: Optional[Dict[str, Any]] = None,
++    ) -> SendResult:
++        """Send a MAX inline-keyboard approval prompt for a dangerous command."""
++        if not self.token:
++            return SendResult(success=False, error="MAX_BOT_TOKEN is not configured")
++        try:
++            approval_id = next(self._approval_counter)
++            cmd_preview = command[:3200] + "..." if len(command) > 3200 else command
++            desc_preview = description[:500] + "..." if len(description) > 500 else description
++            text = (
++                "⚠️ **Command Approval Required**\n\n"
++                f"```\n{cmd_preview}\n```\n\n"
++                f"Reason: {desc_preview}"
++            )
++            body = self._message_body(text=text, reply_to=None, metadata={"format": "markdown"})
++            body["attachments"] = [
++                {
++                    "type": "inline_keyboard",
++                    "payload": {
++                        "buttons": [
++                            [
++                                {"type": "callback", "text": "✅ Allow Once", "payload": f"ea:once:{approval_id}"},
++                                {"type": "callback", "text": "✅ Session", "payload": f"ea:session:{approval_id}"},
++                            ],
++                            [
++                                {"type": "callback", "text": "✅ Always", "payload": f"ea:always:{approval_id}"},
++                                {"type": "callback", "text": "❌ Deny", "payload": f"ea:deny:{approval_id}"},
++                            ],
++                        ]
++                    },
++                }
++            ]
++            result = await self._post_message_body(chat_id, body, metadata or {})
++            if result.success:
++                self._approval_state[approval_id] = session_key
++            return result
++        except Exception as exc:
++            logger.warning("[MAX] send_exec_approval failed: %s", exc)
++            return SendResult(success=False, error=str(exc))
++
++    async def _answer_callback(
++        self,
++        callback_id: str,
++        *,
++        notification: str,
++        message_text: Optional[str] = None,
++    ) -> None:
++        if not self.token or not callback_id:
++            return
++        body: Dict[str, Any] = {"notification": notification}
++        if message_text:
++            body["message"] = {
++                "text": message_text,
++                "attachments": [],
++                "format": "markdown",
++            }
++        try:
++            response = await self._get_client().post(
++                f"{self.base_url}/answers",
++                params={"callback_id": callback_id},
++                json=body,
++                headers=self._headers(),
++            )
++            response.raise_for_status()
++        except Exception as exc:
++            logger.debug("[MAX] callback answer failed for %s: %s", callback_id, exc)
++
 +    async def send_image(
 +        self,
 +        chat_id: str,
@@ -794,6 +882,9 @@ index 000000000..eb6840cac
 +        return _as_str(value) if value is not None else None
 +
 +    async def _handle_update(self, update: Dict[str, Any]) -> None:
++        if update.get("update_type") == "message_callback":
++            await self._handle_callback_update(update)
++            return
 +        event = self._update_to_event(update)
 +        if event is None:
 +            return
@@ -802,6 +893,104 @@ index 000000000..eb6840cac
 +            return
 +        await self._cache_attachment_media(event)
 +        await self.handle_message(event)
++
++    async def _handle_callback_update(self, update: Dict[str, Any]) -> None:
++        callback = update.get("callback") if isinstance(update.get("callback"), dict) else {}
++        callback_id = _as_str(_first_present(callback, "callback_id", "id")).strip()
++        payload = _as_str(callback.get("payload")).strip()
++        if not payload.startswith("ea:"):
++            if callback_id:
++                await self._answer_callback(callback_id, notification="Unsupported callback.")
++            return
++
++        parts = payload.split(":", 2)
++        if len(parts) != 3:
++            await self._answer_callback(callback_id, notification="Invalid approval data.")
++            return
++        choice = parts[1]
++        if choice not in {"once", "session", "always", "deny"}:
++            await self._answer_callback(callback_id, notification="Invalid approval choice.")
++            return
++        try:
++            approval_id = int(parts[2])
++        except ValueError:
++            await self._answer_callback(callback_id, notification="Invalid approval data.")
++            return
++
++        user = self._callback_user(callback)
++        user_id = _as_str(_first_present(user, "user_id", "id")).strip()
++        chat_type = self._callback_chat_type(callback)
++        if not self._is_callback_user_authorized(user_id, chat_type=chat_type):
++            await self._answer_callback(
++                callback_id,
++                notification="⛔ You are not authorized to approve commands.",
++            )
++            return
++
++        session_key = self._approval_state.pop(approval_id, None)
++        if not session_key:
++            await self._answer_callback(callback_id, notification="This approval has already been resolved.")
++            return
++
++        label_map = {
++            "once": "✅ Approved once",
++            "session": "✅ Approved for session",
++            "always": "✅ Approved permanently",
++            "deny": "❌ Denied",
++        }
++        label = label_map.get(choice, "Resolved")
++        user_display = self._user_name(user) or "User"
++        await self._answer_callback(
++            callback_id,
++            notification=label,
++            message_text=f"{label} by {user_display}",
++        )
++
++        try:
++            from tools.approval import resolve_gateway_approval
++
++            count = resolve_gateway_approval(session_key, choice)
++            logger.info(
++                "MAX button resolved %d approval(s) for session %s (choice=%s, user=%s)",
++                count,
++                session_key,
++                choice,
++                user_display,
++            )
++        except Exception as exc:
++            logger.error("Failed to resolve gateway approval from MAX button: %s", exc)
++
++    def _callback_user(self, callback: Dict[str, Any]) -> Dict[str, Any]:
++        for key in ("user", "sender", "from"):
++            value = callback.get(key)
++            if isinstance(value, dict):
++                return value
++        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
++        sender = message.get("sender")
++        return sender if isinstance(sender, dict) else {}
++
++    def _callback_chat_type(self, callback: Dict[str, Any]) -> str:
++        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
++        recipient = message.get("recipient") if isinstance(message.get("recipient"), dict) else {}
++        return self._chat_type(recipient)
++
++    def _is_callback_user_authorized(self, user_id: str, *, chat_type: str = "dm") -> bool:
++        if not user_id:
++            return False
++        if self.allow_all_users or _env_bool("GATEWAY_ALLOW_ALL_USERS", False):
++            return True
++        allowed_ids: set[str] = set(self.allowed_users)
++        allowed_ids.update(_split_csv(os.getenv("GATEWAY_ALLOWED_USERS")))
++        if chat_type in {"group", "forum", "channel"}:
++            allowed_ids.update(self.group_allowed_users)
++        if not allowed_ids:
++            return False
++        if "*" in allowed_ids:
++            return True
++        check_ids = {user_id}
++        if "@" in user_id:
++            check_ids.add(user_id.split("@", 1)[0])
++        return bool(check_ids & allowed_ids)
 +
 +    async def _cache_attachment_media(self, event: MessageEvent) -> None:
 +        if not event.media_urls:
@@ -1229,15 +1418,16 @@ index 07d5c82a5..c483d4813 100644
          from gateway.display_config import resolve_display_setting
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 000000000..894259026
+index 000000000..2ef9111fa
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,301 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
 +
 +from types import SimpleNamespace
++from unittest.mock import patch
 +
 +import pytest
 +
@@ -1272,6 +1462,30 @@ index 000000000..894259026
 +            "kwargs": kwargs,
 +        })
 +        return FakeResponse({"message": {"id": f"msg-{len(self.posts)}"}})
++
++
++def _callback_update(
++    payload="ea:once:1",
++    *,
++    callback_id="cb-1",
++    sender_id=123,
++    chat_id=777,
++    update_id="upd-cb-1",
++):
++    return {
++        "update_id": update_id,
++        "update_type": "message_callback",
++        "timestamp": 1710000000,
++        "callback": {
++            "callback_id": callback_id,
++            "payload": payload,
++            "user": {"user_id": sender_id, "first_name": "Alice", "username": "alice", "is_bot": False},
++            "message": {
++                "recipient": {"chat_id": chat_id, "type": "chat", "title": "Ops"},
++                "body": {"text": "approval"},
++            },
++        },
++    }
 +
 +
 +def test_register_exposes_max_platform_metadata():
@@ -1377,6 +1591,106 @@ index 000000000..894259026
 +    assert adapter.SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT is True
 +    assert _adapter_can_render_tool_progress(adapter) is True
 +    assert _adapter_uses_permanent_tool_progress(adapter) is True
++
++
++@pytest.mark.asyncio
++async def test_send_exec_approval_uses_max_inline_callback_keyboard_without_command_payload():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    client = RecordingClient()
++    adapter._client = client
++
++    result = await adapter.send_exec_approval(
++        "777",
++        command="rm -rf /tmp/secret",
++        session_key="max:777",
++        description="dangerous test command",
++        metadata={"target_type": "chat"},
++    )
++
++    assert result.success is True
++    assert result.message_id == "msg-1"
++    assert adapter._approval_state == {1: "max:777"}
++    post = client.posts[0]
++    assert post["url"].endswith("/messages")
++    assert post["params"] == {"chat_id": "777"}
++    assert post["headers"]["Authorization"] == "max-token"
++    body = post["json"]
++    assert "Command Approval Required" in body["text"]
++    assert "dangerous test command" in body["text"]
++    assert "rm -rf /tmp/secret" in body["text"]
++    keyboard = body["attachments"][0]
++    assert keyboard["type"] == "inline_keyboard"
++    buttons = keyboard["payload"]["buttons"]
++    assert [[button["text"] for button in row] for row in buttons] == [
++        ["✅ Allow Once", "✅ Session"],
++        ["✅ Always", "❌ Deny"],
++    ]
++    payloads = [button["payload"] for row in buttons for button in row]
++    assert payloads == ["ea:once:1", "ea:session:1", "ea:always:1", "ea:deny:1"]
++    assert all("rm -rf" not in payload for payload in payloads)
++
++
++@pytest.mark.asyncio
++async def test_message_callback_resolves_gateway_approval_and_answers_callback():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(
++        PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling", "allow_from": "123"})
++    )
++    client = RecordingClient()
++    adapter._client = client
++    adapter._approval_state[1] = "max:777"
++
++    with patch("tools.approval.resolve_gateway_approval", return_value=1) as resolve:
++        await adapter._handle_update(_callback_update(payload="ea:session:1", callback_id="cb-123", sender_id=123))
++
++    resolve.assert_called_once_with("max:777", "session")
++    assert adapter._approval_state == {}
++    assert client.posts == [
++        {
++            "url": "https://platform-api.max.ru/answers",
++            "params": {"callback_id": "cb-123"},
++            "json": {
++                "notification": "✅ Approved for session",
++                "message": {
++                    "text": "✅ Approved for session by Alice",
++                    "attachments": [],
++                    "format": "markdown",
++                },
++            },
++            "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            "kwargs": {},
++        }
++    ]
++
++
++@pytest.mark.asyncio
++async def test_unauthorized_message_callback_does_not_resolve_gateway_approval():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(
++        PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling", "allow_from": "123"})
++    )
++    client = RecordingClient()
++    adapter._client = client
++    adapter._approval_state[1] = "max:777"
++
++    with patch("tools.approval.resolve_gateway_approval") as resolve:
++        await adapter._handle_update(_callback_update(payload="ea:always:1", callback_id="cb-bad", sender_id=999))
++
++    resolve.assert_not_called()
++    assert adapter._approval_state == {1: "max:777"}
++    assert client.posts == [
++        {
++            "url": "https://platform-api.max.ru/answers",
++            "params": {"callback_id": "cb-bad"},
++            "json": {"notification": "⛔ You are not authorized to approve commands."},
++            "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            "kwargs": {},
++        }
++    ]
 +
 +
 +def test_update_to_event_maps_inbound_image_and_file_attachments():
