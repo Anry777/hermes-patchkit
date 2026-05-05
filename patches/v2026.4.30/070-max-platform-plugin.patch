@@ -131,7 +131,7 @@ new file mode 100644
 index 000000000..0f7865a6c
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1328 @@
+@@ -0,0 +1,1356 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -316,7 +316,8 @@ index 000000000..0f7865a6c
 +            try:
 +                response = await client.get(url, headers=headers)
 +                response.raise_for_status()
-+                resolved_name = _document_filename(filename, url, mime_type)
++                response_mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
++                resolved_name = _document_filename(filename, url, mime_type or response_mime)
 +                return cache_document_from_bytes(response.content, resolved_name)
 +            except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
 +                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 429:
@@ -1123,6 +1124,8 @@ index 000000000..0f7865a6c
 +        body = message.get("body") if isinstance(message.get("body"), dict) else {}
 +        text = body.get("text")
 +        text = text if isinstance(text, str) else ""
++        if not text.strip():
++            text = self._audio_transcription(body)
 +        image_urls, image_types = self._extract_image_media(body)
 +        file_urls, file_types = self._extract_file_media(body)
 +        media_urls = image_urls + file_urls
@@ -1147,6 +1150,8 @@ index 000000000..0f7865a6c
 +        message_type = MessageType.TEXT
 +        if image_urls:
 +            message_type = MessageType.PHOTO
++        elif any(media_type.startswith("audio/") or media_type == "audio" for media_type in file_types):
++            message_type = MessageType.AUDIO
 +        elif file_urls:
 +            message_type = MessageType.DOCUMENT
 +        return MessageEvent(
@@ -1217,12 +1222,35 @@ index 000000000..0f7865a6c
 +                if url in seen:
 +                    continue
 +                inferred_mime = mime or cls._mime_from_url_or_filename(url, cls._attachment_filename(attachment, payload))
++                if not inferred_mime and att_type == "audio":
++                    inferred_mime = "audio/mpeg"
++                elif not inferred_mime and att_type == "video":
++                    inferred_mime = "video/mp4"
 +                if inferred_mime.startswith("image/"):
 +                    continue
 +                seen.add(url)
 +                urls.append(url)
 +                media_types.append(inferred_mime or "application/octet-stream")
 +        return urls, media_types
++
++    @staticmethod
++    def _audio_transcription(body: Dict[str, Any]) -> str:
++        attachments = body.get("attachments")
++        if not isinstance(attachments, list):
++            return ""
++        for attachment in attachments:
++            if not isinstance(attachment, dict):
++                continue
++            payload = attachment.get("payload") if isinstance(attachment.get("payload"), dict) else {}
++            att_type = _as_str(_first_present(attachment, "type", "attachment_type")).lower().strip()
++            mime = MaxAdapter._file_mime(attachment, payload)
++            if att_type != "audio" and not mime.startswith("audio/"):
++                continue
++            for container in (attachment, payload):
++                value = _first_present(container, "transcription", "transcript", "recognized_text", "recognizedText")
++                if isinstance(value, str) and value.strip():
++                    return value.strip()
++        return ""
 +
 +    @classmethod
 +    def _attachment_metadata_by_url(cls, raw_message: Any) -> dict[str, tuple[str, str]]:
@@ -1580,7 +1608,7 @@ new file mode 100644
 index 000000000..a21970081
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,419 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -1930,3 +1958,73 @@ index 000000000..a21970081
 +    assert event.media_urls == ["https://i.oneme.ru/image.jpg", "https://files.example/doc.pdf"]
 +    assert event.media_types == ["image/jpeg", "application/pdf"]
 +    assert event.raw_message["update_id"] == "upd-1"
++
++
++def test_update_to_event_maps_official_audio_attachment_to_audio_event():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    update = {
++        "update_id": "upd-audio",
++        "update_type": "message_created",
++        "timestamp": 1710000000,
++        "message": {
++            "sender": {"user_id": 123, "first_name": "Alice", "username": "alice", "is_bot": False},
++            "recipient": {"chat_id": 777, "type": "chat", "title": "Ops"},
++            "timestamp": 1710000000,
++            "body": {
++                "text": "",
++                "attachments": [
++                    {
++                        "type": "audio",
++                        "transcription": "recognized voice text",
++                        "payload": {"url": "https://files.example/voice", "token": "audio-token"},
++                    }
++                ],
++            },
++        },
++    }
++
++    event = adapter._update_to_event(update)
++
++    assert event is not None
++    assert event.text == "recognized voice text"
++    assert event.message_type.value == "audio"
++    assert event.media_urls == ["https://files.example/voice"]
++    assert event.media_types == ["audio/mpeg"]
++
++
++def test_update_to_event_preserves_official_audio_mime_from_payload():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    update = {
++        "update_id": "upd-audio-ogg",
++        "update_type": "message_created",
++        "timestamp": 1710000000,
++        "message": {
++            "sender": {"user_id": 123, "first_name": "Alice", "username": "alice", "is_bot": False},
++            "recipient": {"chat_id": 777, "type": "chat", "title": "Ops"},
++            "timestamp": 1710000000,
++            "body": {
++                "text": "",
++                "attachments": [
++                    {
++                        "type": "audio",
++                        "payload": {
++                            "url": "https://files.example/voice.ogg",
++                            "token": "audio-token",
++                            "mime_type": "audio/ogg",
++                        },
++                    }
++                ],
++            },
++        },
++    }
++
++    event = adapter._update_to_event(update)
++
++    assert event is not None
++    assert event.message_type.value == "audio"
++    assert event.media_urls == ["https://files.example/voice.ogg"]
++    assert event.media_types == ["audio/ogg"]
