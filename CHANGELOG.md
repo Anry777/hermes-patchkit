@@ -7,7 +7,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
-- `070-max-platform-plugin`: consolidates the release-pinned MAX support from eight split core-gateway patches into one official Hermes platform plugin patch (`plugins/platforms/max/*`, `ctx.register_platform(...)`), while preserving webhook-first delivery, polling fallback, native media/file attachments, safe `MEDIA:` handling, `send_message` media routing, MAX Markdown formatting, and MAX group-chat typing indicators via `POST /chats/{chatId}/actions`.
+- `070-max-platform-plugin`: consolidates the release-pinned MAX support from eight split core-gateway patches into one official Hermes platform plugin patch (`plugins/platforms/max/*`, `ctx.register_platform(...)`), while preserving webhook-first delivery, polling fallback, native media/file attachments, safe `MEDIA:` handling, `send_message` media routing, MAX Markdown formatting, MAX group-chat typing indicators via `POST /chats/{chatId}/actions`, and configurable in-chat tool progress for MAX (`display.platforms.max.tool_progress`, default `new`, disable with `off`).
 - `080-api-server-provider-proxy`: provider_proxy mode now supports a wider OpenAI-compatible IDE surface for RooCode and similar clients: Chat Completions streaming when `allow_streaming: true` is configured, `openai-codex` Responses stream adaptation into `chat.completion.chunk` SSE events, function/tool calls with tool-result roundtrips, inline image content parts, RooCode-style `reasoning_effort`, and filtering for sampling parameters such as `temperature` that ChatGPT Codex rejects; `/v1/responses` and `/v1/runs` remain fail-closed.
 
 ### Added

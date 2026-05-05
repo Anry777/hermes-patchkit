@@ -1,3 +1,77 @@
+diff --git a/gateway/display_config.py b/gateway/display_config.py
+index 832f5cb2f..4c7770c16 100644
+--- a/gateway/display_config.py
++++ b/gateway/display_config.py
+@@ -94,6 +94,11 @@ _PLATFORM_DEFAULTS: dict[str, dict[str, Any]] = {
+     "wecom":           _TIER_LOW,
+     "wecom_callback":  _TIER_LOW,
+     "dingtalk":        _TIER_LOW,
++    # MAX has no edit support in the current adapter, but home/local bots need
++    # visible in-chat activity because native typing is easy to miss in the
++    # MAX client.  Use "new" so only tool changes are announced, and keep
++    # streaming off until message editing/update support exists.
++    "max":             {**_TIER_LOW, "tool_progress": "new", "tool_preview_length": 80},
+
+     # Tier 4 — batch or non-interactive delivery
+     "email":           _TIER_MINIMAL,
+diff --git a/gateway/run.py b/gateway/run.py
+index 9107f6c48..4545ed263 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -480,6 +480,29 @@ logger = logging.getLogger(__name__)
+ _AGENT_PENDING_SENTINEL = object()
+
+
++def _adapter_can_render_tool_progress(adapter: Any) -> bool:
++    """Return whether gateway should deliver tool-progress messages.
++
++    Most non-editing platforms suppress progress because every update becomes a
++    permanent chat bubble. Adapters can opt into that trade-off when the native
++    activity signal is too subtle and explicit in-chat status is desired.
++    """
++    if adapter is None:
++        return False
++    if type(adapter).edit_message is not BasePlatformAdapter.edit_message:
++        return True
++    return bool(getattr(adapter, "SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT", False))
++
++
++def _adapter_uses_permanent_tool_progress(adapter: Any) -> bool:
++    """Return True when progress should be sent as separate messages."""
++    return bool(
++        adapter is not None
++        and type(adapter).edit_message is BasePlatformAdapter.edit_message
++        and getattr(adapter, "SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT", False)
++    )
++
++
+ def _resolve_runtime_agent_kwargs() -> dict:
+     """Resolve provider credentials for gateway-created AIAgent instances.
+
+@@ -10834,9 +10857,11 @@ class GatewayRunner:
+                 return
+
+             # Skip tool progress for platforms that don't support message
+-            # editing (e.g. iMessage/BlueBubbles) — each progress update
+-            # would become a separate message bubble, which is noisy.
+-            if type(adapter).edit_message is BasePlatformAdapter.edit_message:
++            # editing unless the adapter explicitly opts into permanent,
++            # in-chat progress messages. MAX does this because its native
++            # typing indicator is visible only in the member list in common
++            # clients, so users otherwise get no obvious activity signal.
++            if not _adapter_can_render_tool_progress(adapter):
+                 while not progress_queue.empty():
+                     try:
+                         progress_queue.get_nowait()
+@@ -10846,7 +10871,7 @@ class GatewayRunner:
+
+             progress_lines = []      # Accumulated tool lines
+             progress_msg_id = None   # ID of the progress message to edit
+-            can_edit = True          # False once an edit fails (platform doesn't support it)
++            can_edit = not _adapter_uses_permanent_tool_progress(adapter)
+             _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
+             _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
+
 diff --git a/plugins/platforms/max/__init__.py b/plugins/platforms/max/__init__.py
 new file mode 100644
 index 000000000..d4f1d7bf0
@@ -9,10 +83,10 @@ index 000000000..d4f1d7bf0
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 000000000..ea93ae26b
+index 000000000..eb6840cac
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1104 @@
+@@ -0,0 +1,1105 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -219,6 +293,7 @@ index 000000000..ea93ae26b
 +    """Webhook-first adapter for MAX messenger bots."""
 +
 +    MAX_MESSAGE_LENGTH = MAX_TEXT_LENGTH
++    SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT = True
 +
 +    def __init__(self, config: PlatformConfig):
 +        super().__init__(config, Platform("max"))
@@ -1133,12 +1208,31 @@ index 000000000..d10b7430b
 +author: Hermes PatchKit
 +requires_env:
 +  - MAX_BOT_TOKEN
+diff --git a/tests/gateway/test_display_config.py b/tests/gateway/test_display_config.py
+index 07d5c82a5..c483d4813 100644
+--- a/tests/gateway/test_display_config.py
++++ b/tests/gateway/test_display_config.py
+@@ -205,6 +205,14 @@ class TestPlatformDefaults:
+         for plat in ("signal", "bluebubbles", "weixin", "wecom", "dingtalk"):
+             assert resolve_display_setting({}, plat, "tool_progress") == "off", plat
+
++    def test_max_defaults_to_visible_but_non_streaming_progress(self):
++        """MAX gets explicit in-chat progress by default, but no token streaming."""
++        from gateway.display_config import resolve_display_setting
++
++        assert resolve_display_setting({}, "max", "tool_progress") == "new"
++        assert resolve_display_setting({}, "max", "tool_preview_length") == 80
++        assert resolve_display_setting({}, "max", "streaming") is False
++
+     def test_minimal_tier_platforms(self):
+         """Email, SMS, webhook default to 'off' tool progress."""
+         from gateway.display_config import resolve_display_setting
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 000000000..b1da6259d
+index 000000000..894259026
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,176 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -1272,6 +1366,17 @@ index 000000000..b1da6259d
 +    await adapter.send_typing("123", metadata={"target_type": "user"})
 +
 +    assert client.posts == []
++
++
++def test_max_opts_into_permanent_tool_progress_messages():
++    from gateway.run import _adapter_can_render_tool_progress, _adapter_uses_permanent_tool_progress
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++
++    assert adapter.SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT is True
++    assert _adapter_can_render_tool_progress(adapter) is True
++    assert _adapter_uses_permanent_tool_progress(adapter) is True
 +
 +
 +def test_update_to_event_maps_inbound_image_and_file_attachments():
