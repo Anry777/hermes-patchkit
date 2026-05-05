@@ -9,10 +9,10 @@ index 000000000..d4f1d7bf0
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 000000000..213face42
+index 000000000..ea93ae26b
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1080 @@
+@@ -0,0 +1,1104 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -26,6 +26,7 @@ index 000000000..213face42
 +- outbound text messages use POST /messages;
 +- outbound image/file messages use POST /uploads?type=image|file, multipart
 +  upload field data, then POST /messages with the matching attachment;
++- bot activity indicators use POST /chats/{chatId}/actions with typing_on;
 +- explicit dev/test polling uses GET /updates;
 +- bot token is sent in the Authorization header;
 +- text payload uses NewMessageBody fields, with a 4000-character text limit;
@@ -491,6 +492,29 @@ index 000000000..213face42
 +            if not last_result.success:
 +                return last_result
 +        return last_result or SendResult(success=False, error="No MAX message chunks were sent")
++
++    async def send_typing(self, chat_id: str, metadata=None) -> None:
++        """Send MAX typing indicator for group chats.
++
++        MAX exposes bot activity through POST /chats/{chatId}/actions.  The
++        endpoint is documented for group chats, so user targets are ignored
++        instead of attempting a request that cannot succeed.
++        """
++        if not self.token:
++            return
++        params = self._target_params(chat_id, metadata or {})
++        target_chat_id = params.get("chat_id")
++        if not target_chat_id:
++            return
++        try:
++            response = await self._get_client().post(
++                f"{self.base_url}/chats/{target_chat_id}/actions",
++                json={"action": "typing_on"},
++                headers=self._headers(),
++            )
++            response.raise_for_status()
++        except Exception as exc:
++            logger.debug("[MAX] send_typing failed for chat %s: %s", target_chat_id, exc)
 +
 +    async def send_image(
 +        self,
@@ -1111,10 +1135,10 @@ index 000000000..d10b7430b
 +  - MAX_BOT_TOKEN
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 000000000..60ca2be1c
+index 000000000..b1da6259d
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,165 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -1216,6 +1240,38 @@ index 000000000..60ca2be1c
 +        "notify": False,
 +        "format": "markdown",
 +    }
++
++
++@pytest.mark.asyncio
++async def test_send_typing_uses_max_group_action_endpoint():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    client = RecordingClient()
++    adapter._client = client
++
++    await adapter.send_typing("chat:777")
++
++    assert len(client.posts) == 1
++    assert client.posts[0]["url"].endswith("/chats/777/actions")
++    assert client.posts[0]["params"] == {}
++    assert client.posts[0]["headers"]["Authorization"] == "max-token"
++    assert "Bearer" not in client.posts[0]["headers"]["Authorization"]
++    assert client.posts[0]["json"] == {"action": "typing_on"}
++
++
++@pytest.mark.asyncio
++async def test_send_typing_ignores_user_targets():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    client = RecordingClient()
++    adapter._client = client
++
++    await adapter.send_typing("user:123")
++    await adapter.send_typing("123", metadata={"target_type": "user"})
++
++    assert client.posts == []
 +
 +
 +def test_update_to_event_maps_inbound_image_and_file_attachments():
