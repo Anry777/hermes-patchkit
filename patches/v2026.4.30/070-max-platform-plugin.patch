@@ -11,7 +11,7 @@ index 832f5cb2f..4c7770c16 100644
 +    # MAX client.  Use "new" so only tool changes are announced, and keep
 +    # streaming off until message editing/update support exists.
 +    "max":             {**_TIER_LOW, "tool_progress": "new", "tool_preview_length": 80},
-
+ 
      # Tier 4 — batch or non-interactive delivery
      "email":           _TIER_MINIMAL,
 diff --git a/gateway/run.py b/gateway/run.py
@@ -20,8 +20,8 @@ index 9107f6c48..4545ed263 100644
 +++ b/gateway/run.py
 @@ -480,6 +480,29 @@ logger = logging.getLogger(__name__)
  _AGENT_PENDING_SENTINEL = object()
-
-
+ 
+ 
 +def _adapter_can_render_tool_progress(adapter: Any) -> bool:
 +    """Return whether gateway should deliver tool-progress messages.
 +
@@ -47,10 +47,10 @@ index 9107f6c48..4545ed263 100644
 +
  def _resolve_runtime_agent_kwargs() -> dict:
      """Resolve provider credentials for gateway-created AIAgent instances.
-
+ 
 @@ -10834,9 +10857,11 @@ class GatewayRunner:
                  return
-
+ 
              # Skip tool progress for platforms that don't support message
 -            # editing (e.g. iMessage/BlueBubbles) — each progress update
 -            # would become a separate message bubble, which is noisy.
@@ -64,14 +64,14 @@ index 9107f6c48..4545ed263 100644
                      try:
                          progress_queue.get_nowait()
 @@ -10846,7 +10871,7 @@ class GatewayRunner:
-
+ 
              progress_lines = []      # Accumulated tool lines
              progress_msg_id = None   # ID of the progress message to edit
 -            can_edit = True          # False once an edit fails (platform doesn't support it)
 +            can_edit = not _adapter_uses_permanent_tool_progress(adapter)
              _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
              _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
-
+ 
 diff --git a/plugins/platforms/max/__init__.py b/plugins/platforms/max/__init__.py
 new file mode 100644
 index 000000000..d4f1d7bf0
@@ -83,10 +83,10 @@ index 000000000..d4f1d7bf0
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 000000000..a670be505
+index 000000000..0f7865a6c
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1294 @@
+@@ -0,0 +1,1328 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -97,7 +97,7 @@ index 000000000..a670be505
 +- production inbound delivery is Webhook via POST /subscriptions;
 +- MAX sends each webhook as an HTTPS POST containing an Update object;
 +- webhook secrets are verified through X-Max-Bot-Api-Secret;
-+- outbound text messages use POST /messages;
++- outbound text messages use POST /messages and edits use PUT /messages?message_id=...;
 +- outbound image/file messages use POST /uploads?type=image|file, multipart
 +  upload field data, then POST /messages with the matching attachment;
 +- bot activity indicators use POST /chats/{chatId}/actions with typing_on;
@@ -582,6 +582,40 @@ index 000000000..a670be505
 +            if not last_result.success:
 +                return last_result
 +        return last_result or SendResult(success=False, error="No MAX message chunks were sent")
++
++    async def edit_message(
++        self,
++        chat_id: str,
++        message_id: str,
++        content: str,
++        *,
++        finalize: bool = False,
++    ) -> SendResult:
++        """Edit a MAX message via the official PUT /messages endpoint."""
++        if not self.token:
++            return SendResult(success=False, error="MAX_BOT_TOKEN is not configured")
++        if not message_id:
++            return SendResult(success=False, error="message_id required")
++        if not content:
++            return SendResult(success=False, error="MAX text message is empty")
++
++        edit_text = content
++        if len(edit_text) > self.MAX_MESSAGE_LENGTH:
++            edit_text = f"{edit_text[: self.MAX_MESSAGE_LENGTH - 1]}…"
++        body = self._message_body(text=edit_text, reply_to=None, metadata={})
++        try:
++            response = await self._get_client().put(
++                f"{self.base_url}/messages",
++                params={"message_id": str(message_id)},
++                json=body,
++                headers=self._headers(),
++            )
++            response.raise_for_status()
++            payload = response.json()
++        except Exception as exc:
++            logger.debug("[MAX] edit_message failed for %s: %s", message_id, exc)
++            return SendResult(success=False, error=str(exc), retryable=True)
++        return SendResult(success=True, message_id=str(message_id), raw_response=payload)
 +
 +    async def send_typing(self, chat_id: str, metadata=None) -> None:
 +        """Send MAX typing indicator for group chats.
@@ -1404,7 +1438,7 @@ index 07d5c82a5..c483d4813 100644
 @@ -205,6 +205,14 @@ class TestPlatformDefaults:
          for plat in ("signal", "bluebubbles", "weixin", "wecom", "dingtalk"):
              assert resolve_display_setting({}, plat, "tool_progress") == "off", plat
-
+ 
 +    def test_max_defaults_to_visible_but_non_streaming_progress(self):
 +        """MAX gets explicit in-chat progress by default, but no token streaming."""
 +        from gateway.display_config import resolve_display_setting
@@ -1418,10 +1452,10 @@ index 07d5c82a5..c483d4813 100644
          from gateway.display_config import resolve_display_setting
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 000000000..2ef9111fa
+index 000000000..a21970081
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,349 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -1452,6 +1486,17 @@ index 000000000..2ef9111fa
 +class RecordingClient:
 +    def __init__(self):
 +        self.posts = []
++        self.puts = []
++
++    async def put(self, url, *, params=None, json=None, headers=None, **kwargs):
++        self.puts.append({
++            "url": url,
++            "params": params or {},
++            "json": json or {},
++            "headers": headers or {},
++            "kwargs": kwargs,
++        })
++        return FakeResponse({"message": {"id": str((params or {}).get("message_id") or f"msg-{len(self.puts)}")}})
 +
 +    async def post(self, url, *, params=None, json=None, headers=None, **kwargs):
 +        self.posts.append({
@@ -1582,7 +1627,44 @@ index 000000000..2ef9111fa
 +    assert client.posts == []
 +
 +
-+def test_max_opts_into_permanent_tool_progress_messages():
++@pytest.mark.asyncio
++async def test_edit_message_uses_official_put_messages_endpoint():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    client = RecordingClient()
++    adapter._client = client
++
++    result = await adapter.edit_message("777", "msg-123", "**updated progress**", finalize=True)
++
++    assert result.success is True
++    assert result.message_id == "msg-123"
++    assert client.puts == [
++        {
++            "url": "https://platform-api.max.ru/messages",
++            "params": {"message_id": "msg-123"},
++            "json": {"text": "**updated progress**", "format": "markdown"},
++            "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
++            "kwargs": {},
++        }
++    ]
++
++
++@pytest.mark.asyncio
++async def test_edit_message_preserves_existing_attachments_by_default():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++    client = RecordingClient()
++    adapter._client = client
++
++    result = await adapter.edit_message("777", "msg-123", "updated")
++
++    assert result.success is True
++    assert "attachments" not in client.puts[0]["json"]
++
++
++def test_max_tool_progress_uses_edit_path_when_available_with_permanent_fallback_flag():
 +    from gateway.run import _adapter_can_render_tool_progress, _adapter_uses_permanent_tool_progress
 +    from plugins.platforms.max.adapter import MaxAdapter
 +
@@ -1590,7 +1672,7 @@ index 000000000..2ef9111fa
 +
 +    assert adapter.SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT is True
 +    assert _adapter_can_render_tool_progress(adapter) is True
-+    assert _adapter_uses_permanent_tool_progress(adapter) is True
++    assert _adapter_uses_permanent_tool_progress(adapter) is False
 +
 +
 +@pytest.mark.asyncio
