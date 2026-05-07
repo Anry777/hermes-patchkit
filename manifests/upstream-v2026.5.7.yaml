@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.5.7",
+    "commit": "498bfc7bc12a937621b4215312049b1000726df3"
+  },
+  "patches": [
+    {
+      "id": "auth-profile-root-fallback",
+      "file": "patches/v2026.5.7/020-auth-profile-root-fallback.patch",
+      "title_en": "Shared root auth.json for profiles",
+      "title_ru": "Единый root auth.json для профилей",
+      "description_en": "Makes auth.json and auth.lock root-global so all profiles share provider OAuth state and credential pools instead of forking profile-local auth stores.",
+      "description_ru": "Делает auth.json и auth.lock root-global: все профили разделяют OAuth state и credential pools вместо fork profile-local auth stores.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "b8d70d3d0e3765c4d421f40ac67951d11bc6dd7f",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_reads_shared_root_store_even_when_profile_auth_exists",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_writes_mutate_shared_root_store_not_profile_store",
+          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_reads_shared_root_auth_from_profile",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
+          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_reads_shared_root_auth_from_profile"
+        ]
+      },
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    },
+    {
+      "id": "credential-pool-recovery",
+      "file": "patches/v2026.5.7/030-credential-pool-recovery.patch",
+      "title_en": "Improve credential pool recovery",
+      "title_ru": "Улучшить recovery credential pool",
+      "description_en": "Track active credential IDs and separate exhausted credentials from invalid ones.",
+      "description_ru": "Отделяет exhausted credentials от invalid credentials и точнее ведёт recovery.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [
+        "auth-profile-root-fallback"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "97757ff4132554dd4e3a99088efbb5dab682727e",
+      "verification": {
+        "focused_tests": [
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
+          "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
+          "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
+          "tests/run_agent/test_run_agent.py::TestRunConversation::test_successful_response_records_credential_pool_success",
+          "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
+        ]
+      },
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    },
+    {
+      "id": "telegram-free-response-target-gating",
+      "file": "patches/v2026.5.7/040-telegram-free-response-target-gating.patch",
+      "title_en": "Telegram free-response target gating",
+      "title_ru": "Target gating для Telegram free-response групп",
+      "description_en": "Prevents Telegram free-response group chats from hijacking messages explicitly addressed to another bot or user.",
+      "description_ru": "Не даёт Telegram free-response группам перехватывать сообщения, явно адресованные другому боту или пользователю.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "0b2c7bc5716fce9e08875c9b73b486540fe52f7b",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_group_gating.py",
+          "tests/gateway/test_telegram_mention_boundaries.py"
+        ]
+      },
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    },
+    {
+      "id": "homeassistant-tool-config-url",
+      "file": "patches/v2026.5.7/050-homeassistant-tool-config-url.patch",
+      "title_en": "Home Assistant tools use profile config URL",
+      "title_ru": "Home Assistant tools берут URL из profile config",
+      "description_en": "Lets LLM-callable Home Assistant tools resolve platforms.homeassistant.extra.url from profile config.yaml when HASS_URL is not set, keeping env overrides and the existing local fallback.",
+      "description_ru": "Позволяет LLM-callable Home Assistant tools брать platforms.homeassistant.extra.url из profile config.yaml, если HASS_URL не задан, сохраняя env overrides и прежний local fallback.",
+      "category": "tools",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_homeassistant_tool.py",
+          "tests/integration/test_ha_integration.py",
+          "tests/gateway/test_homeassistant.py"
+        ],
+        "live_smoke": "ha_list_entities with HASS_URL absent and platforms.homeassistant.extra.url from profile config.yaml resolved the configured Home Assistant URL and returned success"
+      },
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7",
+      "exported_from": "ca469123fc383ef9987f6bdb0260bc17402f97b6"
+    },
+    {
+      "id": "codex-auxiliary-tool-role-flattening",
+      "file": "patches/v2026.5.7/061-codex-auxiliary-tool-role-flattening.patch",
+      "title_en": "Flatten unsupported transcript roles for Codex auxiliary Responses calls",
+      "title_ru": "Flatten unsupported transcript roles в Codex auxiliary Responses calls",
+      "description_en": "Converts transcript-only roles such as tool into user-visible context before sending auxiliary Codex requests to the Responses API, and adds a focused regression test.",
+      "description_ru": "Преобразует transcript-only roles вроде tool в user-visible context перед auxiliary Codex вызовом к Responses API и добавляет focused regression test.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "9d5ebb035d94be18b5eccb2b92c615945e256f80",
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    },
+    {
+      "id": "max-platform-plugin",
+      "file": "patches/v2026.5.7/070-max-platform-plugin.patch",
+      "title_en": "MAX messenger platform plugin",
+      "title_ru": "Platform plugin для MAX messenger",
+      "description_en": "Adds MAX messenger as an official Hermes platform plugin instead of core gateway patches: webhook-first production inbound delivery, explicit polling fallback for local testing, native image/file/audio attachments, safe media directives, send_message media delivery, and MAX Markdown formatting.",
+      "description_ru": "Добавляет MAX messenger как официальный Hermes platform plugin вместо core gateway patches: webhook-first production inbound delivery, явный polling fallback для локального теста, native image/file/audio attachments, безопасные media directives, media delivery через send_message и MAX Markdown formatting.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/plugins/test_max_platform_plugin.py"
+        ]
+      },
+      "exported_from": "44a2036a28e11a5e19a7cf6a8f965196d5655a45",
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    },
+    {
+      "id": "api-server-provider-proxy",
+      "file": "patches/v2026.5.7/080-api-server-provider-proxy.patch",
+      "title_en": "API Server provider proxy mode",
+      "title_ru": "Provider proxy mode для API Server",
+      "description_en": "Adds an opt-in raw/compat provider proxy mode to the OpenAI-compatible API server with an explicit model catalog, model-based routing, OpenAI-compatible provider passthrough, and Codex Responses chat compatibility without creating AIAgent instances.",
+      "description_ru": "Добавляет opt-in raw/compat provider proxy mode в OpenAI-compatible API Server: explicit model catalog, routing по model, pass-through для OpenAI-compatible provider'ов и Chat Completions compatibility для Codex Responses без создания AIAgent.",
+      "category": "api",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "45aab9ec504b0532724c5d61d5ce2c8d79626f89",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_api_server_provider_proxy.py",
+          "tests/gateway/test_api_server.py"
+        ]
+      },
+      "base_upstream": "498bfc7bc12a937621b4215312049b1000726df3",
+      "refreshed_for": "v2026.5.7"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "v2026.5.7-personal",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "homeassistant-tool-config-url",
+    "codex-auxiliary-tool-role-flattening",
+    "max-platform-plugin",
+    "api-server-provider-proxy"
+  ]
+}

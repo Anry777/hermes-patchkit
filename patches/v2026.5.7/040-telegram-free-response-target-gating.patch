@@ -1,0 +1,559 @@
+From 0b2c7bc57590b8b27db74784bbf29fccb98d499b Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Thu, 7 May 2026 21:59:29 +0300
+Subject: [PATCH] fix(telegram): gate free-response messages by target
+
+---
+ gateway/config.py                           |  62 +++++++
+ gateway/platforms/telegram.py               | 193 ++++++++++++++++++--
+ tests/gateway/test_telegram_group_gating.py | 146 ++++++++++++++-
+ 3 files changed, 380 insertions(+), 21 deletions(-)
+
+diff --git a/gateway/config.py b/gateway/config.py
+index 6df6b5f4a..7d4f4230a 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -758,8 +758,18 @@ def load_gateway_config() -> GatewayConfig:
+                     bridged["require_mention"] = platform_cfg["require_mention"]
+                 if "free_response_channels" in platform_cfg:
+                     bridged["free_response_channels"] = platform_cfg["free_response_channels"]
++                if "free_response_chats" in platform_cfg:
++                    bridged["free_response_chats"] = platform_cfg["free_response_chats"]
+                 if "mention_patterns" in platform_cfg:
+                     bridged["mention_patterns"] = platform_cfg["mention_patterns"]
++                if "allowed_users" in platform_cfg:
++                    bridged["allowed_users"] = platform_cfg["allowed_users"]
++                if "group_allowed_chats" in platform_cfg:
++                    bridged["group_allowed_chats"] = platform_cfg["group_allowed_chats"]
++                if "reply_triggers" in platform_cfg:
++                    bridged["reply_triggers"] = platform_cfg["reply_triggers"]
++                if "allow_reply_triggers" in platform_cfg:
++                    bridged["allow_reply_triggers"] = platform_cfg["allow_reply_triggers"]
+                 if "dm_policy" in platform_cfg:
+                     bridged["dm_policy"] = platform_cfg["dm_policy"]
+                 if "allow_from" in platform_cfg:
+@@ -894,6 +904,19 @@ def load_gateway_config() -> GatewayConfig:
+                     os.environ["TELEGRAM_REQUIRE_MENTION"] = str(_effective_rm).lower()
+                 if "mention_patterns" in telegram_cfg and not os.getenv("TELEGRAM_MENTION_PATTERNS"):
+                     os.environ["TELEGRAM_MENTION_PATTERNS"] = json.dumps(telegram_cfg["mention_patterns"])
++                if "allowed_users" in telegram_cfg and not os.getenv("TELEGRAM_ALLOWED_USERS"):
++                    allowed = telegram_cfg["allowed_users"]
++                    if isinstance(allowed, list):
++                        allowed = ",".join(str(v) for v in allowed)
++                    os.environ["TELEGRAM_ALLOWED_USERS"] = str(allowed)
++                if "home_channel" in telegram_cfg and not os.getenv("TELEGRAM_HOME_CHANNEL"):
++                    os.environ["TELEGRAM_HOME_CHANNEL"] = str(telegram_cfg["home_channel"])
++                if "home_channel_name" in telegram_cfg and not os.getenv("TELEGRAM_HOME_CHANNEL_NAME"):
++                    os.environ["TELEGRAM_HOME_CHANNEL_NAME"] = str(telegram_cfg["home_channel_name"])
++                if "reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["reply_triggers"]).lower()
++                if "allow_reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["allow_reply_triggers"]).lower()
+                 frc = telegram_cfg.get("free_response_chats")
+                 if frc is not None and not os.getenv("TELEGRAM_FREE_RESPONSE_CHATS"):
+                     if isinstance(frc, list):
+@@ -950,6 +973,45 @@ def load_gateway_config() -> GatewayConfig:
+                         plat_data["extra"] = extra
+                     extra["disable_link_previews"] = telegram_cfg["disable_link_previews"]
+ 
++            # MAX settings → env vars for legacy authorization/check paths.
++            # Secrets (MAX_BOT_TOKEN, MAX_WEBHOOK_SECRET) should still live in .env.
++            max_cfg = yaml_cfg.get("max", {})
++            if isinstance(max_cfg, dict):
++                def _set_max_env(yaml_key: str, env_key: str, *, as_bool: bool = False) -> None:
++                    if yaml_key not in max_cfg or os.getenv(env_key):
++                        return
++                    value = max_cfg[yaml_key]
++                    if isinstance(value, list):
++                        value = ",".join(str(v) for v in value)
++                    elif as_bool:
++                        value = str(value).lower()
++                    os.environ[env_key] = str(value)
++
++                for yaml_key, env_key in (
++                    ("allowed_users", "MAX_ALLOWED_USERS"),
++                    ("group_allowed_users", "MAX_GROUP_ALLOWED_USERS"),
++                    ("transport", "MAX_TRANSPORT"),
++                    ("base_url", "MAX_BASE_URL"),
++                    ("bot_user_id", "MAX_BOT_USER_ID"),
++                    ("bot_username", "MAX_BOT_USERNAME"),
++                    ("webhook_host", "MAX_WEBHOOK_HOST"),
++                    ("webhook_port", "MAX_WEBHOOK_PORT"),
++                    ("webhook_path", "MAX_WEBHOOK_PATH"),
++                    ("webhook_public_url", "MAX_WEBHOOK_PUBLIC_URL"),
++                    ("update_types", "MAX_UPDATE_TYPES"),
++                    ("text_format", "MAX_TEXT_FORMAT"),
++                    ("poll_timeout", "MAX_POLL_TIMEOUT"),
++                    ("poll_idle_sleep", "MAX_POLL_IDLE_SLEEP"),
++                    ("home_channel", "MAX_HOME_CHANNEL"),
++                    ("home_channel_name", "MAX_HOME_CHANNEL_NAME"),
++                ):
++                    _set_max_env(yaml_key, env_key)
++                for yaml_key, env_key in (
++                    ("allow_all_users", "MAX_ALLOW_ALL_USERS"),
++                    ("auto_subscribe", "MAX_AUTO_SUBSCRIBE"),
++                ):
++                    _set_max_env(yaml_key, env_key, as_bool=True)
++
+             whatsapp_cfg = yaml_cfg.get("whatsapp", {})
+             if isinstance(whatsapp_cfg, dict):
+                 if "require_mention" in whatsapp_cfg and not os.getenv("WHATSAPP_REQUIRE_MENTION"):
+diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
+index 0d0ac3866..bee82350f 100644
+--- a/gateway/platforms/telegram.py
++++ b/gateway/platforms/telegram.py
+@@ -2789,6 +2789,16 @@ class TelegramAdapter(BasePlatformAdapter):
+             return {str(part).strip() for part in raw if str(part).strip()}
+         return {part.strip() for part in str(raw).split(",") if part.strip()}
+ 
++    def _telegram_reply_triggers_enabled(self) -> bool:
++        configured = self.config.extra.get("reply_triggers")
++        if configured is None:
++            configured = self.config.extra.get("allow_reply_triggers")
++        if configured is None:
++            configured = os.getenv("TELEGRAM_REPLY_TRIGGERS", "true")
++        if isinstance(configured, bool):
++            return configured
++        return str(configured).strip().lower() in ("true", "1", "yes", "on")
++
+     def _telegram_ignored_threads(self) -> set[int]:
+         raw = self.config.extra.get("ignored_threads")
+         if raw is None:
+@@ -2810,11 +2820,10 @@ class TelegramAdapter(BasePlatformAdapter):
+                 logger.warning("[%s] Ignoring invalid Telegram thread id: %r", self.name, value)
+         return ignored
+ 
+-    def _compile_mention_patterns(self) -> List[re.Pattern]:
+-        """Compile optional regex wake-word patterns for group triggers."""
+-        patterns = self.config.extra.get("mention_patterns")
++    def _load_regex_patterns(self, config_key: str, env_key: str, *, label: str) -> List[re.Pattern]:
++        patterns = self.config.extra.get(config_key)
+         if patterns is None:
+-            raw = os.getenv("TELEGRAM_MENTION_PATTERNS", "").strip()
++            raw = os.getenv(env_key, "").strip()
+             if raw:
+                 try:
+                     loaded = json.loads(raw)
+@@ -2830,8 +2839,9 @@ class TelegramAdapter(BasePlatformAdapter):
+             patterns = [patterns]
+         if not isinstance(patterns, list):
+             logger.warning(
+-                "[%s] telegram mention_patterns must be a list or string; got %s",
++                "[%s] telegram %s must be a list or string; got %s",
+                 self.name,
++                label,
+                 type(patterns).__name__,
+             )
+             return []
+@@ -2843,11 +2853,17 @@ class TelegramAdapter(BasePlatformAdapter):
+             try:
+                 compiled.append(re.compile(pattern, re.IGNORECASE))
+             except re.error as exc:
+-                logger.warning("[%s] Invalid Telegram mention pattern %r: %s", self.name, pattern, exc)
+-        if compiled:
+-            logger.info("[%s] Loaded %d Telegram mention pattern(s)", self.name, len(compiled))
++                logger.warning("[%s] Invalid Telegram %s %r: %s", self.name, label, pattern, exc)
+         return compiled
+ 
++    def _compile_mention_patterns(self) -> List[re.Pattern]:
++        """Compile optional regex wake-word patterns for group triggers."""
++        return self._load_regex_patterns(
++            "mention_patterns",
++            "TELEGRAM_MENTION_PATTERNS",
++            label="mention pattern",
++        )
++
+     def _is_group_chat(self, message: Message) -> bool:
+         chat = getattr(message, "chat", None)
+         if not chat:
+@@ -2915,17 +2931,130 @@ class TelegramAdapter(BasePlatformAdapter):
+                         return True
+         return False
+ 
+-    def _message_matches_mention_patterns(self, message: Message) -> bool:
+-        if not self._mention_patterns:
++    def _message_mentions_other_target(self, message: Message) -> bool:
++        """Return True when the message explicitly addresses someone else.
++
++        Free-response chats are intentionally chatty, but in Telegram groups with
++        multiple bots a message like ``@other_bot help`` or ``/status@other_bot``
++        must not wake this bot. Telegram's MessageEntity objects are the only
++        reliable source here; raw text scanning would misread emails/URLs/code.
++        """
++        if not self._bot:
++            return False
++
++        bot_username = (getattr(self._bot, "username", None) or "").lstrip("@").lower()
++        bot_id = getattr(self._bot, "id", None)
++        expected = f"@{bot_username}" if bot_username else None
++
++        def _iter_sources():
++            yield getattr(message, "text", None) or "", getattr(message, "entities", None) or []
++            yield getattr(message, "caption", None) or "", getattr(message, "caption_entities", None) or []
++
++        for source_text, entities in _iter_sources():
++            for entity in entities:
++                entity_type = str(getattr(entity, "type", "")).split(".")[-1].lower()
++                if entity_type == "mention":
++                    offset = int(getattr(entity, "offset", -1))
++                    length = int(getattr(entity, "length", 0))
++                    if offset < 0 or length <= 0:
++                        continue
++                    mentioned = source_text[offset:offset + length].strip().lower()
++                    if mentioned and mentioned != expected:
++                        return True
++                elif entity_type == "text_mention":
++                    user = getattr(entity, "user", None)
++                    if user and getattr(user, "id", None) != bot_id:
++                        return True
++                elif entity_type == "bot_command" and expected:
++                    offset = int(getattr(entity, "offset", -1))
++                    length = int(getattr(entity, "length", 0))
++                    if offset < 0 or length <= 0:
++                        continue
++                    command_text = source_text[offset:offset + length]
++                    at_index = command_text.find("@")
++                    if at_index < 0:
++                        continue
++                    if command_text[at_index:].strip().lower() != expected:
++                        return True
++        return False
++
++    def _message_matches_patterns(self, message: Message, patterns: List[re.Pattern]) -> bool:
++        if not patterns:
+             return False
+         for candidate in (getattr(message, "text", None), getattr(message, "caption", None)):
+             if not candidate:
+                 continue
+-            for pattern in self._mention_patterns:
++            for pattern in patterns:
+                 if pattern.search(candidate):
+                     return True
+         return False
+ 
++    def _message_matches_mention_patterns(self, message: Message) -> bool:
++        return self._message_matches_patterns(message, self._mention_patterns)
++
++    def _message_directly_addresses_bot(self, message: Message) -> bool:
++        return (
++            self._is_reply_to_bot(message)
++            or self._message_mentions_bot(message)
++            or self._message_matches_mention_patterns(message)
++        )
++
++    def _message_has_leading_vocative(self, message: Message) -> bool:
++        """Return True for generic ``Name, ...`` / ``Name: ...`` addressing.
++
++        Telegram does not emit entities for plain-text names. In free-response
++        groups this catches the common human pattern ``Boris, answer ...``
++        without maintaining a blacklist of every other bot/person in the chat.
++        Direct wake words for this bot are checked before this helper runs.
++        """
++        candidates = [getattr(message, "text", None), getattr(message, "caption", None)]
++        stopwords = {
++            "да", "нет", "ну", "ок", "окей", "ладно", "слушай", "короче",
++            "кстати", "вообще", "блин", "блять", "черт", "чёрт", "а", "и", "но",
++        }
++        for candidate in candidates:
++            if not candidate:
++                continue
++            match = re.match(r"^\s*([@A-Za-zА-Яа-яЁё][\wА-Яа-яЁё-]{1,31})\s*[,：:]\s+\S", candidate)
++            if not match:
++                continue
++            name = match.group(1).lstrip("@").lower()
++            if name and name not in stopwords:
++                return True
++        return False
++
++    def _message_looks_like_question(self, message: Message) -> bool:
++        """Heuristic for ambient group questions not addressed to this bot."""
++        question_starters = (
++            "кто", "что", "где", "когда", "почему", "зачем", "как", "какой", "какая",
++            "какое", "какие", "чей", "чья", "чьё", "чьи", "сколько", "можно ли",
++            "is", "are", "am", "do", "does", "did", "can", "could", "would", "should",
++            "what", "where", "when", "why", "how", "who", "which", "whose",
++        )
++        for candidate in (getattr(message, "text", None), getattr(message, "caption", None)):
++            if not candidate:
++                continue
++            text = candidate.strip()
++            if "?" in text:
++                return True
++            lowered = text.lower()
++            if any(lowered.startswith(prefix + " ") or lowered == prefix for prefix in question_starters):
++                return True
++        return False
++
++    def _is_reply_to_other_bot(self, message: Message) -> bool:
++        if not self._bot:
++            return False
++        reply = getattr(message, "reply_to_message", None)
++        if not reply:
++            return False
++        from_user = getattr(reply, "from_user", None)
++        if not from_user:
++            return False
++        if getattr(from_user, "id", None) == getattr(self._bot, "id", None):
++            return False
++        return bool(getattr(from_user, "is_bot", False))
++
+     def _clean_bot_trigger_text(self, text: Optional[str]) -> Optional[str]:
+         if not text or not self._bot or not getattr(self._bot, "username", None):
+             return text
+@@ -2970,15 +3099,43 @@ class TelegramAdapter(BasePlatformAdapter):
+                     return False
+             except (TypeError, ValueError):
+                 logger.warning("[%s] Ignoring non-numeric Telegram message_thread_id: %r", self.name, thread_id)
+-        if str(getattr(getattr(message, "chat", None), "id", "")) in self._telegram_free_response_chats():
+-            return True
+-        if not self._telegram_require_mention():
+-            return True
+-        if self._is_reply_to_bot(message):
++        mentions_this_bot = self._message_mentions_bot(message)
++        reply_triggers_enabled = self._telegram_reply_triggers_enabled()
++        is_reply_to_bot = self._is_reply_to_bot(message)
++        reply_to_this_bot = is_reply_to_bot and reply_triggers_enabled
++        wake_word_for_this_bot = self._message_matches_mention_patterns(message)
++        mentions_other_target = self._message_mentions_other_target(message)
++        reply_to_other_bot = self._is_reply_to_other_bot(message)
++        leading_vocative = self._message_has_leading_vocative(message)
++        free_response_chats = self._telegram_free_response_chats()
++        require_mention = self._telegram_require_mention()
++        chat_id = str(getattr(getattr(message, "chat", None), "id", ""))
++
++        # Strongest rule: an explicit Telegram @mention/text_mention or
++        # /command@botname aimed at another target must not wake this bot.
++        # This is deliberately stronger than reply context and local wake-word
++        # regexes: if the new message tags another bot/user and does not tag this
++        # bot, it belongs to that target, full stop.
++        if mentions_other_target and not mentions_this_bot:
++            return False
++
++        # For softer heuristics (reply to another bot, or a leading vocative like
++        # "Борис, ..." with no Telegram entity), still allow a fresh explicit
++        # address to this bot to win.
++        if (reply_to_other_bot or leading_vocative) and not (mentions_this_bot or wake_word_for_this_bot):
++            return False
++
++        if mentions_this_bot or reply_to_this_bot or wake_word_for_this_bot:
+             return True
+-        if self._message_mentions_bot(message):
++
++        if chat_id in free_response_chats:
++            # Ambient chat is allowed in free-response groups, but questions are
++            # only answered when directly addressed to this bot.
++            return not self._message_looks_like_question(message)
++
++        if not require_mention:
+             return True
+-        return self._message_matches_mention_patterns(message)
++        return False
+ 
+     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+         """Handle incoming text messages.
+diff --git a/tests/gateway/test_telegram_group_gating.py b/tests/gateway/test_telegram_group_gating.py
+index 52e4a5e6d..d1b19e82c 100644
+--- a/tests/gateway/test_telegram_group_gating.py
++++ b/tests/gateway/test_telegram_group_gating.py
+@@ -12,6 +12,7 @@ def _make_adapter(
+     ignored_threads=None,
+     allow_from=None,
+     group_allow_from=None,
++    reply_triggers=None,
+ ):
+     from gateway.platforms.telegram import TelegramAdapter
+ 
+@@ -28,6 +29,8 @@ def _make_adapter(
+         extra["allow_from"] = allow_from
+     if group_allow_from is not None:
+         extra["group_allow_from"] = group_allow_from
++    if reply_triggers is not None:
++        extra["reply_triggers"] = reply_triggers
+ 
+     adapter = object.__new__(TelegramAdapter)
+     adapter.platform = Platform.TELEGRAM
+@@ -48,13 +51,16 @@ def _group_message(
+     from_user_id=111,
+     thread_id=None,
+     reply_to_bot=False,
++    reply_to_user=None,
+     entities=None,
+     caption=None,
+     caption_entities=None,
+ ):
+     reply_to_message = None
+     if reply_to_bot:
+-        reply_to_message = SimpleNamespace(from_user=SimpleNamespace(id=999))
++        reply_to_message = SimpleNamespace(from_user=SimpleNamespace(id=999, is_bot=True))
++    elif reply_to_user is not None:
++        reply_to_message = SimpleNamespace(from_user=reply_to_user)
+     return SimpleNamespace(
+         text=text,
+         caption=caption,
+@@ -102,6 +108,32 @@ def test_group_messages_can_be_opened_via_config():
+     assert adapter._should_process_message(_group_message("hello everyone")) is True
+ 
+ 
++
++
++def test_group_reply_trigger_can_be_disabled_for_noisy_multi_bot_chats():
++    adapter = _make_adapter(require_mention=True, reply_triggers=False)
++
++    assert adapter._should_process_message(_group_message("replying", reply_to_bot=True)) is False
++    assert adapter._should_process_message(
++        _group_message("hi @hermes_bot", entities=[_mention_entity("hi @hermes_bot")])
++    ) is True
++
++
++def test_direct_only_without_reply_trigger_ignores_plain_replies_in_target_group():
++    adapter = _make_adapter(
++        require_mention=True,
++        free_response_chats=[],
++        mention_patterns=[r"^\s*(Цезарь|Cesair)[,!:：]?\b"],
++        reply_triggers=False,
++    )
++
++    assert adapter._should_process_message(
++        _group_message("тебя не спрашивали", chat_id=-5283179051, reply_to_bot=True)
++    ) is False
++    assert adapter._should_process_message(
++        _group_message("Цезарь, ответь", chat_id=-5283179051)
++    ) is True
++
+ def test_group_messages_can_require_direct_trigger_via_config():
+     adapter = _make_adapter(require_mention=True)
+ 
+@@ -143,13 +175,120 @@ def test_group_messages_can_require_direct_trigger_via_config():
+     assert adapter_no_mention._should_process_message(_group_message("/status"), is_command=True) is True
+ 
+ 
+-def test_free_response_chats_bypass_mention_requirement():
++def test_free_response_chats_allow_ambient_non_questions_without_hijacking_questions():
+     adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
+ 
+-    assert adapter._should_process_message(_group_message("hello everyone", chat_id=-200)) is True
++    assert adapter._should_process_message(_group_message("обычный разговор без вопроса", chat_id=-200)) is True
++    assert adapter._should_process_message(_group_message("кто я?", chat_id=-200)) is False
+     assert adapter._should_process_message(_group_message("hello everyone", chat_id=-201)) is False
+ 
+ 
++
++def test_free_response_chats_ignore_messages_addressed_to_other_bot():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    other_text = "@other_bot посмотри"
++    assert adapter._should_process_message(
++        _group_message(
++            other_text,
++            chat_id=-200,
++            entities=[_mention_entity(other_text, "@other_bot")],
++        )
++    ) is False
++
++    other_command = "/status@other_bot"
++    assert adapter._should_process_message(
++        _group_message(
++            other_command,
++            chat_id=-200,
++            entities=[_bot_command_entity(other_command, other_command)],
++        ),
++        is_command=True,
++    ) is False
++
++
++
++
++def test_explicit_other_mention_beats_local_wake_word_and_reply_context():
++    adapter = _make_adapter(
++        require_mention=True,
++        free_response_chats=["-200"],
++        mention_patterns=[r"^\s*(Цезарь|Cesair)[,!:：]?\b"],
++    )
++
++    text = "@DashaHermesBot Цезарь, вот и сиди"
++    assert adapter._should_process_message(
++        _group_message(
++            text,
++            chat_id=-200,
++            reply_to_bot=True,
++            entities=[_mention_entity(text, "@DashaHermesBot")],
++        )
++    ) is False
++
++def test_free_response_chats_still_accept_direct_mentions_and_replies():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    text = "@hermes_bot посмотри"
++    assert adapter._should_process_message(
++        _group_message(text, chat_id=-200, entities=[_mention_entity(text)])
++    ) is True
++    assert adapter._should_process_message(_group_message("обычный reply", chat_id=-200, reply_to_bot=True)) is True
++
++
++def test_reply_context_does_not_override_fresh_addressing_to_other_bot():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    other_mention = "@other_bot посмотри"
++    assert adapter._should_process_message(
++        _group_message(
++            other_mention,
++            chat_id=-200,
++            reply_to_bot=True,
++            entities=[_mention_entity(other_mention, "@other_bot")],
++        )
++    ) is False
++
++    assert adapter._should_process_message(
++        _group_message("Борис, скажи кто я", chat_id=-200, reply_to_bot=True)
++    ) is False
++
++
++def test_free_response_chats_ignore_replies_to_other_bots():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    assert adapter._should_process_message(
++        _group_message(
++            "да, посмотри",
++            chat_id=-200,
++            reply_to_user=SimpleNamespace(id=12345, is_bot=True),
++        )
++    ) is False
++    assert adapter._should_process_message(
++        _group_message(
++            "обычный reply человеку",
++            chat_id=-200,
++            reply_to_user=SimpleNamespace(id=54321, is_bot=False),
++        )
++    ) is True
++
++
++def test_free_response_chats_ignore_generic_leading_vocative_without_name_blacklist():
++    adapter = _make_adapter(
++        require_mention=True,
++        free_response_chats=["-200"],
++        mention_patterns=[r"^\s*(Федя|Фёдор|Федор)[,:]?\b"],
++    )
++
++    assert adapter._should_process_message(_group_message("Борис, скажи кто я", chat_id=-200)) is False
++    assert adapter._should_process_message(_group_message("Маша, как дела?", chat_id=-200)) is False
++    assert adapter._should_process_message(_group_message("обычное сообщение", chat_id=-200)) is True
++    assert adapter._should_process_message(_group_message("Федя, ты тут?", chat_id=-200)) is True
++    assert adapter._should_process_message(
++        _group_message("@hermes_bot Борис тут?", chat_id=-200, entities=[_mention_entity("@hermes_bot Борис тут?")])
++    ) is True
++
++
+ def test_ignored_threads_drop_group_messages_before_other_gates():
+     adapter = _make_adapter(require_mention=False, free_response_chats=["-200"], ignored_threads=[31, "42"])
+ 
+@@ -179,6 +318,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+     (hermes_home / "config.yaml").write_text(
+         "telegram:\n"
+         "  require_mention: true\n"
++        "  reply_triggers: false\n"
+         "  mention_patterns:\n"
+         "    - \"^\\\\s*chompy\\\\b\"\n"
+         "  free_response_chats:\n"
+-- 
+2.39.5
+
