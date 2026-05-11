@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..72412e60b
+index 000000000..0677d7e7a
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1366 @@
+@@ -0,0 +1,1371 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -276,6 +276,10 @@ index 000000000..72412e60b
 +            return {"effort": effort}
 +
 +    effort = _normalize_codex_reasoning_effort(body.get("reasoning_effort"))
++    if effort:
++        return {"effort": effort}
++
++    effort = _normalize_codex_reasoning_effort(body.get("model_reasoning_effort"))
 +    if effort:
 +        return {"effort": effort}
 +    return None
@@ -707,11 +711,12 @@ index 000000000..72412e60b
 +        payload["model"] = target.model
 +        payload["stream"] = stream
 +        is_chatgpt_codex_backend = _is_chatgpt_codex_backend(target)
-+        if "reasoning_effort" in payload and "reasoning" not in payload:
++        if ("reasoning_effort" in payload or "model_reasoning_effort" in payload) and "reasoning" not in payload:
 +            reasoning = _responses_reasoning_from_chat(payload)
 +            if reasoning:
 +                payload["reasoning"] = reasoning
 +        payload.pop("reasoning_effort", None)
++        payload.pop("model_reasoning_effort", None)
 +        if is_chatgpt_codex_backend:
 +            payload.setdefault("store", False)
 +            if not str(payload.get("instructions") or "").strip():
@@ -1452,10 +1457,10 @@ index 3b0375ff0..17ce1f0eb 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..04ed56ffe
+index 000000000..94519d751
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,929 @@
+@@ -0,0 +1,938 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -1683,7 +1688,7 @@ index 000000000..04ed56ffe
 +                    json={
 +                        "model": "gpt-5.4",
 +                        "input": "hello",
-+                        "reasoning_effort": "high",
++                        "model_reasoning_effort": "high",
 +                        "temperature": 0.2,
 +                    },
 +                )
@@ -1697,6 +1702,7 @@ index 000000000..04ed56ffe
 +        assert kwargs["input"] == "hello"
 +        assert kwargs["stream"] is False
 +        assert kwargs["reasoning"] == {"effort": "high"}
++        assert "model_reasoning_effort" not in kwargs
 +        assert kwargs["temperature"] == 0.2
 +
 +    @pytest.mark.asyncio
@@ -1724,7 +1730,13 @@ index 000000000..04ed56ffe
 +            async with TestClient(TestServer(app)) as cli:
 +                resp = await cli.post(
 +                    "/v1/responses",
-+                    json={"model": "gpt-5.4", "input": "hello", "stream": True, "temperature": 0.2},
++                    json={
++                        "model": "gpt-5.4",
++                        "input": "hello",
++                        "stream": True,
++                        "temperature": 0.2,
++                        "model_reasoning_effort": "low",
++                    },
 +                )
 +                raw = await resp.text()
 +
@@ -1743,6 +1755,8 @@ index 000000000..04ed56ffe
 +        assert kwargs["store"] is False
 +        assert kwargs["instructions"] == "You are a helpful assistant."
 +        assert kwargs["input"] == [{"role": "user", "content": "hello"}]
++        assert kwargs["reasoning"] == {"effort": "low"}
++        assert "model_reasoning_effort" not in kwargs
 +        assert "temperature" not in kwargs
 +        adapter._run_agent.assert_not_called()
 +
