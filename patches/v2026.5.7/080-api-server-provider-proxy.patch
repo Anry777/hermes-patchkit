@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..0677d7e7a
+index 000000000..a11be7f0c
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1371 @@
+@@ -0,0 +1,1378 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -200,6 +200,11 @@ index 000000000..0677d7e7a
 +    "seed",
 +    "logprobs",
 +    "top_logprobs",
++}
++_CODEX_RESPONSES_UNSUPPORTED_SDK_PARAMS = {
++    # VSCode/Codex-style clients may send this as wire metadata, but the
++    # OpenAI Python SDK does not accept it as a responses.create() kwarg.
++    "client_metadata",
 +}
 +
 +
@@ -717,6 +722,8 @@ index 000000000..0677d7e7a
 +                payload["reasoning"] = reasoning
 +        payload.pop("reasoning_effort", None)
 +        payload.pop("model_reasoning_effort", None)
++        for key in _CODEX_RESPONSES_UNSUPPORTED_SDK_PARAMS:
++            payload.pop(key, None)
 +        if is_chatgpt_codex_backend:
 +            payload.setdefault("store", False)
 +            if not str(payload.get("instructions") or "").strip():
@@ -1457,10 +1464,10 @@ index 3b0375ff0..17ce1f0eb 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..94519d751
+index 000000000..d7c8c34ab
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,938 @@
+@@ -0,0 +1,942 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -1690,6 +1697,7 @@ index 000000000..94519d751
 +                        "input": "hello",
 +                        "model_reasoning_effort": "high",
 +                        "temperature": 0.2,
++                        "client_metadata": {"client": "vscode-codex"},
 +                    },
 +                )
 +                data = await resp.json()
@@ -1703,6 +1711,7 @@ index 000000000..94519d751
 +        assert kwargs["stream"] is False
 +        assert kwargs["reasoning"] == {"effort": "high"}
 +        assert "model_reasoning_effort" not in kwargs
++        assert "client_metadata" not in kwargs
 +        assert kwargs["temperature"] == 0.2
 +
 +    @pytest.mark.asyncio
@@ -1736,6 +1745,7 @@ index 000000000..94519d751
 +                        "stream": True,
 +                        "temperature": 0.2,
 +                        "model_reasoning_effort": "low",
++                        "client_metadata": {"client": "vscode-codex"},
 +                    },
 +                )
 +                raw = await resp.text()
@@ -1757,6 +1767,7 @@ index 000000000..94519d751
 +        assert kwargs["input"] == [{"role": "user", "content": "hello"}]
 +        assert kwargs["reasoning"] == {"effort": "low"}
 +        assert "model_reasoning_effort" not in kwargs
++        assert "client_metadata" not in kwargs
 +        assert "temperature" not in kwargs
 +        adapter._run_agent.assert_not_called()
 +

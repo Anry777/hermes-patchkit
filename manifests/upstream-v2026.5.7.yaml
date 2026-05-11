@@ -20,7 +20,7 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "exported",
-      "exported_from": "7bcefd30b79d067b1a85c21736f063e69eb2e826",
+      "exported_from": "235f4089934536c9107a3929f7cd035e95f13281",
       "verification": {
         "focused_tests": [
           "tests/hermes_cli/test_auth_commands.py::test_profile_auth_reads_shared_root_store_even_when_profile_auth_exists",
