@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..7f4b7f5cc
+index 000000000..72412e60b
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1343 @@
+@@ -0,0 +1,1366 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -27,6 +27,8 @@ index 000000000..7f4b7f5cc
 +    from aiohttp import web
 +except ImportError:  # pragma: no cover - imported only when aiohttp is present
 +    web = None  # type: ignore[assignment]
++
++import httpx
 +
 +from hermes_cli.runtime_provider import resolve_runtime_provider
 +from run_agent import OpenAI
@@ -474,9 +476,22 @@ index 000000000..7f4b7f5cc
 +            target = self._resolve_codex_target(seed_model)
 +
 +            def _list_models() -> Dict[str, Any]:
++                if _is_chatgpt_codex_backend(target):
++                    base_url = target.base_url.rstrip("/") or "https://chatgpt.com/backend-api/codex"
++                    resp = httpx.get(
++                        f"{base_url}/models",
++                        params={"client_version": "1.0.0"},
++                        headers={"Authorization": f"Bearer {target.api_key}"},
++                        timeout=15,
++                    )
++                    resp.raise_for_status()
++                    return resp.json()
++
 +                client = self._create_openai_client(target)
 +                try:
-+                    return _object_to_dict(client.models.list())
++                    return _object_to_dict(
++                        client.models.list(extra_query={"client_version": "1.0.0"})
++                    )
 +                finally:
 +                    close = getattr(client, "close", None)
 +                    if callable(close):
@@ -487,6 +502,9 @@ index 000000000..7f4b7f5cc
 +
 +            data = await asyncio.get_running_loop().run_in_executor(None, _list_models)
 +            raw_items = data.get("data") if isinstance(data, dict) else None
++            raw_codex_items = data.get("models") if isinstance(data, dict) else None
++            if not isinstance(raw_items, list) and isinstance(raw_codex_items, list):
++                raw_items = raw_codex_items
 +            if not isinstance(raw_items, list):
 +                raw_items = []
 +            created = int(time.time())
@@ -494,7 +512,7 @@ index 000000000..7f4b7f5cc
 +            seen: set[str] = set()
 +            for raw in raw_items:
 +                raw_dict = raw if isinstance(raw, dict) else _object_to_dict(raw)
-+                model_id = str(raw_dict.get("id") or "").strip()
++                model_id = str(raw_dict.get("id") or raw_dict.get("slug") or "").strip()
 +                if not self._model_allowed(model_id) or model_id in seen:
 +                    continue
 +                seen.add(model_id)
@@ -695,6 +713,11 @@ index 000000000..7f4b7f5cc
 +                payload["reasoning"] = reasoning
 +        payload.pop("reasoning_effort", None)
 +        if is_chatgpt_codex_backend:
++            payload.setdefault("store", False)
++            if not str(payload.get("instructions") or "").strip():
++                payload["instructions"] = "You are a helpful assistant."
++            if isinstance(payload.get("input"), str):
++                payload["input"] = [{"role": "user", "content": payload["input"]}]
 +            for key in _CODEX_CHATGPT_UNSUPPORTED_SAMPLING_PARAMS:
 +                payload.pop(key, None)
 +        return payload
@@ -1429,10 +1452,10 @@ index 3b0375ff0..17ce1f0eb 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..824f51984
+index 000000000..04ed56ffe
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,917 @@
+@@ -0,0 +1,929 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -1594,15 +1617,17 @@ index 000000000..824f51984
 +        adapter = _codex_responses_proxy_adapter()
 +        app = _create_app(adapter)
 +
-+        mock_client = MagicMock()
-+        mock_client.models.list.return_value = SimpleNamespace(data=[
-+            SimpleNamespace(id="gpt-5.4", object="model"),
-+            SimpleNamespace(id="gpt-5.4-mini", object="model"),
-+            SimpleNamespace(id="codex-internal", object="model"),
-+        ])
++        mock_response = MagicMock()
++        mock_response.json.return_value = {
++            "models": [
++                {"slug": "gpt-5.4", "object": "model"},
++                {"slug": "gpt-5.4-mini", "object": "model"},
++                {"slug": "codex-internal", "object": "model"},
++            ]
++        }
 +
 +        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
-+             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++             patch("gateway.api_server_provider_proxy.httpx.get", return_value=mock_response) as mock_get:
 +            mock_resolve.return_value = {
 +                "provider": "openai-codex",
 +                "api_mode": "codex_responses",
@@ -1616,6 +1641,13 @@ index 000000000..824f51984
 +        assert resp.status == 200
 +        assert adapter._mode == "codex_responses_proxy"
 +        assert [item["id"] for item in data["data"]] == ["gpt-5.4"]
++        mock_response.raise_for_status.assert_called_once_with()
++        mock_get.assert_called_once_with(
++            "https://chatgpt.com/backend-api/codex/models",
++            params={"client_version": "1.0.0"},
++            headers={"Authorization": "Bearer ***"},
++            timeout=15,
++        )
 +        mock_resolve.assert_called_once_with(
 +            requested="openai-codex",
 +            explicit_base_url=None,
@@ -1708,6 +1740,9 @@ index 000000000..824f51984
 +        assert "chat.completion.chunk" not in raw
 +        kwargs = mock_client.responses.create.call_args.kwargs
 +        assert kwargs["stream"] is True
++        assert kwargs["store"] is False
++        assert kwargs["instructions"] == "You are a helpful assistant."
++        assert kwargs["input"] == [{"role": "user", "content": "hello"}]
 +        assert "temperature" not in kwargs
 +        adapter._run_agent.assert_not_called()
 +

@@ -168,7 +168,7 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "exported",
-      "exported_from": "4345dcdf0b2a76dad2e1fe89979ca5dffd532c23",
+      "exported_from": "24063a070e7c2bd60792d17a75e5f1bf65a56c9b",
       "verification": {
         "focused_tests": [
           "tests/gateway/test_api_server_provider_proxy.py",
