@@ -1,23 +1,9 @@
-From 45aab9ec5ee2b4644c3f8a838db5ddec440eb5a3 Mon Sep 17 00:00:00 2001
-From: Anry777 <Anry777@users.noreply.github.com>
-Date: Thu, 7 May 2026 22:01:41 +0300
-Subject: [PATCH] feat(api-server): add provider proxy mode
-
----
- gateway/api_server_provider_proxy.py          | 1036 +++++++++++++++++
- gateway/platforms/api_server.py               |   37 +-
- .../gateway/test_api_server_provider_proxy.py |  746 ++++++++++++
- .../docs/user-guide/features/api-server.md    |   70 +-
- 4 files changed, 1881 insertions(+), 8 deletions(-)
- create mode 100644 gateway/api_server_provider_proxy.py
- create mode 100644 tests/gateway/test_api_server_provider_proxy.py
-
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..f20bd5129
+index 000000000..7f4b7f5cc
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1036 @@
+@@ -0,0 +1,1343 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -114,19 +100,43 @@ index 000000000..f20bd5129
 +    return {"error": error}
 +
 +
-+def _object_to_dict(obj: Any) -> Dict[str, Any]:
++def _to_jsonable(obj: Any) -> Any:
++    """Best-effort conversion of SDK objects into JSON-serializable values."""
++    if obj is None or isinstance(obj, (str, int, float, bool)):
++        return obj
 +    if isinstance(obj, dict):
-+        return dict(obj)
++        return {str(key): _to_jsonable(value) for key, value in obj.items()}
++    if isinstance(obj, (list, tuple, set)):
++        return [_to_jsonable(item) for item in obj]
 +    for method in ("model_dump", "dict", "to_dict"):
 +        fn = getattr(obj, method, None)
 +        if callable(fn):
-+            data = fn()
-+            if isinstance(data, dict):
-+                return data
-+    try:
-+        return json.loads(obj.model_dump_json())
-+    except Exception:
-+        return {}
++            try:
++                data = fn()
++            except Exception:
++                data = None
++            if data is not None:
++                return _to_jsonable(data)
++    fn = getattr(obj, "model_dump_json", None)
++    if callable(fn):
++        try:
++            return _to_jsonable(json.loads(fn()))
++        except Exception:
++            pass
++    if hasattr(obj, "__dict__"):
++        return {
++            str(key): _to_jsonable(value)
++            for key, value in vars(obj).items()
++            if not str(key).startswith("_")
++        }
++    return str(obj)
++
++
++def _object_to_dict(obj: Any) -> Dict[str, Any]:
++    data = _to_jsonable(obj)
++    if isinstance(data, dict):
++        return data
++    return {}
 +
 +
 +def _usage_to_openai_dict(response: Any) -> Dict[str, int]:
@@ -340,27 +350,47 @@ index 000000000..f20bd5129
 +class APIServerProviderProxy:
 +    """OpenAI-compatible raw/compat provider proxy for API Server."""
 +
-+    def __init__(self, config: Dict[str, Any]):
++    def __init__(self, config: Dict[str, Any], *, mode: str = "provider_proxy"):
++        self._mode = mode
 +        self._default_model = str(config.get("default_model") or "").strip()
 +        self._require_explicit_model = bool(config.get("require_explicit_model", True))
 +        self._allow_streaming = bool(config.get("allow_streaming", False))
 +        self._models = self._parse_models(config.get("models") or [])
 +        self._models_by_id = {model.public_id: model for model in self._models}
++        self._codex_provider = str(config.get("provider") or config.get("codex_provider") or "openai-codex").strip() or "openai-codex"
++        self._model_discovery = str(config.get("model_discovery") or "catalog").strip().lower() or "catalog"
++        self._allow_model_patterns = self._compile_patterns(config.get("allow_models") or config.get("allow_model_patterns"))
++        self._deny_model_patterns = self._compile_patterns(config.get("deny_models") or config.get("deny_model_patterns"))
++        self._include_done_event = bool(config.get("include_done_event", True))
 +
 +    @classmethod
 +    def from_extra(cls, extra: Dict[str, Any]) -> Optional["APIServerProviderProxy"]:
 +        mode = str(extra.get("mode") or "").strip().lower()
++        if mode == "codex_responses_proxy":
++            codex_config = extra.get("codex_responses_proxy")
++            if not isinstance(codex_config, dict):
++                codex_config = {}
++            return cls(codex_config, mode="codex_responses_proxy")
++
++        codex_config = extra.get("codex_responses_proxy")
++        if isinstance(codex_config, dict) and bool(codex_config.get("enabled", False)):
++            return cls(codex_config, mode="codex_responses_proxy")
++
 +        proxy_config = extra.get("provider_proxy")
 +        if not isinstance(proxy_config, dict):
 +            proxy_config = {}
 +        enabled = bool(proxy_config.get("enabled", False)) or mode == "provider_proxy"
 +        if not enabled:
 +            return None
-+        return cls(proxy_config)
++        return cls(proxy_config, mode="provider_proxy")
 +
 +    @property
 +    def enabled(self) -> bool:
 +        return True
++
++    @property
++    def mode(self) -> str:
++        return self._mode
 +
 +    @staticmethod
 +    def _parse_models(raw_models: Any) -> List[ProxyModelSpec]:
@@ -377,6 +407,36 @@ index 000000000..f20bd5129
 +            seen.add(spec.public_id)
 +            models.append(spec)
 +        return models
++
++    @staticmethod
++    def _compile_patterns(raw_patterns: Any) -> List[re.Pattern[str]]:
++        if not raw_patterns:
++            return []
++        if isinstance(raw_patterns, str):
++            items = [raw_patterns]
++        elif isinstance(raw_patterns, (list, tuple, set)):
++            items = list(raw_patterns)
++        else:
++            items = [str(raw_patterns)]
++        patterns: List[re.Pattern[str]] = []
++        for item in items:
++            pattern = str(item or "").strip()
++            if not pattern:
++                continue
++            try:
++                patterns.append(re.compile(pattern))
++            except re.error:
++                logger.warning("Ignoring invalid provider_proxy model filter pattern: %r", pattern)
++        return patterns
++
++    def _model_allowed(self, model_id: str) -> bool:
++        if not model_id or len(model_id) > _MAX_MODEL_ID_LEN or _INVALID_MODEL_ID_CHARS.search(model_id):
++            return False
++        if self._allow_model_patterns and not any(pattern.search(model_id) for pattern in self._allow_model_patterns):
++            return False
++        if self._deny_model_patterns and any(pattern.search(model_id) for pattern in self._deny_model_patterns):
++            return False
++        return True
 +
 +    def models_response(self) -> Dict[str, Any]:
 +        created = int(time.time())
@@ -397,9 +457,77 @@ index 000000000..f20bd5129
 +        }
 +
 +    async def handle_models(self, request: "web.Request") -> "web.Response":
++        if self._mode == "codex_responses_proxy":
++            return await self._handle_codex_models(request)
 +        return web.json_response(self.models_response())
 +
++    async def _handle_codex_models(self, request: "web.Request") -> "web.Response":
++        if self._model_discovery != "live":
++            return web.json_response(self.models_response())
++
++        seed_model = self._default_model
++        if not seed_model and self._models:
++            seed_model = self._models[0].model
++        seed_model = seed_model or "gpt-5.4"
++
++        try:
++            target = self._resolve_codex_target(seed_model)
++
++            def _list_models() -> Dict[str, Any]:
++                client = self._create_openai_client(target)
++                try:
++                    return _object_to_dict(client.models.list())
++                finally:
++                    close = getattr(client, "close", None)
++                    if callable(close):
++                        try:
++                            close()
++                        except Exception:
++                            pass
++
++            data = await asyncio.get_running_loop().run_in_executor(None, _list_models)
++            raw_items = data.get("data") if isinstance(data, dict) else None
++            if not isinstance(raw_items, list):
++                raw_items = []
++            created = int(time.time())
++            items: List[Dict[str, Any]] = []
++            seen: set[str] = set()
++            for raw in raw_items:
++                raw_dict = raw if isinstance(raw, dict) else _object_to_dict(raw)
++                model_id = str(raw_dict.get("id") or "").strip()
++                if not self._model_allowed(model_id) or model_id in seen:
++                    continue
++                seen.add(model_id)
++                item = dict(raw_dict)
++                item.setdefault("object", "model")
++                item.setdefault("created", created)
++                item.setdefault("owned_by", self._codex_provider)
++                item.setdefault("permission", [])
++                item.setdefault("root", model_id)
++                item.setdefault("parent", None)
++                item["id"] = model_id
++                items.append(item)
++            return web.json_response({"object": "list", "data": items})
++        except Exception as exc:
++            logger.exception("Codex Responses proxy model discovery failed")
++            return web.json_response(
++                _openai_error(
++                    f"Codex Responses proxy model discovery failed: {exc}",
++                    err_type="server_error",
++                    code="codex_responses_proxy_error",
++                ),
++                status=502,
++            )
++
 +    async def handle_chat_completions(self, request: "web.Request") -> "web.Response":
++        if self._mode == "codex_responses_proxy":
++            return web.json_response(
++                _openai_error(
++                    "Chat Completions is not supported in codex_responses_proxy mode; use /v1/responses",
++                    code="unsupported_operation",
++                ),
++                status=400,
++            )
 +        try:
 +            body = await request.json()
 +        except (json.JSONDecodeError, Exception):
@@ -480,6 +608,171 @@ index 000000000..f20bd5129
 +            )
 +
 +        return web.json_response(data)
++
++    async def handle_responses(self, request: "web.Request") -> "web.Response":
++        if self._mode != "codex_responses_proxy":
++            return web.json_response(
++                _openai_error(
++                    "The Responses API is not supported in provider_proxy mode yet",
++                    code="unsupported_operation",
++                ),
++                status=400,
++            )
++
++        try:
++            body = await request.json()
++        except (json.JSONDecodeError, Exception):
++            return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
++        if not isinstance(body, dict):
++            return web.json_response(_openai_error("Request body must be a JSON object"), status=400)
++
++        model_id = str(body.get("model") or self._default_model or "").strip()
++        if not model_id:
++            return web.json_response(_openai_error("Missing required 'model' field", param="model"), status=400)
++        if not self._model_allowed(model_id):
++            return web.json_response(_openai_error("Invalid model id", param="model"), status=400)
++        if self._model_discovery != "live" and self._models_by_id and model_id not in self._models_by_id:
++            return web.json_response(
++                _openai_error(
++                    f"The model '{model_id}' does not exist or is not enabled for this endpoint.",
++                    param="model",
++                    code="model_not_found",
++                ),
++                status=404,
++            )
++
++        try:
++            target = self._resolve_codex_target(model_id)
++            if target.api_mode != "codex_responses":
++                return web.json_response(
++                    _openai_error(
++                        f"codex_responses_proxy requires api_mode 'codex_responses', got '{target.api_mode}'.",
++                        code="unsupported_operation",
++                    ),
++                    status=400,
++                )
++            if body.get("stream"):
++                return await self._stream_codex_responses_passthrough(request, body, target)
++            data = await self._call_codex_responses_passthrough(body, target)
++        except Exception as exc:
++            logger.exception("Codex Responses proxy request failed for model %s", model_id)
++            return web.json_response(
++                _openai_error(
++                    f"Codex Responses proxy request failed: {exc}",
++                    err_type="server_error",
++                    code="codex_responses_proxy_error",
++                ),
++                status=502,
++            )
++        return web.json_response(data)
++
++    def _resolve_codex_target(self, model_id: str) -> ResolvedProxyTarget:
++        runtime = resolve_runtime_provider(
++            requested=self._codex_provider,
++            explicit_base_url=None,
++            explicit_api_key=None,
++            target_model=model_id,
++        )
++        api_mode = str(runtime.get("api_mode") or "codex_responses")
++        return ResolvedProxyTarget(
++            public_id=model_id,
++            provider=str(runtime.get("provider") or self._codex_provider),
++            model=model_id,
++            api_mode=api_mode,
++            base_url=str(runtime.get("base_url") or ""),
++            api_key=str(runtime.get("api_key") or ""),
++            runtime=runtime,
++        )
++
++    def _codex_responses_payload(self, body: Dict[str, Any], target: ResolvedProxyTarget, *, stream: bool) -> Dict[str, Any]:
++        payload = dict(body)
++        payload["model"] = target.model
++        payload["stream"] = stream
++        is_chatgpt_codex_backend = _is_chatgpt_codex_backend(target)
++        if "reasoning_effort" in payload and "reasoning" not in payload:
++            reasoning = _responses_reasoning_from_chat(payload)
++            if reasoning:
++                payload["reasoning"] = reasoning
++        payload.pop("reasoning_effort", None)
++        if is_chatgpt_codex_backend:
++            for key in _CODEX_CHATGPT_UNSUPPORTED_SAMPLING_PARAMS:
++                payload.pop(key, None)
++        return payload
++
++    async def _call_codex_responses_passthrough(
++        self,
++        body: Dict[str, Any],
++        target: ResolvedProxyTarget,
++    ) -> Dict[str, Any]:
++        payload = self._codex_responses_payload(body, target, stream=False)
++
++        def _call() -> Dict[str, Any]:
++            client = self._create_openai_client(target)
++            try:
++                if _is_chatgpt_codex_backend(target):
++                    stream_payload = dict(payload)
++                    stream_payload["stream"] = True
++                    response = self._collect_streaming_response(client.responses.create(**stream_payload))
++                else:
++                    response = client.responses.create(**payload)
++                return _object_to_dict(response)
++            finally:
++                close = getattr(client, "close", None)
++                if callable(close):
++                    try:
++                        close()
++                    except Exception:
++                        pass
++
++        return await asyncio.get_running_loop().run_in_executor(None, _call)
++
++    @staticmethod
++    async def _write_sse_event(response: "web.StreamResponse", event: str, data: Any) -> None:
++        if event:
++            await response.write(f"event: {event}\n".encode())
++        await response.write(f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
++
++    async def _stream_codex_responses_passthrough(
++        self,
++        request: "web.Request",
++        body: Dict[str, Any],
++        target: ResolvedProxyTarget,
++    ) -> "web.StreamResponse":
++        payload = self._codex_responses_payload(body, target, stream=True)
++        response = web.StreamResponse(status=200, headers=self._sse_headers(request))
++        await response.prepare(request)
++        loop = asyncio.get_running_loop()
++        sentinel = object()
++        client = None
++        stream = None
++        try:
++            def _open_stream() -> Any:
++                nonlocal client
++                client = self._create_openai_client(target)
++                return client.responses.create(**payload)
++
++            stream = await loop.run_in_executor(None, _open_stream)
++            iterator = iter(stream)
++            while True:
++                event = await loop.run_in_executor(None, self._next_stream_item, iterator, sentinel)
++                if event is sentinel:
++                    break
++                data = _object_to_dict(event)
++                if not data:
++                    continue
++                event_type = str(data.get("type") or self._event_attr(event, "type", "") or "")
++                await self._write_sse_event(response, event_type, data)
++            if self._include_done_event:
++                await self._write_sse_done(response)
++        finally:
++            for obj in (stream, client):
++                close = getattr(obj, "close", None)
++                if callable(close):
++                    try:
++                        close()
++                    except Exception:
++                        pass
++        return response
 +
 +    def _resolve_target(self, spec: ProxyModelSpec) -> ResolvedProxyTarget:
 +        runtime = resolve_runtime_provider(
@@ -1055,7 +1348,7 @@ index 000000000..f20bd5129
 +                )]
 +        return terminal_response
 diff --git a/gateway/platforms/api_server.py b/gateway/platforms/api_server.py
-index 3b0375ff0..cae95ebf5 100644
+index 3b0375ff0..17ce1f0eb 100644
 --- a/gateway/platforms/api_server.py
 +++ b/gateway/platforms/api_server.py
 @@ -592,6 +592,20 @@ class APIServerAdapter(BasePlatformAdapter):
@@ -1071,9 +1364,9 @@ index 3b0375ff0..cae95ebf5 100644
 +            from gateway.api_server_provider_proxy import APIServerProviderProxy
 +            self._provider_proxy = APIServerProviderProxy.from_extra(extra)
 +            if self._provider_proxy is not None:
-+                self._mode = "provider_proxy"
++                self._mode = getattr(self._provider_proxy, "mode", "provider_proxy")
 +        except Exception as exc:
-+            if self._mode == "provider_proxy":
++            if self._mode in {"provider_proxy", "codex_responses_proxy"}:
 +                raise
 +            logger.debug("Provider proxy mode unavailable: %s", exc)
          self._app: Optional["web.Application"] = None
@@ -1110,22 +1403,16 @@ index 3b0375ff0..cae95ebf5 100644
  
          # Parse request body
          try:
-@@ -1979,6 +1998,14 @@ class APIServerAdapter(BasePlatformAdapter):
+@@ -1979,6 +1998,8 @@ class APIServerAdapter(BasePlatformAdapter):
          auth_err = self._check_auth(request)
          if auth_err:
              return auth_err
 +        if self._provider_proxy is not None:
-+            return web.json_response(
-+                _openai_error(
-+                    "The Responses API is not supported in provider_proxy mode yet",
-+                    code="unsupported_operation",
-+                ),
-+                status=400,
-+            )
++            return await self._provider_proxy.handle_responses(request)
  
          # Long-term memory scope header (see chat_completions for details).
          gateway_session_key, key_err = self._parse_session_key_header(request)
-@@ -2746,6 +2773,14 @@ class APIServerAdapter(BasePlatformAdapter):
+@@ -2746,6 +2767,14 @@ class APIServerAdapter(BasePlatformAdapter):
          auth_err = self._check_auth(request)
          if auth_err:
              return auth_err
@@ -1142,10 +1429,10 @@ index 3b0375ff0..cae95ebf5 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..133409fd5
+index 000000000..824f51984
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,917 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -1191,6 +1478,23 @@ index 000000000..133409fd5
 +                            "model": "gpt-5.4",
 +                        },
 +                    ]
++                },
++            },
++        )
++    )
++
++
++def _codex_responses_proxy_adapter() -> APIServerAdapter:
++    return APIServerAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "mode": "codex_responses_proxy",
++                "codex_responses_proxy": {
++                    "default_model": "gpt-5.4",
++                    "model_discovery": "live",
++                    "allow_models": ["^gpt-5\\."],
++                    "deny_models": ["mini$"],
 +                },
 +            },
 +        )
@@ -1251,6 +1555,19 @@ index 000000000..133409fd5
 +    return payloads
 +
 +
++def _sse_events(raw: str):
++    events = []
++    event_name = None
++    for line in raw.splitlines():
++        if line.startswith("event: "):
++            event_name = line[len("event: "):]
++        elif line.startswith("data: "):
++            data = line[len("data: "):]
++            events.append((event_name, data))
++            event_name = None
++    return events
++
++
 +class TestProviderProxyModels:
 +    @pytest.mark.asyncio
 +    async def test_models_returns_proxy_catalog(self):
@@ -1269,6 +1586,147 @@ index 000000000..133409fd5
 +        ]
 +        assert data["data"][0]["owned_by"] == "openrouter"
 +        assert data["data"][1]["owned_by"] == "openai-codex"
++
++
++class TestCodexResponsesProxy:
++    @pytest.mark.asyncio
++    async def test_models_uses_live_codex_discovery_with_filters(self):
++        adapter = _codex_responses_proxy_adapter()
++        app = _create_app(adapter)
++
++        mock_client = MagicMock()
++        mock_client.models.list.return_value = SimpleNamespace(data=[
++            SimpleNamespace(id="gpt-5.4", object="model"),
++            SimpleNamespace(id="gpt-5.4-mini", object="model"),
++            SimpleNamespace(id="codex-internal", object="model"),
++        ])
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.get("/v1/models")
++                data = await resp.json()
++
++        assert resp.status == 200
++        assert adapter._mode == "codex_responses_proxy"
++        assert [item["id"] for item in data["data"]] == ["gpt-5.4"]
++        mock_resolve.assert_called_once_with(
++            requested="openai-codex",
++            explicit_base_url=None,
++            explicit_api_key=None,
++            target_model="gpt-5.4",
++        )
++
++    @pytest.mark.asyncio
++    async def test_responses_proxy_bypasses_agent_and_passes_responses_body(self):
++        adapter = _codex_responses_proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = SimpleNamespace(
++            id="resp_123",
++            object="response",
++            model="gpt-5.4",
++            output=[],
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://api.openai.com/v1",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={
++                        "model": "gpt-5.4",
++                        "input": "hello",
++                        "reasoning_effort": "high",
++                        "temperature": 0.2,
++                    },
++                )
++                data = await resp.json()
++
++        assert resp.status == 200
++        assert data["id"] == "resp_123"
++        adapter._run_agent.assert_not_called()
++        kwargs = mock_client.responses.create.call_args.kwargs
++        assert kwargs["model"] == "gpt-5.4"
++        assert kwargs["input"] == "hello"
++        assert kwargs["stream"] is False
++        assert kwargs["reasoning"] == {"effort": "high"}
++        assert kwargs["temperature"] == 0.2
++
++    @pytest.mark.asyncio
++    async def test_responses_proxy_streams_responses_sse_without_chat_conversion(self):
++        adapter = _codex_responses_proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        stream_events = iter([
++            SimpleNamespace(type="response.created", response=SimpleNamespace(id="resp_123", model="gpt-5.4")),
++            SimpleNamespace(type="response.output_text.delta", delta="hello"),
++            SimpleNamespace(type="response.completed", response=SimpleNamespace(id="resp_123", model="gpt-5.4")),
++        ])
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = stream_events
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "***",
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={"model": "gpt-5.4", "input": "hello", "stream": True, "temperature": 0.2},
++                )
++                raw = await resp.text()
++
++        assert resp.status == 200
++        assert resp.headers["Content-Type"].startswith("text/event-stream")
++        events = _sse_events(raw)
++        assert events[-1] == (None, "[DONE]")
++        assert [name for name, data in events[:-1]] == [
++            "response.created",
++            "response.output_text.delta",
++            "response.completed",
++        ]
++        assert "chat.completion.chunk" not in raw
++        kwargs = mock_client.responses.create.call_args.kwargs
++        assert kwargs["stream"] is True
++        assert "temperature" not in kwargs
++        adapter._run_agent.assert_not_called()
++
++    @pytest.mark.asyncio
++    async def test_chat_completions_is_rejected_in_codex_responses_proxy_mode(self):
++        adapter = _codex_responses_proxy_adapter()
++        adapter._run_agent = AsyncMock()
++        app = _create_app(adapter)
++
++        async with TestClient(TestServer(app)) as cli:
++            resp = await cli.post(
++                "/v1/chat/completions",
++                json={"model": "gpt-5.4", "messages": [{"role": "user", "content": "hello"}]},
++            )
++            data = await resp.json()
++
++        assert resp.status == 400
++        assert data["error"]["code"] == "unsupported_operation"
++        adapter._run_agent.assert_not_called()
 +
 +
 +class TestProviderProxyChatCompletions:
@@ -1893,7 +2351,7 @@ index 000000000..133409fd5
 +        assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
 +        assert mock_client.responses.create.call_args.kwargs["parallel_tool_calls"] is False
 diff --git a/website/docs/user-guide/features/api-server.md b/website/docs/user-guide/features/api-server.md
-index 16b6eed8c..985b6ced8 100644
+index 16b6eed8c..a966bf8ae 100644
 --- a/website/docs/user-guide/features/api-server.md
 +++ b/website/docs/user-guide/features/api-server.md
 @@ -192,7 +192,9 @@ Delete a stored response.
@@ -1907,7 +2365,7 @@ index 16b6eed8c..985b6ced8 100644
  
  ### GET /v1/capabilities
  
-@@ -304,11 +306,56 @@ Resume a previously paused job.
+@@ -304,11 +306,81 @@ Resume a previously paused job.
  
  Trigger the job to run immediately, out of schedule.
  
@@ -1954,6 +2412,31 @@ index 16b6eed8c..985b6ced8 100644
 +
 +Provider proxy supports both non-streaming and streaming `POST /v1/chat/completions` when `allow_streaming: true` is set. OpenAI-compatible providers use a pass-through chat-completions backend; Responses-backed providers such as `openai-codex` use a compatibility adapter that converts Responses streaming events to OpenAI Chat Completions SSE. The compatibility path preserves OpenAI-style `tools`, `tool_choice`, `parallel_tool_calls`, assistant `tool_calls`, `role: tool` results, and inline `image_url` / `input_image` content parts. For ChatGPT Codex-backed targets, the adapter also maps OpenAI-compatible `reasoning_effort` to Responses `reasoning.effort` and drops sampling parameters that backend rejects, such as `temperature` and `top_p`. Uploaded files (`file`, `input_file`, `file_id`) remain unsupported and return `400 unsupported_content_type`. For IDEs such as RooCode, expose the exact public model ids you want users to select (for example `gpt-5.4`) in the explicit catalog.
 +
++Provider proxy mode supports a second opt-in runtime contract for clients that speak the OpenAI Responses wire API directly, such as Codex-style clients configured with `wire_api = "responses"`. Use `extra.mode: codex_responses_proxy` in a separate service profile when you want Hermes to act as a local Codex OAuth bridge instead of a Chat Completions compatibility gateway:
++
++```yaml
++platforms:
++  api_server:
++    enabled: true
++    extra:
++      host: 127.0.0.1
++      port: 8643
++      key: change-me
++      mode: codex_responses_proxy
++      codex_responses_proxy:
++        default_model: gpt-5.4
++        provider: openai-codex
++        model_discovery: live
++        allow_models:
++          - '^gpt-5\\.'
++          - '^codex-'
++        deny_models:
++          - '.*image.*'
++          - '.*video.*'
++```
++
++In `codex_responses_proxy` mode, `GET /v1/models` can query the live Codex model catalog and apply the configured allow/deny filters. `POST /v1/responses` is forwarded to the `openai-codex` Responses backend with the caller's body preserved as much as possible. `stream: true` returns Responses SSE events (`response.created`, `response.output_text.delta`, `response.completed`, etc.), not Chat Completions chunks. Hermes still enforces the local API-server bearer token and resolves Codex OAuth credentials internally, but it does not create an `AIAgent`, inject Hermes prompts, run Hermes tools, write sessions, or write memory. Keep this mode on a separate profile/port from `provider_proxy` so Chat Completions clients and Responses-native clients do not share incompatible `/v1/models` and streaming contracts.
++
  ## System Prompt Handling
  
 -When a frontend sends a `system` message (Chat Completions) or `instructions` field (Responses API), hermes-agent **layers it on top** of its core system prompt. Your agent keeps all its tools, memory, and skills — the frontend's system prompt adds extra instructions.
@@ -1966,13 +2449,13 @@ index 16b6eed8c..985b6ced8 100644
  - Open WebUI system prompt: "You are a Python expert. Always include type hints."
  - The agent still has terminal, file tools, web search, memory, etc.
  
-@@ -339,15 +386,24 @@ The default bind address (`127.0.0.1`) is for local-only use. Browser access is
+@@ -339,15 +411,24 @@ The default bind address (`127.0.0.1`) is for local-only use. Browser access is
  | `API_SERVER_HOST` | `127.0.0.1` | Bind address (localhost only by default) |
  | `API_SERVER_KEY` | _(none)_ | Bearer token for auth |
  | `API_SERVER_CORS_ORIGINS` | _(none)_ | Comma-separated allowed browser origins |
 -| `API_SERVER_MODEL_NAME` | _(profile name)_ | Model name on `/v1/models`. Defaults to profile name, or `hermes-agent` for default profile. |
 +| `API_SERVER_MODEL_NAME` | _(profile name)_ | Model name on `/v1/models` in agent mode. Defaults to profile name, or `hermes-agent` for default profile. |
-+| `API_SERVER_MODE` | `agent` | Set to `provider_proxy` to enable provider proxy mode. Use config.yaml for the proxy model catalog. |
++| `API_SERVER_MODE` | `agent` | Set to `provider_proxy` for explicit Chat Completions proxy mode or `codex_responses_proxy` for a Responses-native Codex OAuth bridge. Use config.yaml for proxy model policy. |
  
  ### config.yaml
  
@@ -1989,20 +2472,17 @@ index 16b6eed8c..985b6ced8 100644
 +      model_name: hermes-agent
  ```
  
-+For provider proxy mode, set `extra.mode: provider_proxy` and add the `provider_proxy.models` catalog shown above.
++For provider proxy mode, set `extra.mode: provider_proxy` and add the `provider_proxy.models` catalog shown above. For a Responses-native Codex bridge, set `extra.mode: codex_responses_proxy` and configure `codex_responses_proxy` in a dedicated profile.
 +
  ## Security Headers
  
  All responses include security headers:
-@@ -423,7 +479,7 @@ In Open WebUI, add each as a separate connection. The model dropdown shows `alic
+@@ -423,7 +504,7 @@ In Open WebUI, add each as a separate connection. The model dropdown shows `alic
  
  - **Response storage** — stored responses (for `previous_response_id`) are persisted in SQLite and survive gateway restarts. Max 100 stored responses (LRU eviction).
  - **No file upload** — inline images are supported on both `/v1/chat/completions` and `/v1/responses`, but uploaded files (`file`, `input_file`, `file_id`) and non-image document inputs are not supported through the API.
 -- **Model field is cosmetic** — the `model` field in requests is accepted but the actual LLM model used is configured server-side in config.yaml.
-+- **Model field in agent mode is cosmetic** — in default agent mode the `model` field in requests is accepted but the actual LLM model used is configured server-side in config.yaml. In provider proxy mode, `model` must match a configured `provider_proxy.models` catalog entry and controls routing.
++- **Model field in agent mode is cosmetic** — in default agent mode the `model` field in requests is accepted but the actual LLM model used is configured server-side in config.yaml. In `provider_proxy` mode, `model` must match a configured `provider_proxy.models` catalog entry and controls routing. In `codex_responses_proxy` mode, `model` is forwarded to the Codex Responses backend after allow/deny filters.
  
  ## Proxy Mode
  
--- 
-2.39.5
-

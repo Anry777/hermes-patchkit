@@ -159,8 +159,8 @@
       "file": "patches/v2026.5.7/080-api-server-provider-proxy.patch",
       "title_en": "API Server provider proxy mode",
       "title_ru": "Provider proxy mode для API Server",
-      "description_en": "Adds an opt-in raw/compat provider proxy mode to the OpenAI-compatible API server with an explicit model catalog, model-based routing, OpenAI-compatible provider passthrough, and Codex Responses chat compatibility without creating AIAgent instances.",
-      "description_ru": "Добавляет opt-in raw/compat provider proxy mode в OpenAI-compatible API Server: explicit model catalog, routing по model, pass-through для OpenAI-compatible provider'ов и Chat Completions compatibility для Codex Responses без создания AIAgent.",
+      "description_en": "Adds opt-in raw provider proxy modes to the OpenAI-compatible API server: explicit-catalog Chat Completions routing, OpenAI-compatible provider passthrough, Codex Responses chat compatibility, and a Responses-native codex_responses_proxy bridge for openai-codex OAuth clients without creating AIAgent instances.",
+      "description_ru": "Добавляет opt-in raw provider proxy modes в OpenAI-compatible API Server: explicit-catalog Chat Completions routing, pass-through для OpenAI-compatible provider'ов, Chat Completions compatibility для Codex Responses и Responses-native codex_responses_proxy bridge для openai-codex OAuth clients без создания AIAgent.",
       "category": "api",
       "track": "upstream-fix",
       "optional": true,
@@ -168,7 +168,7 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "exported",
-      "exported_from": "45aab9ec504b0532724c5d61d5ce2c8d79626f89",
+      "exported_from": "4345dcdf0b2a76dad2e1fe89979ca5dffd532c23",
       "verification": {
         "focused_tests": [
           "tests/gateway/test_api_server_provider_proxy.py",
