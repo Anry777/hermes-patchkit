@@ -1,5 +1,9 @@
 # Grok2API sidecar bridge
 
+## Legacy status после Hermes 0.14
+
+Этот bridge теперь legacy fallback. В Hermes Agent `v2026.5.16` / `0.14.0` есть native xAI и SuperGrok OAuth provider support через `xai` / `xai-oauth`; для Grok сначала используем его. Sidecar оставляем только если явно нужен отдельный reverse-engineered OpenAI-compatible grok2api process. PatchKit не добавляет новый `v2026.5.16-grok2api-sidecar` profile. Если sidecar всё ещё нужен, применяй `080-api-server-provider-proxy` через `profiles/v2026.5.16-provider-proxy.yaml` и генерируй dedicated local profile этим helper'ом.
+
 Это первый sidecar bridge в PatchKit: используем уже существующий patch `080-api-server-provider-proxy`, чтобы провести локальный grok2api через dedicated Hermes API Server profile.
 
 Идея не в том, чтобы копировать grok2api внутрь Hermes. grok2api остаётся отдельным sidecar, а Hermes даёт catalog-routed OpenAI-compatible front door.
@@ -9,7 +13,7 @@
 - локальный `/v1/models` catalog из Hermes provider_proxy mode;
 - routing по `body.model` к OpenAI-compatible grok2api endpoint;
 - без Hermes `AIAgent`, SOUL prompt, tools, memory, sessions и transcript state в proxy path;
-- обратимый PatchKit profile: `profiles/v2026.4.30-grok2api-sidecar.yaml`;
+- legacy обратимый PatchKit profile на старой 0.12-линии (`profiles/v2026.4.30-grok2api-sidecar.yaml`) плюс helper для ручных dedicated profiles;
 - маленький doctor script: `scripts/grok2api_bridge.py`.
 
 ## Лицензия и граница риска
@@ -23,12 +27,12 @@ MIT покрывает код. Она не меняет Grok/xAI terms, риск
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-grok2api-sidecar.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-provider-proxy.yaml \
   --yes
 ```
 
-Для canary/main проверки используй `manifests/canary-main-a1921c43c.yaml` и `profiles/canary-main-grok2api-sidecar.yaml`.
+Для canary/main проверки используй canary provider-proxy profile и генерируй grok2api catalog локально; исторические `*-grok2api-sidecar` profiles оставлены для воспроизводимости, не как active 0.14 path.
 
 ## Запустить grok2api как loopback sidecar
 

@@ -1,0 +1,6 @@
+{
+  "name": "v2026.5.16-provider-proxy",
+  "patches": [
+    "api-server-provider-proxy"
+  ]
+}

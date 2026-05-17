@@ -391,7 +391,7 @@ def _add_endpoint_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Grok2API sidecar bridge helper for Hermes PatchKit provider_proxy mode.')
+    parser = argparse.ArgumentParser(description='Grok2API sidecar bridge helper for Hermes PatchKit provider_proxy mode (legacy fallback; prefer native xai/xai-oauth on Hermes 0.14+).')
     sub = parser.add_subparsers(dest='command', required=True)
 
     doctor = sub.add_parser('doctor', help='Check a grok2api OpenAI-compatible endpoint.')

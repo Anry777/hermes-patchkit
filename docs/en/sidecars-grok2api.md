@@ -1,5 +1,9 @@
 # Grok2API sidecar bridge
 
+## Legacy status after Hermes 0.14
+
+This bridge is now a legacy fallback. Hermes Agent `v2026.5.16` / `0.14.0` has native xAI and SuperGrok OAuth provider support via `xai` / `xai-oauth`; use that first for Grok. Keep this sidecar only when you explicitly need a separate reverse-engineered OpenAI-compatible grok2api process. PatchKit does not add a new `v2026.5.16-grok2api-sidecar` profile. If you still need the sidecar, apply `080-api-server-provider-proxy` through `profiles/v2026.5.16-provider-proxy.yaml` and generate a dedicated local profile with this helper.
+
 This is the first PatchKit sidecar bridge: use the existing `080-api-server-provider-proxy` patch to expose a local grok2api deployment through a dedicated Hermes API Server profile.
 
 The point is not to copy grok2api into Hermes. Keep grok2api as a separate sidecar and let Hermes provide the catalog-routed OpenAI-compatible front door.
@@ -9,7 +13,7 @@ The point is not to copy grok2api into Hermes. Keep grok2api as a separate sidec
 - a local `/v1/models` catalog served by Hermes provider_proxy mode;
 - model routing by `body.model` to a grok2api OpenAI-compatible endpoint;
 - no Hermes `AIAgent`, SOUL prompt, tools, memory, sessions, or transcript state in the proxy path;
-- a reversible PatchKit profile: `profiles/v2026.4.30-grok2api-sidecar.yaml`;
+- a legacy reversible PatchKit profile on the old 0.12 line (`profiles/v2026.4.30-grok2api-sidecar.yaml`) plus a helper for manual dedicated profiles;
 - a small doctor script: `scripts/grok2api_bridge.py`.
 
 ## License and risk boundary
@@ -23,12 +27,12 @@ MIT covers the code. It does not change Grok/xAI terms, account-ban risk, Cloudf
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-grok2api-sidecar.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-provider-proxy.yaml \
   --yes
 ```
 
-For canary/main testing, use `manifests/canary-main-a1921c43c.yaml` with `profiles/canary-main-grok2api-sidecar.yaml`.
+For canary/main testing, use the canary provider-proxy profile and generate the grok2api catalog locally; the historical `*-grok2api-sidecar` profiles are kept for reproducibility, not as the active 0.14 path.
 
 ## Start grok2api as a loopback sidecar
 

@@ -1,5 +1,37 @@
 # News
 
+## 2026-05-16 — Hermes 0.14 re-anchor and Grok sidecar retirement path
+
+PatchKit is now refreshed against official Hermes Agent `v2026.5.16` / `0.14.0`. The active core profile stays release-pinned and uses `manifests/upstream-v2026.5.16.yaml` with `profiles/v2026.5.16-personal.yaml`.
+
+The Grok2API sidecar bridge is no longer the preferred Grok path. Hermes 0.14 has native xAI / SuperGrok provider support through `xai` and `xai-oauth`; use that first. Keep `scripts/grok2api_bridge.py`, the old sidecar docs, and `examples/sidecars/grok2api/` only as a legacy fallback for cases where native xAI OAuth does not cover the target account/model/client.
+
+What changed operationally:
+
+- active patch units `020`, `030`, `040`, `050`, `061`, `070`, and `080` were re-exported for `v2026.5.16`;
+- `020`, `030`, and `040` are narrower rewrites on top of adjacent upstream 0.14 primitives;
+- `080-api-server-provider-proxy` remains the generic provider proxy / Codex Responses proxy layer and is not replaced by native xAI;
+- no new release-pinned Grok2API profile is added for 0.14.
+
+---
+
+# Новости
+
+## 2026-05-16 — Re-anchor на Hermes 0.14 и retirement path для Grok sidecar
+
+PatchKit refresh'нут against official Hermes Agent `v2026.5.16` / `0.14.0`. Активный core profile остаётся release-pinned и использует `manifests/upstream-v2026.5.16.yaml` + `profiles/v2026.5.16-personal.yaml`.
+
+Grok2API sidecar bridge больше не preferred Grok path. В Hermes 0.14 есть native xAI / SuperGrok provider support через `xai` и `xai-oauth`; сначала используем его. `scripts/grok2api_bridge.py`, старые sidecar docs и `examples/sidecars/grok2api/` оставлены только как legacy fallback, если native xAI OAuth не закрывает нужный account/model/client.
+
+Операционно:
+
+- active patch units `020`, `030`, `040`, `050`, `061`, `070` и `080` re-exported для `v2026.5.16`;
+- `020`, `030` и `040` стали более узкими rewrites поверх соседних upstream 0.14 primitives;
+- `080-api-server-provider-proxy` остаётся generic provider proxy / Codex Responses proxy layer и не заменяется native xAI;
+- новый release-pinned Grok2API profile для 0.14 не добавляется.
+
+---
+
 ## 2026-04-30 — Grok2API sidecar bridge: Grok-style models behind Hermes Provider Proxy
 
 This is the kind of PatchKit feature that changes what the repo can do.

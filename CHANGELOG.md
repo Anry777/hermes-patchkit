@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-16 — Hermes 0.14 re-anchor
+
+- added release-pinned `v2026.5.16` / Hermes Agent `0.14.0` manifest and profiles: `v2026.5.16-upstream-fixes`, `v2026.5.16-provider-proxy`, and `v2026.5.16-personal`;
+- refreshed active patch units `020`, `030`, `040`, `050`, `061`, `070`, and `080` against official tag `v2026.5.16`;
+- kept `020`, `030`, and `040` as narrower overlays on top of adjacent upstream auth, credential-pool, and Telegram gating primitives instead of dropping them;
+- marked the Grok2API sidecar bridge as legacy fallback infrastructure now that Hermes 0.14 has native `xai` / `xai-oauth` support; no new active `v2026.5.16-grok2api-sidecar` profile is shipped;
+- kept `080-api-server-provider-proxy` as the generic provider proxy / Codex Responses proxy layer; native xAI does not replace it.
+
 All notable changes to this project will be documented in this file.
 
 The format follows Keep a Changelog.

@@ -14,11 +14,15 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'README.ru.md',
         repo_root / 'manifests/upstream-v2026.4.23.yaml',
         repo_root / 'manifests/upstream-v2026.4.30.yaml',
+        repo_root / 'manifests/upstream-v2026.5.16.yaml',
         repo_root / 'profiles/minimal.yaml',
         repo_root / 'profiles/v2026.4.30-upstream-fixes.yaml',
         repo_root / 'profiles/v2026.4.30-personal.yaml',
         repo_root / 'profiles/v2026.4.30-provider-proxy.yaml',
         repo_root / 'profiles/v2026.4.30-grok2api-sidecar.yaml',
+        repo_root / 'profiles/v2026.5.16-upstream-fixes.yaml',
+        repo_root / 'profiles/v2026.5.16-personal.yaml',
+        repo_root / 'profiles/v2026.5.16-provider-proxy.yaml',
         repo_root / 'scripts/apply.py',
         repo_root / 'scripts/migrate_profile_config.py',
         repo_root / 'scripts/pin_runtime_dependencies.py',
@@ -30,6 +34,7 @@ def verify_self(repo_root: Path) -> None:
 
     load_manifest(repo_root / 'manifests/upstream-v2026.4.23.yaml')
     load_manifest(repo_root / 'manifests/upstream-v2026.4.30.yaml')
+    load_manifest(repo_root / 'manifests/upstream-v2026.5.16.yaml')
     load_profile(repo_root / 'profiles/minimal.yaml')
     load_profile(repo_root / 'profiles/personal.yaml')
     load_profile(repo_root / 'profiles/full.yaml')
@@ -37,6 +42,9 @@ def verify_self(repo_root: Path) -> None:
     load_profile(repo_root / 'profiles/v2026.4.30-personal.yaml')
     load_profile(repo_root / 'profiles/v2026.4.30-provider-proxy.yaml')
     load_profile(repo_root / 'profiles/v2026.4.30-grok2api-sidecar.yaml')
+    load_profile(repo_root / 'profiles/v2026.5.16-upstream-fixes.yaml')
+    load_profile(repo_root / 'profiles/v2026.5.16-personal.yaml')
+    load_profile(repo_root / 'profiles/v2026.5.16-provider-proxy.yaml')
 
     for script in (repo_root / 'scripts').glob('*.py'):
         py_compile.compile(str(script), doraise=True)

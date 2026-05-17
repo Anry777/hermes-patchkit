@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: the Grok2API sidecar bridge can now expose selected Grok-style chat models through Hermes Provider Proxy, with safe `/v1/models` discovery into an explicit allowlist. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.5.16` / `0.14.0`. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
@@ -22,8 +22,8 @@ If you want a local Hermes-hosted endpoint that can front multiple provider mode
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-provider-proxy.yaml \
   --yes
 ```
 
@@ -32,8 +32,8 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 Headless mode for CI/scripts:
@@ -41,8 +41,8 @@ Headless mode for CI/scripts:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 The default update check is safe: it fetches upstream metadata, clones the upstream candidate into `/tmp`, checks the selected patch set there, and writes a report under `reports/`. It does not apply patches or merge upstream into your live checkout.
@@ -53,8 +53,8 @@ Example output:
 Hermes PatchKit update check
 
 Repo:      /home/me/.hermes/hermes-agent
-Manifest:  upstream-v2026.4.30.yaml
-Current:   runtime-upstream-v2026.4.30 @ 73bf3ab
+Manifest:  upstream-v2026.5.16.yaml
+Current:   runtime-upstream-v2026.5.16 @ a91a57f
 Upstream:  origin/main @ abc1234
 
 Patch status:
@@ -91,13 +91,13 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
 - `scripts/clean_profile_config.py` — post-update profile cleanup: generates `config.yaml.example` from live `config.yaml` with redaction and keeps only secrets/tokens active in `.env` by default.
-- `scripts/grok2api_bridge.py` — helper for a dedicated Grok2API sidecar bridge on top of provider_proxy mode;
+- `scripts/grok2api_bridge.py` — legacy helper for a dedicated Grok2API sidecar bridge; keep it only as a fallback if native `xai` / `xai-oauth` does not cover the use case;
 - maintained patch and feature catalog: [docs/en/patches.md](docs/en/patches.md);
 - planned UI control-plane line: [docs/en/ui-control-plane-plan.md](docs/en/ui-control-plane-plan.md).
 
 Recent patch highlights:
 
-- Grok2API sidecar bridge — a protocol-level integration that keeps grok2api outside Hermes while exposing it through the `080` provider_proxy gateway, including automatic `/v1/models` → Hermes catalog sync. See [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md).
+- `v2026.5.16` / Hermes 0.14 re-anchor — active core overlays are refreshed against the official release tag. Grok2API sidecar remains documented as a legacy fallback, not an active default path.
 - `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls. The IDE path covers streaming, tool calls, inline images, RooCode `reasoning_effort`, and Codex sampling-parameter filtering.
 - `070-max-platform-plugin` — the release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval buttons, and compact edit-in-place tool progress without raw non-verbose command previews.
 
@@ -111,8 +111,8 @@ python3 scripts/verify.py --self-check
 
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 If you prefer non-interactive output:
@@ -120,8 +120,8 @@ If you prefer non-interactive output:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 For a single patch:
@@ -129,7 +129,7 @@ For a single patch:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
   --patch codex-auxiliary-tool-role-flattening
 ```
 

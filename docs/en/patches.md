@@ -4,7 +4,7 @@ This file is the public catalog for supported PatchKit patch units and workflow 
 
 Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.py` against your Hermes checkout before applying anything.
 
-Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specific patch files live under `patches/v2026.4.30/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.4.30`, not post-release `main`.
+Current release anchor: `manifests/upstream-v2026.5.16.yaml`. The release-specific patch files live under `patches/v2026.5.16/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.5.16` / Hermes Agent `0.14.0`, not post-release `main`.
 
 ## Available patch units
 
@@ -17,7 +17,7 @@ Current release anchor: `manifests/upstream-v2026.4.30.yaml`. The release-specif
 | `050-homeassistant-tool-config-url` | exported | Lets Home Assistant tools read `platforms.homeassistant.extra.url` from profile `config.yaml` when `HASS_URL` is absent. | Keeps env override compatibility and the existing `homeassistant.local` fallback; includes focused tool/config regression coverage plus a live read-only smoke check. |
 | `060-codex-memory-flush-responses-contract` | exported, needs refresh check | Keeps Codex memory flush on the Responses transport contract. | Conflicts with current fetched upstream in `run_agent.py`; refresh or retire before the next live upstream merge. |
 | `061-codex-auxiliary-tool-role-flattening` | exported | Flattens unsupported transcript roles such as `tool` before auxiliary Codex Responses calls. | Applies cleanly in the latest live smoke check. |
-| `070-max-platform-plugin` | exported | Adds MAX messenger as an official Hermes platform plugin rather than core gateway patches. | Single local-overlay patch for the `v2026.4.30` release manifest. It ships `plugins/platforms/max/plugin.yaml`, `plugins/platforms/max/adapter.py`, webhook-first production delivery, explicit polling fallback for local testing, native image/file/audio attachments (including official `AudioAttachment` transcription and MIME handling when MAX Bot API delivers it), group-chat typing indicators via `POST /chats/{chatId}/actions`, configurable in-chat tool progress for MAX (`display.platforms.max.tool_progress`, default `new`, `off` disables it) with compact/coalesced edit-in-place updates through `PUT /messages?message_id=...` and no raw non-verbose command previews, native approval buttons through MAX inline keyboard callbacks / `POST /answers?callback_id=...`, safe `MEDIA:` handling, `send_message` media delivery, and MAX Markdown formatting. Enable the plugin separately with Hermes plugin/config workflow and set `MAX_BOT_TOKEN`. |
+| `070-max-platform-plugin` | exported | Adds MAX messenger as an official Hermes platform plugin rather than core gateway patches. | Single local-overlay patch for the `v2026.5.16` release manifest. It ships `plugins/platforms/max/plugin.yaml`, `plugins/platforms/max/adapter.py`, webhook-first production delivery, explicit polling fallback for local testing, native image/file/audio attachments (including official `AudioAttachment` transcription and MIME handling when MAX Bot API delivers it), group-chat typing indicators via `POST /chats/{chatId}/actions`, configurable in-chat tool progress for MAX (`display.platforms.max.tool_progress`, default `new`, `off` disables it) with compact/coalesced edit-in-place updates through `PUT /messages?message_id=...` and no raw non-verbose command previews, native approval buttons through MAX inline keyboard callbacks / `POST /answers?callback_id=...`, safe `MEDIA:` handling, `send_message` media delivery, and MAX Markdown formatting. Enable the plugin separately with Hermes plugin/config workflow and set `MAX_BOT_TOKEN`. |
 | `080-api-server-provider-proxy` | exported | Adds opt-in raw provider proxy modes to the OpenAI-compatible API Server: `provider_proxy` keeps `/v1/models` as an explicit catalog and routes `/v1/chat/completions`; `codex_responses_proxy` exposes a Responses-native Codex OAuth bridge on `/v1/responses` without creating an `AIAgent`. | Generic upstream-candidate patch. Supports non-streaming and streaming Chat Completions for OpenAI-compatible providers, plus a compatibility path for `openai-codex`/Responses that adapts Responses streams into OpenAI Chat Completion SSE chunks, maps `reasoning_effort`, and filters ChatGPT Codex-rejected sampling params such as `temperature`. The new Responses-native mode keeps Responses SSE events (`response.created`, `response.output_text.delta`, `response.completed`) and can live-discover Codex models with allow/deny filters. `/v1/runs` still fails closed as an unsupported operation. |
 | `200-dashboard-profile-api` | exported | Adds an authenticated read-only profile inventory API for the built-in dashboard. | First upstream-candidate patch in the `200`–`249` UI/control-plane line; does not expose secrets, session messages, or log contents. |
 | `201-dashboard-profile-selector` | exported | Adds the built-in Profiles page and sidebar selector/cards on top of `200-dashboard-profile-api`. | Shows model/provider, skills, env presence, gateway status, paths, session counts, and log-file metadata; selection does not mutate the global active profile. |
@@ -53,8 +53,8 @@ Use the dedicated profile when you want to install just this provider gateway pa
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-provider-proxy.yaml \
   --yes
 ```
 
@@ -62,16 +62,17 @@ Canary/main users should use `manifests/canary-main-a1921c43c.yaml` with `profil
 
 ### Grok2API sidecar bridge
 
-The first provider_proxy sidecar pack is documented in [sidecars-grok2api.md](sidecars-grok2api.md). It keeps grok2api deployed separately, adds PatchKit profiles that select only `080`, ships loopback Docker Compose/config examples, and provides `scripts/grok2api_bridge.py` for config rendering and endpoint smoke checks. This is intentionally an explicit sidecar integration, not a vendored Grok provider and not part of default profiles.
+The first provider_proxy sidecar pack is documented in [sidecars-grok2api.md](sidecars-grok2api.md), but after Hermes `0.14.0` it is legacy fallback infrastructure. Prefer native upstream `xai` / `xai-oauth` for Grok and SuperGrok. The old grok2api helper/examples stay available for explicit self-hosted fallback cases, but PatchKit does not add a new `v2026.5.16-grok2api-sidecar` active profile.
 
-## Release `v2026.4.30` compatibility
+## Release `v2026.5.16` / Hermes 0.14 compatibility
 
-The release manifest intentionally excludes patch units that no longer fit the official release cleanly:
+The 0.14 manifest keeps the active core overlays release-pinned and excludes old dashboard/UI `200`–`215` work from the personal runtime line. Retirement audit result:
 
-- `010-cli-tui-idle-refresh-fix` is superseded by upstream idle repaint changes in `v2026.4.30`.
-- `060-codex-memory-flush-responses-contract` is obsolete because the old `flush_memories` path was removed/refactored upstream.
-- MAX support is now a single release-pinned local-overlay plugin patch, `070-max-platform-plugin`; the previous split `070`-`077` core-gateway chain is kept only in legacy/canary manifests, not in `upstream-v2026.4.30.yaml`.
-- Active `v2026.4.30` upstream/profile patches: `020`, `030`, `040`, `050`, `061`, `070-max-platform-plugin`, optional `080`, and UI/control-plane `200`–`215`.
+- `010-cli-tui-idle-refresh-fix` remains superseded upstream.
+- `060-codex-memory-flush-responses-contract` remains obsolete after upstream memory-flush refactors.
+- `020`, `030`, and `040` were refreshed as narrower overlays on top of adjacent upstream auth, credential-pool, and Telegram gating primitives.
+- `050`, `061`, `070-max-platform-plugin`, and `080-api-server-provider-proxy` still carry PatchKit behavior not replaced by upstream 0.14.
+- Grok2API sidecar profiles are legacy fallback only; use native `xai` / `xai-oauth` first.
 
 ## Planned `200`+ UI line
 

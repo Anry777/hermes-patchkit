@@ -7,8 +7,8 @@ Start with the update checker:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 Or use the terminal UI:
@@ -16,8 +16,8 @@ Or use the terminal UI:
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml
 ```
 
 What happens:
@@ -72,8 +72,8 @@ If you want schema migration, runtime dependency pins, and cleanup to run immedi
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.4.30.yaml \
-  --profile profiles/v2026.4.30-upstream-fixes.yaml \
+  --manifest manifests/upstream-v2026.5.16.yaml \
+  --profile profiles/v2026.5.16-upstream-fixes.yaml \
   --migrate-profile-config \
   --pin-runtime-dependencies \
   --clean-profile-config \
