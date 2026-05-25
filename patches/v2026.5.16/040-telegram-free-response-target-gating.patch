@@ -1,17 +1,17 @@
-From 1396522473f0b559b0d8f24966737e54177d80d5 Mon Sep 17 00:00:00 2001
+From ce5673aed9de54a2d4da96deb68b5e9f8b931f3c Mon Sep 17 00:00:00 2001
 From: Anry777 <Anry777@users.noreply.github.com>
-Date: Sun, 17 May 2026 11:54:03 +0300
+Date: Mon, 25 May 2026 19:47:33 +0300
 Subject: [PATCH] patchkit: refresh telegram-free-response-target-gating for
- v2026.5.16
+ forum topics
 
 ---
- gateway/config.py                           |  62 ++++++
- gateway/platforms/telegram.py               | 213 +++++++++++++++++---
- tests/gateway/test_telegram_group_gating.py | 144 ++++++++++++-
- 3 files changed, 383 insertions(+), 36 deletions(-)
+ gateway/config.py                           |  67 +++++
+ gateway/platforms/telegram.py               | 289 +++++++++++++++-----
+ tests/gateway/test_telegram_group_gating.py | 206 +++++++++++++-
+ 3 files changed, 495 insertions(+), 67 deletions(-)
 
 diff --git a/gateway/config.py b/gateway/config.py
-index 7180f1ddb..c187ef076 100644
+index 7180f1ddb..7dac45676 100644
 --- a/gateway/config.py
 +++ b/gateway/config.py
 @@ -823,8 +823,18 @@ def load_gateway_config() -> GatewayConfig:
@@ -53,7 +53,19 @@ index 7180f1ddb..c187ef076 100644
                  frc = telegram_cfg.get("free_response_chats")
                  if frc is not None and not os.getenv("TELEGRAM_FREE_RESPONSE_CHATS"):
                      if isinstance(frc, list):
-@@ -1054,6 +1077,45 @@ def load_gateway_config() -> GatewayConfig:
+@@ -1013,6 +1036,11 @@ def load_gateway_config() -> GatewayConfig:
+                     if isinstance(ignored_threads, list):
+                         ignored_threads = ",".join(str(v) for v in ignored_threads)
+                     os.environ["TELEGRAM_IGNORED_THREADS"] = str(ignored_threads)
++                allowed_threads = telegram_cfg.get("allowed_threads")
++                if allowed_threads is not None and not os.getenv("TELEGRAM_ALLOWED_THREADS"):
++                    if isinstance(allowed_threads, list):
++                        allowed_threads = ",".join(str(v) for v in allowed_threads)
++                    os.environ["TELEGRAM_ALLOWED_THREADS"] = str(allowed_threads)
+                 if "reactions" in telegram_cfg and not os.getenv("TELEGRAM_REACTIONS"):
+                     os.environ["TELEGRAM_REACTIONS"] = str(telegram_cfg["reactions"]).lower()
+                 if "proxy_url" in telegram_cfg and not os.getenv("TELEGRAM_PROXY"):
+@@ -1054,6 +1082,45 @@ def load_gateway_config() -> GatewayConfig:
                              plat_data["extra"] = extra
                          extra[_telegram_extra_key] = telegram_cfg[_telegram_extra_key]
  
@@ -100,10 +112,10 @@ index 7180f1ddb..c187ef076 100644
              if isinstance(whatsapp_cfg, dict):
                  if "require_mention" in whatsapp_cfg and not os.getenv("WHATSAPP_REQUIRE_MENTION"):
 diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
-index 4c56937e5..293ece3a6 100644
+index 4c56937e5..fd6372022 100644
 --- a/gateway/platforms/telegram.py
 +++ b/gateway/platforms/telegram.py
-@@ -3781,6 +3781,16 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -3781,32 +3781,51 @@ class TelegramAdapter(BasePlatformAdapter):
              return {str(part).strip() for part in raw if str(part).strip()}
          return {part.strip() for part in str(raw).split(",") if part.strip()}
  
@@ -120,9 +132,37 @@ index 4c56937e5..293ece3a6 100644
      def _telegram_ignored_threads(self) -> set[int]:
          raw = self.config.extra.get("ignored_threads")
          if raw is None:
-@@ -3802,11 +3812,10 @@ class TelegramAdapter(BasePlatformAdapter):
-                 logger.warning("[%s] Ignoring invalid Telegram thread id: %r", self.name, value)
-         return ignored
+             raw = os.getenv("TELEGRAM_IGNORED_THREADS", "")
+ 
++        return self._parse_thread_id_set(raw, label="ignored")
++
++    def _telegram_allowed_threads(self) -> set[int]:
++        raw = self.config.extra.get("allowed_threads")
++        if raw is None:
++            raw = os.getenv("TELEGRAM_ALLOWED_THREADS", "")
++
++        return self._parse_thread_id_set(raw, label="allowed")
++
++    def _parse_thread_id_set(self, raw: Any, *, label: str) -> set[int]:
+         if isinstance(raw, list):
+             values = raw
+         else:
+             values = str(raw).split(",")
+ 
+-        ignored: set[int] = set()
++        parsed: set[int] = set()
+         for value in values:
+             text = str(value).strip()
+             if not text:
+                 continue
+             try:
+-                ignored.add(int(text))
++                parsed.add(int(text))
+             except (TypeError, ValueError):
+-                logger.warning("[%s] Ignoring invalid Telegram thread id: %r", self.name, value)
+-        return ignored
++                logger.warning("[%s] Ignoring invalid Telegram %s thread id: %r", self.name, label, value)
++        return parsed
  
 -    def _compile_mention_patterns(self) -> List[re.Pattern]:
 -        """Compile optional regex wake-word patterns for group triggers."""
@@ -135,7 +175,7 @@ index 4c56937e5..293ece3a6 100644
              if raw:
                  try:
                      loaded = json.loads(raw)
-@@ -3822,8 +3831,9 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -3822,8 +3841,9 @@ class TelegramAdapter(BasePlatformAdapter):
              patterns = [patterns]
          if not isinstance(patterns, list):
              logger.warning(
@@ -146,7 +186,7 @@ index 4c56937e5..293ece3a6 100644
                  type(patterns).__name__,
              )
              return []
-@@ -3835,11 +3845,17 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -3835,11 +3855,17 @@ class TelegramAdapter(BasePlatformAdapter):
              try:
                  compiled.append(re.compile(pattern, re.IGNORECASE))
              except re.error as exc:
@@ -167,7 +207,7 @@ index 4c56937e5..293ece3a6 100644
      def _is_group_chat(self, message: Message) -> bool:
          chat = getattr(message, "chat", None)
          if not chat:
-@@ -3907,13 +3923,60 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -3907,13 +3933,60 @@ class TelegramAdapter(BasePlatformAdapter):
                          return True
          return False
  
@@ -231,7 +271,7 @@ index 4c56937e5..293ece3a6 100644
                  if pattern.search(candidate):
                      return True
          return False
-@@ -3926,6 +3989,72 @@ class TelegramAdapter(BasePlatformAdapter):
+@@ -3926,6 +3999,72 @@ class TelegramAdapter(BasePlatformAdapter):
          """
          return self._telegram_guest_mode() and self._message_mentions_bot(message)
  
@@ -304,8 +344,54 @@ index 4c56937e5..293ece3a6 100644
      def _clean_bot_trigger_text(self, text: Optional[str]) -> Optional[str]:
          if not text or not self._bot or not getattr(self._bot, "username", None):
              return text
-@@ -3965,33 +4094,51 @@ class TelegramAdapter(BasePlatformAdapter):
-                     return False
+@@ -3933,65 +4072,87 @@ class TelegramAdapter(BasePlatformAdapter):
+         cleaned = re.sub(rf"(?i)@{username}\b[,:\-]*\s*", "", text).strip()
+         return cleaned or text
+ 
+-    def _should_process_message(self, message: Message, *, is_command: bool = False) -> bool:
+-        """Apply Telegram group trigger rules.
+-
+-        DMs remain unrestricted. Group/supergroup messages are accepted when:
+-        - the chat passes the ``allowed_chats`` whitelist (when set), or
+-          ``guest_mode`` is enabled and the bot is explicitly mentioned
+-        - the chat is explicitly allowlisted in ``free_response_chats``
+-        - ``require_mention`` is disabled
+-        - the message replies to the bot
+-        - the bot is @mentioned
+-        - the text/caption matches a configured regex wake-word pattern
+-
+-        When ``allowed_chats`` is non-empty, it remains a hard gate except for
+-        the narrow ``guest_mode`` bypass: group/supergroup messages that
+-        explicitly @mention this bot. Replies and regex wake words do not bypass
+-        ``allowed_chats``. When ``require_mention`` is enabled, slash commands are not given
+-        special treatment — they must pass the same mention/reply checks
+-        as any other group message.  Users can still trigger commands via
+-        the Telegram bot menu (``/command@botname``) or by explicitly
+-        mentioning the bot (``@botname /command``), both of which are
+-        recognised as mentions by :meth:`_message_mentions_bot`.
+-        """
++    def _telegram_message_gate_decision(self, message: Message, *, is_command: bool = False) -> tuple[bool, str]:
++        """Apply Telegram group trigger rules and return (allowed, reason)."""
+         if not self._is_group_chat(message):
+-            return True
++            return True, "not_group_chat"
+ 
+         thread_id = getattr(message, "message_thread_id", None)
++        allowed_threads = self._telegram_allowed_threads()
++        explicit_allowed_thread = False
++        if allowed_threads:
++            try:
++                if thread_id is None or int(thread_id) not in allowed_threads:
++                    return False, "thread_not_allowed"
++                explicit_allowed_thread = True
++            except (TypeError, ValueError):
++                logger.warning("[%s] Ignoring non-numeric Telegram message_thread_id: %r", self.name, thread_id)
++                return False, "thread_non_numeric"
+         if thread_id is not None:
+             try:
+                 if int(thread_id) in self._telegram_ignored_threads():
+-                    return False
++                    return False, "thread_ignored"
              except (TypeError, ValueError):
                  logger.warning("[%s] Ignoring non-numeric Telegram message_thread_id: %r", self.name, thread_id)
 -
@@ -318,6 +404,8 @@ index 4c56937e5..293ece3a6 100644
 -        # allowed_chats check (whitelist). When set, group messages from chats
 -        # outside the whitelist are ignored unless guest_mode permits this
 -        # exact message as an explicit direct mention. DMs are excluded above.
++                return False, "thread_non_numeric"
++
 +        mentions_this_bot = self._message_mentions_bot(message)
 +        guest_mention = self._telegram_guest_mode() and mentions_this_bot
 +        reply_triggers_enabled = self._telegram_reply_triggers_enabled()
@@ -336,8 +424,42 @@ index 4c56937e5..293ece3a6 100644
 +        # the whitelist. DMs were accepted above.
          allowed = self._telegram_allowed_chats()
 -        if allowed and chat_id_str not in allowed:
+-            return guest_mention
 +        if allowed and chat_id not in allowed:
-             return guest_mention
++            if guest_mention:
++                return True, "direct_trigger"
++            return False, "chat_not_allowed"
++
++        # Strongest rule: an explicit Telegram @mention/text_mention or
++        # /command@botname aimed at another target must not wake this bot.
++        if mentions_other_target and not mentions_this_bot:
++            return False, "mentions_other_target"
++
++        # Softer heuristics: reply to another bot, or leading vocative like
++        # "Борис, ..." with no Telegram entity.  In an explicitly owned Telegram
++        # forum topic with require_mention disabled, Telegram may still attach a
++        # reply_to_message from another bot/service message to ordinary topic
++        # posts.  Do not let that metadata defeat the explicit topic allowlist;
++        # keep blocking real leading vocatives and explicit mentions to others.
++        if reply_to_other_bot and not (mentions_this_bot or wake_word_for_this_bot):
++            if not (explicit_allowed_thread and not require_mention):
++                return False, "reply_to_other_bot"
++        if leading_vocative and not (mentions_this_bot or wake_word_for_this_bot):
++            return False, "leading_vocative_other_target"
++
++        if mentions_this_bot or reply_to_this_bot or wake_word_for_this_bot:
++            return True, "direct_trigger"
++
++        if chat_id in free_response_chats:
++            # Ambient chat is allowed in free-response groups, but questions are
++            # only answered when directly addressed to this bot.
++            if self._message_looks_like_question(message):
++                return False, "free_response_question_without_trigger"
++            return True, "free_response_chat"
++
++        if not require_mention:
++            return True, "require_mention_disabled"
++        return False, "mention_required_but_missing"
  
 -        if guest_mention:
 -            return True
@@ -346,43 +468,29 @@ index 4c56937e5..293ece3a6 100644
 -        if not self._telegram_require_mention():
 -            return True
 -        if self._is_reply_to_bot(message):
-+        # Strongest rule: an explicit Telegram @mention/text_mention or
-+        # /command@botname aimed at another target must not wake this bot.
-+        # This is deliberately stronger than reply context and local wake-word
-+        # regexes: if the new message tags another bot/user and does not tag this
-+        # bot, it belongs to that target, full stop.
-+        if mentions_other_target and not mentions_this_bot:
-+            return False
-+
-+        # For softer heuristics (reply to another bot, or a leading vocative like
-+        # "Борис, ..." with no Telegram entity), still allow a fresh explicit
-+        # address to this bot to win.
-+        if (reply_to_other_bot or leading_vocative) and not (mentions_this_bot or wake_word_for_this_bot):
-+            return False
-+
-+        if mentions_this_bot or reply_to_this_bot or wake_word_for_this_bot:
-             return True
+-            return True
 -        # When guest_mode is True, _is_guest_mention already called
 -        # _message_mentions_bot above — skip the redundant second call.
 -        if not self._telegram_guest_mode() and self._message_mentions_bot(message):
-+
-+        if chat_id in free_response_chats:
-+            # Ambient chat is allowed in free-response groups, but questions are
-+            # only answered when directly addressed to this bot.
-+            return not self._message_looks_like_question(message)
-+
-+        if not require_mention:
-             return True
+-            return True
 -        return self._message_matches_mention_patterns(message)
-+        return False
++    def _should_process_message(self, message: Message, *, is_command: bool = False) -> bool:
++        """Apply Telegram group trigger rules."""
++        allowed, _reason = self._telegram_message_gate_decision(message, is_command=is_command)
++        return allowed
  
      async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          """Handle incoming text messages.
 diff --git a/tests/gateway/test_telegram_group_gating.py b/tests/gateway/test_telegram_group_gating.py
-index 282320ad1..40aa21e21 100644
+index 282320ad1..92331033e 100644
 --- a/tests/gateway/test_telegram_group_gating.py
 +++ b/tests/gateway/test_telegram_group_gating.py
-@@ -14,6 +14,7 @@ def _make_adapter(
+@@ -10,10 +10,12 @@ def _make_adapter(
+     free_response_chats=None,
+     mention_patterns=None,
+     ignored_threads=None,
++    allowed_threads=None,
+     allow_from=None,
      group_allow_from=None,
      allowed_chats=None,
      guest_mode=None,
@@ -390,7 +498,16 @@ index 282320ad1..40aa21e21 100644
  ):
      from gateway.platforms.telegram import TelegramAdapter
  
-@@ -34,6 +35,8 @@ def _make_adapter(
+@@ -26,6 +28,8 @@ def _make_adapter(
+         extra["mention_patterns"] = mention_patterns
+     if ignored_threads is not None:
+         extra["ignored_threads"] = ignored_threads
++    if allowed_threads is not None:
++        extra["allowed_threads"] = allowed_threads
+     if allow_from is not None:
+         extra["allow_from"] = allow_from
+     if group_allow_from is not None:
+@@ -34,6 +38,8 @@ def _make_adapter(
          extra["allowed_chats"] = allowed_chats
      if guest_mode is not None:
          extra["guest_mode"] = guest_mode
@@ -399,7 +516,7 @@ index 282320ad1..40aa21e21 100644
  
      adapter = object.__new__(TelegramAdapter)
      adapter.platform = Platform.TELEGRAM
-@@ -54,13 +57,16 @@ def _group_message(
+@@ -54,13 +60,16 @@ def _group_message(
      from_user_id=111,
      thread_id=None,
      reply_to_bot=False,
@@ -417,7 +534,7 @@ index 282320ad1..40aa21e21 100644
      return SimpleNamespace(
          text=text,
          caption=caption,
-@@ -108,6 +114,32 @@ def test_group_messages_can_be_opened_via_config():
+@@ -108,6 +117,32 @@ def test_group_messages_can_be_opened_via_config():
      assert adapter._should_process_message(_group_message("hello everyone")) is True
  
  
@@ -450,7 +567,7 @@ index 282320ad1..40aa21e21 100644
  def test_group_messages_can_require_direct_trigger_via_config():
      adapter = _make_adapter(require_mention=True)
  
-@@ -149,10 +181,11 @@ def test_group_messages_can_require_direct_trigger_via_config():
+@@ -149,10 +184,11 @@ def test_group_messages_can_require_direct_trigger_via_config():
      assert adapter_no_mention._should_process_message(_group_message("/status"), is_command=True) is True
  
  
@@ -464,7 +581,7 @@ index 282320ad1..40aa21e21 100644
      assert adapter._should_process_message(_group_message("hello everyone", chat_id=-201)) is False
  
  
-@@ -202,6 +235,110 @@ def test_guest_mode_mention_dropped_in_ignored_thread():
+@@ -202,6 +238,110 @@ def test_guest_mode_mention_dropped_in_ignored_thread():
      )
      assert adapter._should_process_message(mentioned) is False
  
@@ -575,7 +692,53 @@ index 282320ad1..40aa21e21 100644
  
  def test_ignored_threads_drop_group_messages_before_other_gates():
      adapter = _make_adapter(require_mention=False, free_response_chats=["-200"], ignored_threads=[31, "42"])
-@@ -233,6 +370,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+@@ -211,6 +351,45 @@ def test_ignored_threads_drop_group_messages_before_other_gates():
+     assert adapter._should_process_message(_group_message("hello everyone", chat_id=-200, thread_id=99)) is True
+ 
+ 
++def test_allowed_threads_drop_group_messages_outside_owned_topic():
++    adapter = _make_adapter(require_mention=False, allowed_threads=[7, "9"])
++
++    assert adapter._should_process_message(_group_message("hello everyone", thread_id=7)) is True
++    assert adapter._should_process_message(_group_message("hello everyone", thread_id=9)) is True
++    assert adapter._should_process_message(_group_message("hello everyone", thread_id=8)) is False
++    assert adapter._should_process_message(_group_message("hello everyone", thread_id=None)) is False
++
++
++def test_owned_allowed_thread_ambient_messages_ignore_reply_to_other_bot_metadata():
++    adapter = _make_adapter(require_mention=False, allowed_threads=[7])
++
++    assert adapter._should_process_message(
++        _group_message(
++            "пинг без обращения",
++            thread_id=7,
++            reply_to_user=SimpleNamespace(id=12345, is_bot=True),
++        )
++    ) is True
++
++
++def test_owned_allowed_thread_keeps_explicit_other_target_guards():
++    adapter = _make_adapter(
++        require_mention=False,
++        allowed_threads=[7],
++        mention_patterns=[r"^\s*(Федя|Фёдор|Федор)[,:]?\b"],
++    )
++
++    other_mention = "@other_bot посмотри"
++    assert adapter._should_process_message(
++        _group_message(
++            other_mention,
++            thread_id=7,
++            entities=[_mention_entity(other_mention, "@other_bot")],
++        )
++    ) is False
++    assert adapter._should_process_message(_group_message("Борис, посмотри", thread_id=7)) is False
++
++
+ def test_regex_mention_patterns_allow_custom_wake_words():
+     adapter = _make_adapter(require_mention=True, mention_patterns=[r"^\s*chompy\b"])
+ 
+@@ -233,6 +412,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
          "telegram:\n"
          "  require_mention: true\n"
          "  guest_mode: true\n"
@@ -583,6 +746,30 @@ index 282320ad1..40aa21e21 100644
          "  mention_patterns:\n"
          "    - \"^\\\\s*chompy\\\\b\"\n"
          "  free_response_chats:\n"
+@@ -389,3 +569,23 @@ def test_config_bridges_telegram_ignored_threads(monkeypatch, tmp_path):
+ 
+     assert config is not None
+     assert __import__("os").environ["TELEGRAM_IGNORED_THREADS"] == "31,42"
++
++
++def test_config_bridges_telegram_allowed_threads(monkeypatch, tmp_path):
++    hermes_home = tmp_path / ".hermes"
++    hermes_home.mkdir()
++    (hermes_home / "config.yaml").write_text(
++        "telegram:\n"
++        "  allowed_threads:\n"
++        "    - 7\n"
++        "    - \"9\"\n",
++        encoding="utf-8",
++    )
++
++    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
++    monkeypatch.delenv("TELEGRAM_ALLOWED_THREADS", raising=False)
++
++    config = load_gateway_config()
++
++    assert config is not None
++    assert __import__("os").environ["TELEGRAM_ALLOWED_THREADS"] == "7,9"
 -- 
 2.39.5
 

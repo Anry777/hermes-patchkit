@@ -77,7 +77,7 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "exported",
-      "exported_from": "1396522473f0b559b0d8f24966737e54177d80d5",
+      "exported_from": "ce5673aed9de54a2d4da96deb68b5e9f8b931f3c",
       "verification": {
         "focused_tests": [
           "tests/gateway/test_telegram_group_gating.py",
