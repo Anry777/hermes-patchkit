@@ -163,7 +163,7 @@ index 48a9a76b3..0f7a4b2ea 100644
              # Extract text and tool calls from the Responses output.
              # Items may be SDK objects (attrs) or dicts (raw/fallback paths),
 diff --git a/run_agent.py b/run_agent.py
-index 1ca365fbd..081867387 100644
+index 1ca365fbd..2b2d50559 100644
 --- a/run_agent.py
 +++ b/run_agent.py
 @@ -7106,6 +7106,75 @@ class AIAgent:
@@ -367,7 +367,24 @@ index 1ca365fbd..081867387 100644
              except (_httpx.RemoteProtocolError, _httpx.ReadTimeout, _httpx.ConnectError, ConnectionError) as exc:
                  if attempt < max_stream_retries:
                      logger.debug(
-@@ -7306,26 +7423,13 @@ class AIAgent:
+@@ -7278,6 +7395,7 @@ class AIAgent:
+         terminal_response = None
+         collected_output_items: list = []
+         collected_text_deltas: list = []
++        has_tool_calls = False
+         try:
+             for event in stream_or_response:
+                 self._touch_activity("receiving stream response")
+@@ -7298,6 +7416,8 @@ class AIAgent:
+                         delta = event.get("delta", "")
+                     if delta:
+                         collected_text_deltas.append(delta)
++                elif event_type and "function_call" in event_type:
++                    has_tool_calls = True
+ 
+                 if event_type not in {"response.completed", "response.incomplete", "response.failed"}:
+                     continue
+@@ -7306,26 +7426,13 @@ class AIAgent:
                  if terminal_response is None and isinstance(event, dict):
                      terminal_response = event.get("response")
                  if terminal_response is not None:
@@ -395,7 +412,7 @@ index 1ca365fbd..081867387 100644
 +                        terminal_response,
 +                        collected_output_items=collected_output_items,
 +                        text_parts=collected_text_deltas,
-+                        has_tool_calls=False,
++                        has_tool_calls=has_tool_calls,
 +                        log_label="Codex fallback stream",
 +                    )
                      return terminal_response
@@ -496,7 +513,7 @@ index 626295db4..356c2aed1 100644
      """_resolve_auto vision branch skips providers that have no vision on
      their main endpoint (e.g. Kimi Coding Plan /coding) and falls through
 diff --git a/tests/run_agent/test_run_agent_codex_responses.py b/tests/run_agent/test_run_agent_codex_responses.py
-index 5652281eb..8a97db6d9 100644
+index 5652281eb..19ccdc84f 100644
 --- a/tests/run_agent/test_run_agent_codex_responses.py
 +++ b/tests/run_agent/test_run_agent_codex_responses.py
 @@ -176,6 +176,19 @@ class _FakeResponsesStream:
@@ -519,7 +536,7 @@ index 5652281eb..8a97db6d9 100644
  class _FakeCreateStream:
      def __init__(self, events):
          self._events = list(events)
-@@ -485,6 +498,151 @@ def test_run_codex_stream_fallback_parses_create_stream_events(monkeypatch):
+@@ -485,6 +498,180 @@ def test_run_codex_stream_fallback_parses_create_stream_events(monkeypatch):
      assert response.output[0].content[0].text == "streamed create ok"
  
  
@@ -665,6 +682,35 @@ index 5652281eb..8a97db6d9 100644
 +    assert response is terminal_response
 +    assert response.output == [output_item]
 +    assert response.usage.total_tokens == 3
++    assert create_stream.closed is True
++
++
++def test_codex_create_stream_fallback_does_not_synthesize_text_after_function_call(monkeypatch):
++    """Parity with upstream: fallback text deltas must not erase tool-call intent."""
++    agent = _build_agent(monkeypatch)
++    terminal_response = SimpleNamespace(
++        output=None,
++        usage=SimpleNamespace(input_tokens=2, output_tokens=1, total_tokens=3),
++        status="completed",
++        model="gpt-5-codex",
++    )
++    create_stream = _FakeCreateStream(
++        [
++            SimpleNamespace(type="response.output_text.delta", delta="incidental text"),
++            SimpleNamespace(type="response.function_call_arguments.delta", delta='{"cmd"'),
++            SimpleNamespace(type="response.completed", response=terminal_response),
++        ]
++    )
++    agent.client = SimpleNamespace(
++        responses=SimpleNamespace(
++            create=lambda **kwargs: create_stream,
++        )
++    )
++
++    response = agent._run_codex_create_stream_fallback(_codex_request_kwargs())
++
++    assert response is terminal_response
++    assert response.output == []
 +    assert create_stream.closed is True
 +
 +
