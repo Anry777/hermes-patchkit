@@ -1,5 +1,5 @@
 diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
-index 48a9a76b3..0f7a4b2ea 100644
+index 48a9a76b3..32da8a27f 100644
 --- a/agent/auxiliary_client.py
 +++ b/agent/auxiliary_client.py
 @@ -772,6 +772,52 @@ class _CodexCompletionsAdapter:
@@ -55,7 +55,7 @@ index 48a9a76b3..0f7a4b2ea 100644
          try:
              # Collect output items and text deltas during streaming —
              # the Codex backend can return empty response.output from
-@@ -779,50 +825,70 @@ class _CodexCompletionsAdapter:
+@@ -779,50 +825,82 @@ class _CodexCompletionsAdapter:
              collected_output_items: List[Any] = []
              collected_text_deltas: List[str] = []
              has_function_calls = False
@@ -117,7 +117,7 @@ index 48a9a76b3..0f7a4b2ea 100644
 +                    final = stream.get_final_response()
 +                    if final is None and terminal_response is not None:
 +                        final = terminal_response
-+                    recovered_type_error = None
++                    recovered_stream_error = None
 +                except TypeError as _type_err:
 +                    _err_msg = str(_type_err)
 +                    if "NoneType" in _err_msg and "iterable" in _err_msg:
@@ -128,7 +128,19 @@ index 48a9a76b3..0f7a4b2ea 100644
 +                            _err_msg,
 +                        )
 +                        final = terminal_response
-+                        recovered_type_error = _type_err
++                        recovered_stream_error = _type_err
++                    else:
++                        raise
++                except RuntimeError as _runtime_err:
++                    _err_msg = str(_runtime_err)
++                    if "response.completed" in _err_msg:
++                        logger.warning(
++                            "Codex auxiliary: get_final_response() missed response.completed. "
++                            "Recovering from collected stream events. err=%s",
++                            _err_msg,
++                        )
++                        final = terminal_response
++                        recovered_stream_error = _runtime_err
 +                    else:
 +                        raise
  
@@ -157,8 +169,8 @@ index 48a9a76b3..0f7a4b2ea 100644
 +            # Backfill empty/None output from collected stream events while
 +            # preserving final response metadata when the SDK supplied one.
 +            final = _backfill_responses_output(final)
-+            if final is None and recovered_type_error is not None:
-+                raise recovered_type_error
++            if final is None and recovered_stream_error is not None:
++                raise recovered_stream_error
  
              # Extract text and tool calls from the Responses output.
              # Items may be SDK objects (attrs) or dicts (raw/fallback paths),
@@ -419,10 +431,10 @@ index 1ca365fbd..2b2d50559 100644
          finally:
              close_fn = getattr(stream_or_response, "close", None)
 diff --git a/tests/agent/test_auxiliary_client.py b/tests/agent/test_auxiliary_client.py
-index 626295db4..356c2aed1 100644
+index 626295db4..df9417bc4 100644
 --- a/tests/agent/test_auxiliary_client.py
 +++ b/tests/agent/test_auxiliary_client.py
-@@ -2039,6 +2039,89 @@ class TestCodexAdapterReasoningTranslation:
+@@ -2039,6 +2039,100 @@ class TestCodexAdapterReasoningTranslation:
          assert captured.get("include") == ["reasoning.encrypted_content"]
  
  
@@ -507,6 +519,17 @@ index 626295db4..356c2aed1 100644
 +            adapter.create(messages=[{"role": "user", "content": "hi"}])
 +
 +        assert exc_info.value is original_error
++
++    def test_recovers_missing_completed_runtime_error_from_text_deltas(self):
++        original_error = RuntimeError("Didn't receive a `response.completed` event.")
++        adapter = self._adapter_for_stream(self._FakeStream(
++            [SimpleNamespace(type="response.output_text.delta", delta="Recovered title")],
++            final_error=original_error,
++        ))
++
++        response = adapter.create(messages=[{"role": "user", "content": "hi"}])
++
++        assert response.choices[0].message.content == "Recovered title"
 +
 +
  class TestVisionAutoSkipsKimiCoding:
