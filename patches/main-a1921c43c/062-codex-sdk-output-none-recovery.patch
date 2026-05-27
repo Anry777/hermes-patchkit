@@ -1,8 +1,8 @@
 diff --git a/run_agent.py b/run_agent.py
-index 1ca365fbd..e7af273be 100644
+index 1ca365fbd..10c0dc217 100644
 --- a/run_agent.py
 +++ b/run_agent.py
-@@ -7171,30 +7171,64 @@ class AIAgent:
+@@ -7171,31 +7171,110 @@ class AIAgent:
                                  sum(len(p) for p in self._codex_streamed_text_parts),
                                  self._client_log_context(),
                              )
@@ -74,5 +74,51 @@ index 1ca365fbd..e7af273be 100644
 +                            if final_response is None:
 +                                raise
                      return final_response
++            except TypeError as _type_err:
++                # OpenAI SDK ≤ 2.38.0 bug: parse_response() iterates
++                # ``for output in response.output:`` without guarding None.
++                # When ChatGPT Codex backend sends response.completed with
++                # output:null, the iterator inside ``for event in stream:``
++                # raises TypeError before we even reach get_final_response().
++                # Recover from collected streaming data if available.
++                _err_msg = str(_type_err)
++                if "NoneType" in _err_msg and "iterable" in _err_msg:
++                    logger.warning(
++                        "Codex stream: TypeError during stream iteration "
++                        "(SDK bug: response.output is None in response.completed). "
++                        "Recovering from collected stream events. %s err=%s",
++                        self._client_log_context(), _err_msg,
++                    )
++                    if collected_output_items:
++                        final_response = SimpleNamespace(
++                            output=list(collected_output_items),
++                            status="completed",
++                        )
++                        logger.debug(
++                            "Codex stream: backfilled %d output items from stream events (iteration recovery)",
++                            len(collected_output_items),
++                        )
++                        return final_response
++                    elif self._codex_streamed_text_parts and not has_tool_calls:
++                        assembled = "".join(self._codex_streamed_text_parts)
++                        final_response = SimpleNamespace(
++                            output=[SimpleNamespace(
++                                type="message",
++                                role="assistant",
++                                status="completed",
++                                content=[SimpleNamespace(type="output_text", text=assembled)],
++                            )],
++                            status="completed",
++                        )
++                        logger.debug(
++                            "Codex stream: synthesized output from %d text deltas (%d chars, iteration recovery)",
++                            len(self._codex_streamed_text_parts), len(assembled),
++                        )
++                        return final_response
++                    else:
++                        raise
++                else:
++                    raise
              except (_httpx.RemoteProtocolError, _httpx.ReadTimeout, _httpx.ConnectError, ConnectionError) as exc:
                  if attempt < max_stream_retries:
+                     logger.debug(
