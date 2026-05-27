@@ -1,3 +1,103 @@
+diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
+index 48a9a76b3..511ab8be9 100644
+--- a/agent/auxiliary_client.py
++++ b/agent/auxiliary_client.py
+@@ -785,27 +785,61 @@ class _CodexCompletionsAdapter:
+                 timeout_timer.start()
+             _check_cancelled()
+             with self._client.responses.stream(**resp_kwargs) as stream:
+-                for _event in stream:
+-                    _check_cancelled()
+-                    _etype = getattr(_event, "type", "")
+-                    if _etype == "response.output_item.done":
+-                        _done = getattr(_event, "item", None)
+-                        if _done is not None:
+-                            collected_output_items.append(_done)
+-                    elif "output_text.delta" in _etype:
+-                        _delta = getattr(_event, "delta", "")
+-                        if _delta:
+-                            collected_text_deltas.append(_delta)
+-                    elif "function_call" in _etype:
+-                        has_function_calls = True
++                try:
++                    for _event in stream:
++                        _check_cancelled()
++                        _etype = getattr(_event, "type", "")
++                        if _etype == "response.output_item.done":
++                            _done = getattr(_event, "item", None)
++                            if _done is not None:
++                                collected_output_items.append(_done)
++                        elif "output_text.delta" in _etype:
++                            _delta = getattr(_event, "delta", "")
++                            if _delta:
++                                collected_text_deltas.append(_delta)
++                        elif "function_call" in _etype:
++                            has_function_calls = True
++                except TypeError as _type_err:
++                    # OpenAI SDK ≤ 2.38.0 bug: parse_response() iterates
++                    # ``for output in response.output:`` without guarding None.
++                    # When ChatGPT Codex backend sends response.completed with
++                    # output:null, the iterator inside ``for event in stream:``
++                    # raises TypeError. Recover from collected stream data.
++                    _err_msg = str(_type_err)
++                    if "NoneType" in _err_msg and "iterable" in _err_msg:
++                        logger.warning(
++                            "Codex auxiliary: TypeError during stream iteration "
++                            "(SDK bug: response.output is None). Recovering from "
++                            "collected stream events. err=%s",
++                            _err_msg,
++                        )
++                    else:
++                        raise
+                 _check_cancelled()
+-                final = stream.get_final_response()
++                try:
++                    final = stream.get_final_response()
++                except TypeError as _type_err:
++                    _err_msg = str(_type_err)
++                    if "NoneType" in _err_msg and "iterable" in _err_msg:
++                        logger.warning(
++                            "Codex auxiliary: get_final_response() raised TypeError "
++                            "(SDK bug: response.output is None). Recovering from "
++                            "collected stream events. err=%s",
++                            _err_msg,
++                        )
++                        final = None
++                    else:
++                        raise
+ 
+             # Backfill empty output from collected stream events
++            # (or None after TypeError recovery above).
+             _output = getattr(final, "output", None)
+-            if isinstance(_output, list) and not _output:
++            if final is None or (isinstance(_output, list) and not _output):
+                 if collected_output_items:
+-                    final.output = list(collected_output_items)
++                    final = SimpleNamespace(
++                        output=list(collected_output_items),
++                        status="completed",
++                    )
+                     logger.debug(
+                         "Codex auxiliary: backfilled %d output items from stream events",
+                         len(collected_output_items),
+@@ -815,10 +849,13 @@ class _CodexCompletionsAdapter:
+                     # a function_call response with incidental text should not
+                     # be collapsed into a plain-text message.
+                     assembled = "".join(collected_text_deltas)
+-                    final.output = [SimpleNamespace(
+-                        type="message", role="assistant", status="completed",
+-                        content=[SimpleNamespace(type="output_text", text=assembled)],
+-                    )]
++                    final = SimpleNamespace(
++                        output=[SimpleNamespace(
++                            type="message", role="assistant", status="completed",
++                            content=[SimpleNamespace(type="output_text", text=assembled)],
++                        )],
++                        status="completed",
++                    )
+                     logger.debug(
+                         "Codex auxiliary: synthesized from %d deltas (%d chars)",
+                         len(collected_text_deltas), len(assembled),
 diff --git a/run_agent.py b/run_agent.py
 index 1ca365fbd..10c0dc217 100644
 --- a/run_agent.py
