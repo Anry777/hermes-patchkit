@@ -110,6 +110,28 @@
       "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4"
     },
     {
+      "id": "codex-sdk-output-none-recovery",
+      "file": "patches/main-a1921c43c/062-codex-sdk-output-none-recovery.patch",
+      "title_en": "Recover from OpenAI SDK TypeError when response.output is None",
+      "title_ru": "Восстановление после TypeError в OpenAI SDK при response.output=None",
+      "description_en": "Catches TypeError from stream.get_final_response() when the ChatGPT Codex backend sends response.completed with output:null, then synthesizes the response from collected streaming events (output_item.done and text deltas) instead of crashing. Works around openai/lib/_parsing/_responses.py line 61 bug present in SDK ≤ 2.38.0.",
+      "description_ru": "Ловит TypeError из stream.get_final_response(), когда ChatGPT Codex backend шлёт response.completed с output:null, и синтезирует ответ из собранных streaming events (output_item.done и text deltas) вместо краша. Обходит баг openai/lib/_parsing/_responses.py строка 61, присутствующий в SDK ≤ 2.38.0.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "base_upstream": "a1921c43cc09e290d14df9129496bde385ceb4e4",
+      "verification": {
+        "focused_tests": [
+          "tests/run_agent/test_run_agent.py"
+        ]
+      }
+    },
+    {
       "id": "max-gateway-text-mvp",
       "file": "patches/main-a1921c43c/070-max-gateway-text-mvp.patch",
       "title_en": "MAX messenger text gateway (webhook-first + dev polling)",
