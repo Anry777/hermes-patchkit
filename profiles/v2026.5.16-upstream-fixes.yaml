@@ -5,6 +5,7 @@
     "credential-pool-recovery",
     "telegram-free-response-target-gating",
     "homeassistant-tool-config-url",
-    "codex-auxiliary-tool-role-flattening"
+    "codex-auxiliary-tool-role-flattening",
+    "codex-sdk-output-none-recovery"
   ]
 }

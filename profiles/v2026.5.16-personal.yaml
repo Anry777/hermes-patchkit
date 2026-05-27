@@ -6,6 +6,7 @@
     "telegram-free-response-target-gating",
     "homeassistant-tool-config-url",
     "codex-auxiliary-tool-role-flattening",
+    "codex-sdk-output-none-recovery",
     "max-platform-plugin",
     "api-server-provider-proxy"
   ]
