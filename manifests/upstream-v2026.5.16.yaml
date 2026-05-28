@@ -289,6 +289,36 @@
         ".epf and .cfe files are accepted as document uploads in messaging platforms.",
         "No inline rendering or execution; agents access them via cached file path only."
       ]
+    },
+    {
+      "id": "neurogate-provider-plugin",
+      "file": "patches/v2026.5.16/093-neurogate-provider-plugin.patch",
+      "title_en": "NeuroGate model provider plugin",
+      "title_ru": "Model provider plugin для NeuroGate",
+      "description_en": "Adds NeuroGate as a bundled model-provider plugin with hermes auth API-key support, aliases, default Responses API routing for api.neurogate.space, fallback GPT-5.x catalog entries, and focused auth/runtime regression tests.",
+      "description_ru": "Добавляет NeuroGate как bundled model-provider plugin с поддержкой API-key через hermes auth, aliases, default routing на Responses API для api.neurogate.space, fallback catalog GPT-5.x моделей и focused auth/runtime regression tests.",
+      "category": "provider",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/providers/test_plugin_discovery.py",
+          "tests/providers/test_provider_profiles.py::TestRegistry::test_neurogate_alias_lookup",
+          "tests/providers/test_provider_profiles.py::TestNeuroGateProfile",
+          "tests/hermes_cli/test_neurogate_auth.py"
+        ]
+      },
+      "base_upstream": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0",
+      "refreshed_for": "v2026.5.16",
+      "rollback": "patches/v2026.5.16/093-neurogate-provider-plugin.rollback.patch",
+      "impact": [
+        "`hermes auth add neurogate --type api-key` persists credentials into the shared credential pool with base URL https://api.neurogate.space/v1.",
+        "Runtime provider resolution maps NeuroGate to `codex_responses` so GPT-5.x / Responses-compatible calls do not fall back to Chat Completions."
+      ]
     }
   ]
 }
