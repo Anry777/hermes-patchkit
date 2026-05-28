@@ -1,0 +1,29 @@
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index c6bdc38c3..eea3a33a4 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -826,6 +826,11 @@ SUPPORTED_DOCUMENT_TYPES = {
+     ".ini": "text/plain",
+     ".cfg": "text/plain",
+     ".zip": "application/zip",
++    # 1C:Enterprise external processing/extension files are binary artifacts
++    # that may contain executable BSL code. Allow upload as documents, but do
++    # not inline or execute them; agents only receive a cached file path.
++    ".epf": "application/octet-stream",
++    ".cfe": "application/octet-stream",
+     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+diff --git a/tests/gateway/test_document_cache.py b/tests/gateway/test_document_cache.py
+index cc756cea8..5dea0c0aa 100644
+--- a/tests/gateway/test_document_cache.py
++++ b/tests/gateway/test_document_cache.py
+@@ -151,7 +151,7 @@ class TestSupportedDocumentTypes:
+ 
+     @pytest.mark.parametrize(
+         "ext",
+-        [".pdf", ".md", ".txt", ".zip", ".docx", ".xlsx", ".pptx"],
++        [".pdf", ".md", ".txt", ".zip", ".epf", ".cfe", ".docx", ".xlsx", ".pptx"],
+     )
+     def test_expected_extensions_present(self, ext):
+         assert ext in SUPPORTED_DOCUMENT_TYPES

@@ -1,0 +1,91 @@
+diff --git b/gateway/platforms/email.py a/gateway/platforms/email.py
+index a5456353a..0fffb82d0 100644
+--- b/gateway/platforms/email.py
++++ a/gateway/platforms/email.py
+@@ -316,13 +316,8 @@ class EmailAdapter(BasePlatformAdapter):
+ 
+         try:
+             # Test SMTP connection
+-            smtp_security = os.getenv("EMAIL_SMTP_SECURITY", "").strip().lower()
+-            use_ssl = smtp_security in {"ssl", "tls", "ssl/tls", "smtps"} or (not smtp_security and self._smtp_port == 465)
+-            if use_ssl:
+-                smtp = smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl.create_default_context())
+-            else:
+-                smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+-                smtp.starttls(context=ssl.create_default_context())
++            smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
++            smtp.starttls(context=ssl.create_default_context())
+             smtp.login(self._address, self._password)
+             smtp.quit()
+             logger.info("[Email] SMTP connection test passed.")
+@@ -553,14 +548,9 @@ class EmailAdapter(BasePlatformAdapter):
+ 
+         msg.attach(MIMEText(body, "plain", "utf-8"))
+ 
+-        smtp_security = os.getenv("EMAIL_SMTP_SECURITY", "").strip().lower()
+-        use_ssl = smtp_security in {"ssl", "tls", "ssl/tls", "smtps"} or (not smtp_security and self._smtp_port == 465)
+-        if use_ssl:
+-            smtp = smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl.create_default_context())
+-        else:
+-            smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+-            smtp.starttls(context=ssl.create_default_context())
++        smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+         try:
++            smtp.starttls(context=ssl.create_default_context())
+             smtp.login(self._address, self._password)
+             smtp.send_message(msg)
+         finally:
+@@ -680,14 +670,9 @@ class EmailAdapter(BasePlatformAdapter):
+             except Exception as e:
+                 logger.warning("[Email] Failed to attach %s: %s", file_path, e)
+ 
+-        smtp_security = os.getenv("EMAIL_SMTP_SECURITY", "").strip().lower()
+-        use_ssl = smtp_security in {"ssl", "tls", "ssl/tls", "smtps"} or (not smtp_security and self._smtp_port == 465)
+-        if use_ssl:
+-            smtp = smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl.create_default_context())
+-        else:
+-            smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+-            smtp.starttls(context=ssl.create_default_context())
++        smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+         try:
++            smtp.starttls(context=ssl.create_default_context())
+             smtp.login(self._address, self._password)
+             smtp.send_message(msg)
+         finally:
+@@ -764,14 +749,9 @@ class EmailAdapter(BasePlatformAdapter):
+             part.add_header("Content-Disposition", f"attachment; filename={fname}")
+             msg.attach(part)
+ 
+-        smtp_security = os.getenv("EMAIL_SMTP_SECURITY", "").strip().lower()
+-        use_ssl = smtp_security in {"ssl", "tls", "ssl/tls", "smtps"} or (not smtp_security and self._smtp_port == 465)
+-        if use_ssl:
+-            smtp = smtplib.SMTP_SSL(self._smtp_host, self._smtp_port, timeout=30, context=ssl.create_default_context())
+-        else:
+-            smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+-            smtp.starttls(context=ssl.create_default_context())
++        smtp = smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=30)
+         try:
++            smtp.starttls(context=ssl.create_default_context())
+             smtp.login(self._address, self._password)
+             smtp.send_message(msg)
+         finally:
+diff --git b/tools/send_message_tool.py a/tools/send_message_tool.py
+index 958b62099..d5b2c0c78 100644
+--- b/tools/send_message_tool.py
++++ a/tools/send_message_tool.py
+@@ -1380,13 +1380,8 @@ async def _send_email(extra, chat_id, message):
+         msg["Subject"] = "Hermes Agent"
+         msg["Date"] = formatdate(localtime=True)
+ 
+-        smtp_security = (extra.get("smtp_security") or os.getenv("EMAIL_SMTP_SECURITY", "")).strip().lower()
+-        use_ssl = smtp_security in {"ssl", "tls", "ssl/tls", "smtps"} or (not smtp_security and smtp_port == 465)
+-        if use_ssl:
+-            server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=ssl.create_default_context())
+-        else:
+-            server = smtplib.SMTP(smtp_host, smtp_port)
+-            server.starttls(context=ssl.create_default_context())
++        server = smtplib.SMTP(smtp_host, smtp_port)
++        server.starttls(context=ssl.create_default_context())
+         server.login(address, password)
+         server.send_message(msg)
+         server.quit()

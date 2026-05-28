@@ -235,6 +235,60 @@
         "Configured lsp.servers/custom_servers entries can register new extensions and language IDs.",
         "WebSocket LSP targets are marked configured/unavailable by controlled diagnostics, not by binary install status."
       ]
+    },
+    {
+      "id": "email-smtp-ssl",
+      "file": "patches/v2026.5.16/091-email-smtp-ssl.patch",
+      "title_en": "Email SMTP SSL/implicit TLS support",
+      "title_ru": "Поддержка SMTP SSL/implicit TLS для Email",
+      "description_en": "Adds EMAIL_SMTP_SECURITY env variable to choose SMTP_SSL (implicit TLS, port 465) vs STARTTLS (explicit TLS). Affects gateway EmailAdapter and send_message_tool. When unset, defaults to SMTP_SSL on port 465, STARTTLS otherwise.",
+      "description_ru": "Добавляет env-переменную EMAIL_SMTP_SECURITY для выбора SMTP_SSL (implicit TLS, порт 465) vs STARTTLS (explicit TLS). Затрагивает gateway EmailAdapter и send_message_tool. По умолчанию SMTP_SSL на порту 465, STARTTLS на остальных.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_email_adapter.py"
+        ]
+      },
+      "base_upstream": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0",
+      "refreshed_for": "v2026.5.16",
+      "rollback": "patches/v2026.5.16/091-email-smtp-ssl.rollback.patch",
+      "impact": [
+        "Email SMTP connections now support implicit TLS (SMTP_SSL) via EMAIL_SMTP_SECURITY env or smtp_port==465 auto-detection.",
+        "STARTTLS remains the default for non-465 ports; no behavior change unless EMAIL_SMTP_SECURITY is set or port is 465."
+      ]
+    },
+    {
+      "id": "1c-document-types",
+      "file": "patches/v2026.5.16/092-1c-document-types.patch",
+      "title_en": "1C:Enterprise document types (.epf, .cfe)",
+      "title_ru": "Типы документов 1C:Предприятие (.epf, .cfe)",
+      "description_en": "Adds .epf (external processing) and .cfe (configuration extension) to SUPPORTED_DOCUMENT_TYPES as application/octet-stream. These are binary 1C artifacts; agents receive a cached file path only.",
+      "description_ru": "Добавляет .epf (внешняя обработка) и .cfe (расширение конфигурации) в SUPPORTED_DOCUMENT_TYPES как application/octet-stream. Это бинарные 1C-артефакты; агент получает только кэшированный путь к файлу.",
+      "category": "gateway",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_document_cache.py"
+        ]
+      },
+      "base_upstream": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0",
+      "refreshed_for": "v2026.5.16",
+      "rollback": "patches/v2026.5.16/092-1c-document-types.rollback.patch",
+      "impact": [
+        ".epf and .cfe files are accepted as document uploads in messaging platforms.",
+        "No inline rendering or execution; agents access them via cached file path only."
+      ]
     }
   ]
 }

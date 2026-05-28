@@ -9,6 +9,8 @@
     "codex-sdk-output-none-recovery",
     "max-platform-plugin",
     "api-server-provider-proxy",
-    "lsp-configured-websocket-transport"
+    "lsp-configured-websocket-transport",
+    "email-smtp-ssl",
+    "1c-document-types"
   ]
 }
