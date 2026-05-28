@@ -203,6 +203,38 @@
       },
       "base_upstream": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0",
       "refreshed_for": "v2026.5.16"
+    },
+    {
+      "id": "lsp-configured-websocket-transport",
+      "file": "patches/v2026.5.16/090-lsp-configured-websocket-transport.patch",
+      "title_en": "Config-driven LSP WebSocket transport",
+      "title_ru": "Config-driven WebSocket transport для Hermes LSP",
+      "description_en": "Adds a reusable LSP transport abstraction plus config-defined custom language servers, including WebSocket endpoints and extension-to-languageId mappings such as .bsl -> bsl, without hardcoded profile paths or endpoints.",
+      "description_ru": "Добавляет reusable transport abstraction для Hermes LSP и config-defined custom language servers, включая WebSocket endpoints и mapping extension -> languageId вроде .bsl -> bsl, без hardcoded profile paths или endpoints.",
+      "category": "lsp",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/agent/lsp/test_configured_servers.py",
+          "tests/agent/lsp/test_websocket_transport.py",
+          "tests/agent/lsp",
+          "tests/tools/test_file_tools.py",
+          "tests/tools/test_patch_parser.py"
+        ]
+      },
+      "base_upstream": "a91a57fa5a13d516c38b07a141a9ce8a3daabeb0",
+      "refreshed_for": "v2026.5.16",
+      "rollback": "patches/v2026.5.16/090-lsp-configured-websocket-transport.rollback.patch",
+      "impact": [
+        "LSPClient speaks through LSPTransport instead of direct subprocess stdio only.",
+        "Configured lsp.servers/custom_servers entries can register new extensions and language IDs.",
+        "WebSocket LSP targets are marked configured/unavailable by controlled diagnostics, not by binary install status."
+      ]
     }
   ]
 }

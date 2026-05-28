@@ -1,0 +1,17 @@
+# Example profile config snippet for enabling an externally running BSL Language Server.
+# Put this in the target profile config.yaml after applying PatchKit unit
+# 090-lsp-configured-websocket-transport. Do not commit private/internal URLs
+# to public repos; replace the placeholder with your own WebSocket LSP endpoint.
+lsp:
+  enabled: true
+  wait_mode: document
+  wait_timeout: 5.0
+  servers:
+    bsl-language-server:
+      language_id: bsl
+      extensions:
+        - .bsl
+      transport:
+        type: websocket
+        url: ws://<bsl-language-server-host>:8025/lsp
+      workspace_root: git

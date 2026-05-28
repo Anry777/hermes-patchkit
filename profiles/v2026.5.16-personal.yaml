@@ -8,6 +8,7 @@
     "codex-auxiliary-tool-role-flattening",
     "codex-sdk-output-none-recovery",
     "max-platform-plugin",
-    "api-server-provider-proxy"
+    "api-server-provider-proxy",
+    "lsp-configured-websocket-transport"
   ]
 }
