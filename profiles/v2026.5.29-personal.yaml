@@ -1,0 +1,16 @@
+{
+  "name": "v2026.5.29-personal",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "homeassistant-tool-config-url",
+    "codex-auxiliary-tool-role-flattening",
+    "max-platform-plugin",
+    "api-server-provider-proxy",
+    "lsp-configured-websocket-transport",
+    "email-smtp-ssl",
+    "1c-document-types",
+    "neurogate-provider-plugin"
+  ]
+}

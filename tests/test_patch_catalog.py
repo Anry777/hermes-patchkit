@@ -12,10 +12,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.23-240-ge5647d78.yaml"
 RELEASE_2026_4_30_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.30.yaml"
 RELEASE_2026_5_16_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.16.yaml"
+RELEASE_2026_5_29_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.29.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
 RELEASE_2026_5_16_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.16"
+RELEASE_2026_5_29_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.29"
 RELEASE_MAX_PLATFORM_PLUGIN_PATCH = RELEASE_2026_4_30_PATCH_DIR / "070-max-platform-plugin.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
@@ -133,8 +135,13 @@ class PatchCatalogTests(unittest.TestCase):
                 "telegram-free-response-target-gating",
                 "homeassistant-tool-config-url",
                 "codex-auxiliary-tool-role-flattening",
+                "codex-sdk-output-none-recovery",
                 "max-platform-plugin",
                 "api-server-provider-proxy",
+                "lsp-configured-websocket-transport",
+                "email-smtp-ssl",
+                "1c-document-types",
+                "neurogate-provider-plugin",
             ],
         )
         self.assertNotIn("cli-tui-idle-refresh-fix", ids)
@@ -151,6 +158,49 @@ class PatchCatalogTests(unittest.TestCase):
         provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.5.16-provider-proxy.yaml").read_text(encoding="utf-8"))
         self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy"])
         self.assertFalse((REPO_ROOT / "profiles" / "v2026.5.16-grok2api-sidecar.yaml").exists())
+
+    def test_v2026_5_29_manifest_is_pinned_to_hermes_0_15_1_and_retire_audit(self):
+        manifest = json.loads(RELEASE_2026_5_29_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.5.29")
+        self.assertEqual(manifest["upstream"]["commit"], "e71a2bd11b733f3be7cf99deafde0066c343d462")
+
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertEqual(
+            ids,
+            [
+                "auth-profile-root-fallback",
+                "credential-pool-recovery",
+                "telegram-free-response-target-gating",
+                "homeassistant-tool-config-url",
+                "codex-auxiliary-tool-role-flattening",
+                "max-platform-plugin",
+                "api-server-provider-proxy",
+                "lsp-configured-websocket-transport",
+                "email-smtp-ssl",
+                "1c-document-types",
+                "neurogate-provider-plugin",
+            ],
+        )
+        self.assertNotIn("codex-sdk-output-none-recovery", ids)
+        retired = manifest.get("retired_patches", [])
+        self.assertEqual([entry["id"] for entry in retired], ["codex-sdk-output-none-recovery"])
+
+        for entry in manifest["patches"]:
+            self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
+            self.assertEqual(entry["refreshed_for"], "v2026.5.29")
+            self.assertTrue(entry["file"].startswith("patches/v2026.5.29/"))
+            patch_text = (REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git", patch_text)
+            self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+
+        personal_profile = json.loads((REPO_ROOT / "profiles" / "v2026.5.29-personal.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(personal_profile["patches"], ids)
+        provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.5.29-provider-proxy.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy"])
+
+        lsp_patch_text = (RELEASE_2026_5_29_PATCH_DIR / "090-lsp-configured-websocket-transport.patch").read_text(encoding="utf-8")
+        self.assertIn("websockets>=15.0.0,<16.0.0", lsp_patch_text)
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
