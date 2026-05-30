@@ -245,12 +245,12 @@
       "exported_from": "4f75edb6d99a46d213f16badd7d9a3c969ffd3a9"
     },
     {
-      "id": "1c-document-types",
-      "file": "patches/v2026.5.29/092-1c-document-types.patch",
-      "title_en": "1C:Enterprise document types (.epf, .cfe)",
-      "title_ru": "Типы документов 1C:Предприятие (.epf, .cfe)",
-      "description_en": "Adds .epf (external processing) and .cfe (configuration extension) to SUPPORTED_DOCUMENT_TYPES as application/octet-stream. These are binary 1C artifacts; agents receive a cached file path only.",
-      "description_ru": "Добавляет .epf (внешняя обработка) и .cfe (расширение конфигурации) в SUPPORTED_DOCUMENT_TYPES как application/octet-stream. Это бинарные 1C-артефакты; агент получает только кэшированный путь к файлу.",
+      "id": "gateway-document-media-types",
+      "file": "patches/v2026.5.29/092-gateway-document-media-types.patch",
+      "title_en": "Gateway document/media attachment types",
+      "title_ru": "Типы document/media attachments в gateway",
+      "description_en": "Keeps gateway document attachment handling consistent across cached uploads, explicit MEDIA directives, and bare local path detection: 1C .epf/.cfe artifacts are accepted as binary documents, and supported text/rendered artifacts such as .md/.markdown/.json/.yaml/.html are parsed from MEDIA:<path> directives instead of leaking as plain text.",
+      "description_ru": "Синхронизирует document attachment handling в gateway между cached uploads, явными MEDIA directives и bare local path detection: 1C .epf/.cfe принимаются как binary documents, а поддержанные text/rendered artifacts вроде .md/.markdown/.json/.yaml/.html извлекаются из MEDIA:<path> вместо утечки plain text.",
       "category": "gateway",
       "track": "local-overlay",
       "optional": true,
@@ -260,17 +260,19 @@
       "status": "exported",
       "verification": {
         "focused_tests": [
-          "tests/gateway/test_document_cache.py"
+          "tests/gateway/test_document_cache.py",
+          "tests/gateway/test_platform_base.py"
         ]
       },
       "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
       "refreshed_for": "v2026.5.29",
-      "rollback": "patches/v2026.5.16/092-1c-document-types.rollback.patch",
+      "rollback": "patches/v2026.5.29/092-gateway-document-media-types.rollback.patch",
       "impact": [
         ".epf and .cfe files are accepted as document uploads in messaging platforms.",
-        "No inline rendering or execution; agents access them via cached file path only."
+        "Explicit MEDIA:<path> directives and bare local path detection share one attachment extension allowlist, so Markdown/JSON/YAML/HTML artifacts are delivered as native attachments rather than plain text.",
+        "The broad legacy \\S+ MEDIA fallback remains absent; accepted directives still require known attachment extensions."
       ],
-      "exported_from": "47863db353b45ea54f46d2f739c679438c2bbd7b"
+      "exported_from": "577c5a9bd4de1f7b4b5c2cb112fae45fd69d9511"
     },
     {
       "id": "neurogate-provider-plugin",

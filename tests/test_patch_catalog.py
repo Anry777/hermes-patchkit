@@ -178,8 +178,9 @@ class PatchCatalogTests(unittest.TestCase):
                 "api-server-provider-proxy",
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",
-                "1c-document-types",
+                "gateway-document-media-types",
                 "neurogate-provider-plugin",
+                "root-home-media-delivery",
             ],
         )
         self.assertNotIn("codex-sdk-output-none-recovery", ids)

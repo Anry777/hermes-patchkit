@@ -1,0 +1,147 @@
+From 577c5a9bd4de1f7b4b5c2cb112fae45fd69d9511 Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sat, 30 May 2026 13:00:54 +0300
+Subject: [PATCH] fix(gateway): sync document media attachment types
+
+---
+ gateway/platforms/base.py            | 67 +++++++++++++++++++---------
+ tests/gateway/test_document_cache.py |  2 +-
+ tests/gateway/test_platform_base.py  |  9 ++++
+ 3 files changed, 56 insertions(+), 22 deletions(-)
+
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index 91e360e7f..78e0e1e9f 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -1079,6 +1079,11 @@ SUPPORTED_DOCUMENT_TYPES = {
+     ".ini": "text/plain",
+     ".cfg": "text/plain",
+     ".zip": "application/zip",
++    # 1C:Enterprise external processing/extension files are binary artifacts
++    # that may contain executable BSL code. Allow upload as documents, but do
++    # not inline or execute them; agents only receive a cached file path.
++    ".epf": "application/octet-stream",
++    ".cfe": "application/octet-stream",
+     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+@@ -1108,6 +1113,34 @@ SUPPORTED_IMAGE_DOCUMENT_TYPES = {
+ }
+ 
+ 
++# Keep explicit MEDIA:<path> parsing and bare local path detection in sync.
++# Do not restore the old broad ``\S+`` fallback: every accepted directive must
++# end in a known attachment extension so code snippets and prose do not get
++# accidentally stripped from responses.
++MEDIA_ATTACHMENT_EXTENSIONS = tuple(dict.fromkeys((
++    # Images (inline where supported unless [[as_document]] forces document upload)
++    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg",
++    # Video
++    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp",
++    # Audio / voice
++    ".ogg", ".opus", ".mp3", ".wav", ".m4a", ".flac",
++    # Documents known to Hermes' cache/upload layer
++    *SUPPORTED_DOCUMENT_TYPES.keys(),
++    ".markdown", ".doc", ".odt", ".rtf",
++    # Spreadsheets / structured data
++    ".xls", ".ods", ".tsv",
++    # Presentations
++    ".ppt", ".odp", ".key",
++    # Archives / packages
++    ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".apk", ".ipa", ".epub",
++    # Rendered output
++    ".html", ".htm",
++)))
++MEDIA_ATTACHMENT_EXTENSION_PATTERN = "|".join(
++    re.escape(ext.lstrip(".")) for ext in MEDIA_ATTACHMENT_EXTENSIONS
++)
++
++
+ def get_document_cache_dir() -> Path:
+     """Return the document cache directory, creating it if it doesn't exist."""
+     DOCUMENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+@@ -2456,9 +2489,15 @@ class BasePlatformAdapter(ABC):
+         cleaned = cleaned.replace("[[as_document]]", "")
+         
+         # Extract MEDIA:<path> tags, allowing optional whitespace after the colon
+-        # and quoted/backticked paths for LLM-formatted outputs.
++        # and quoted/backticked paths for LLM-formatted outputs. Keep the
++        # extension allowlist shared with bare-path attachment detection so
++        # explicit MEDIA directives do not silently drop supported documents
++        # such as Markdown, JSON, YAML, or HTML artifacts.
+         media_pattern = re.compile(
+-            r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm|ogg|opus|mp3|wav|m4a|flac|epub|pdf|zip|rar|7z|docx?|xlsx?|pptx?|txt|csv|apk|ipa)(?=[\s`"',;:)\]}]|$))[`"']?'''
++            r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:'''
++            + MEDIA_ATTACHMENT_EXTENSION_PATTERN
++            + r''')(?=[\s`"',;:)\]}]|$))[`"']?''',
++            re.IGNORECASE,
+         )
+         for match in media_pattern.finditer(content):
+             path = match.group("path").strip()
+@@ -2500,25 +2539,11 @@ class BasePlatformAdapter(ABC):
+             Tuple of (list of expanded file paths, cleaned text with the
+             raw path strings removed).
+         """
+-        _LOCAL_MEDIA_EXTS = (
+-            # Images (embed inline)
+-            '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.svg',
+-            # Video (embed inline where supported)
+-            '.mp4', '.mov', '.avi', '.mkv', '.webm',
+-            # Audio (delivered as voice/audio where supported)
+-            '.mp3', '.wav', '.ogg', '.m4a', '.flac',
+-            # Documents (uploaded as file attachments)
+-            '.pdf', '.docx', '.doc', '.odt', '.rtf', '.txt', '.md',
+-            # Spreadsheets / data
+-            '.xlsx', '.xls', '.ods', '.csv', '.tsv', '.json', '.xml', '.yaml', '.yml',
+-            # Presentations
+-            '.pptx', '.ppt', '.odp', '.key',
+-            # Archives
+-            '.zip', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar',
+-            # Web / rendered output
+-            '.html', '.htm',
+-        )
+-        ext_part = '|'.join(e.lstrip('.') for e in _LOCAL_MEDIA_EXTS)
++        # Same extension allowlist used by explicit MEDIA:<path> directives.
++        # Images / video embed inline where the platform supports it; document
++        # extensions route through ``send_document``.  The dispatch partition
++        # lives in ``gateway/run.py``.
++        ext_part = MEDIA_ATTACHMENT_EXTENSION_PATTERN
+ 
+         # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/img.png)
+         #             and relative paths (./foo.png)
+diff --git a/tests/gateway/test_document_cache.py b/tests/gateway/test_document_cache.py
+index cc756cea8..5dea0c0aa 100644
+--- a/tests/gateway/test_document_cache.py
++++ b/tests/gateway/test_document_cache.py
+@@ -151,7 +151,7 @@ class TestSupportedDocumentTypes:
+ 
+     @pytest.mark.parametrize(
+         "ext",
+-        [".pdf", ".md", ".txt", ".zip", ".docx", ".xlsx", ".pptx"],
++        [".pdf", ".md", ".txt", ".zip", ".epf", ".cfe", ".docx", ".xlsx", ".pptx"],
+     )
+     def test_expected_extensions_present(self, ext):
+         assert ext in SUPPORTED_DOCUMENT_TYPES
+diff --git a/tests/gateway/test_platform_base.py b/tests/gateway/test_platform_base.py
+index 8be8feb2a..49980b4c3 100644
+--- a/tests/gateway/test_platform_base.py
++++ b/tests/gateway/test_platform_base.py
+@@ -330,6 +330,15 @@ class TestExtractMedia:
+         assert media == [("/tmp/Jane Doe/speech.flac", False)]
+         assert cleaned == ""
+ 
++    @pytest.mark.parametrize("extension", ["md", "markdown", "json", "yaml", "html"])
++    def test_media_tag_supports_document_extensions_from_local_file_allowlist(self, extension):
++        content = f"Here is the artifact:\nMEDIA:/tmp/report.{extension}"
++        media, cleaned = BasePlatformAdapter.extract_media(content)
++
++        assert media == [(f"/tmp/report.{extension}", False)]
++        assert "MEDIA:" not in cleaned
++        assert "Here is the artifact" in cleaned
++
+     def test_as_document_directive_stripped_from_cleaned_text(self):
+         """[[as_document]] is a routing directive — strip it from
+         user-visible text just like [[audio_as_voice]]. Callers detect the
+-- 
+2.39.5
+
