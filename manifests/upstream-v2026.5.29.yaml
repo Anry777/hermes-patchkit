@@ -301,6 +301,34 @@
         "Runtime provider resolution maps NeuroGate to `codex_responses` so GPT-5.x / Responses-compatible calls do not fall back to Chat Completions."
       ],
       "exported_from": "37c15e94d180db581db00c3b64ea4a0a7f61d278"
+    },
+    {
+      "id": "root-home-media-delivery",
+      "file": "patches/v2026.5.29/094-root-home-media-delivery.patch",
+      "title_en": "Root-home media delivery safety fix",
+      "title_ru": "Fix media delivery из root home",
+      "description_en": "Allows single-user root-run gateways to deliver normal media artifacts such as .zip files from the current root home while still blocking credential subpaths, Hermes auth/env files, and foreign /root paths.",
+      "description_ru": "Позволяет single-user gateway, запущенному от root, отправлять обычные media artifacts вроде .zip из текущего root home, но продолжает блокировать credential subpaths, Hermes auth/env files и чужие /root paths.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_platform_base.py"
+        ]
+      },
+      "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
+      "refreshed_for": "v2026.5.29",
+      "rollback": "patches/v2026.5.29/094-root-home-media-delivery.rollback.patch",
+      "impact": [
+        "Default media delivery no longer rejects the entire current $HOME when it is /root, so ordinary artifacts under /root can be sent as native attachments.",
+        "Credential paths under the home directory and Hermes auth/env files remain blocked; /root remains blocked when it is not the active home."
+      ],
+      "exported_from": "5b9cc3b157d16dd69f4be7fe71249a9bf1a1497d"
     }
   ],
   "retired_patches": [

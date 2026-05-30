@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: PatchKit is re-anchored to Hermes Agent `v2026.5.16` / `0.14.0`. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.5.29` / `0.15.1`. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
@@ -22,8 +22,8 @@ If you want a local Hermes-hosted endpoint that can front multiple provider mode
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
-  --profile profiles/v2026.5.16-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.5.29.yaml \
+  --profile profiles/v2026.5.29-provider-proxy.yaml \
   --yes
 ```
 
@@ -32,8 +32,8 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
-  --profile profiles/v2026.5.16-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.29.yaml \
+  --profile profiles/v2026.5.29-upstream-fixes.yaml
 ```
 
 Headless mode for CI/scripts:
@@ -41,8 +41,8 @@ Headless mode for CI/scripts:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
-  --profile profiles/v2026.5.16-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.29.yaml \
+  --profile profiles/v2026.5.29-upstream-fixes.yaml
 ```
 
 The default update check is safe: it fetches upstream metadata, clones the upstream candidate into `/tmp`, checks the selected patch set there, and writes a report under `reports/`. It does not apply patches or merge upstream into your live checkout.
@@ -111,8 +111,8 @@ python3 scripts/verify.py --self-check
 
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
-  --profile profiles/v2026.5.16-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.29.yaml \
+  --profile profiles/v2026.5.29-upstream-fixes.yaml
 ```
 
 If you prefer non-interactive output:
@@ -120,8 +120,8 @@ If you prefer non-interactive output:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
-  --profile profiles/v2026.5.16-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.5.29.yaml \
+  --profile profiles/v2026.5.29-upstream-fixes.yaml
 ```
 
 For a single patch:
@@ -129,7 +129,7 @@ For a single patch:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.5.16.yaml \
+  --manifest manifests/upstream-v2026.5.29.yaml \
   --patch codex-auxiliary-tool-role-flattening
 ```
 

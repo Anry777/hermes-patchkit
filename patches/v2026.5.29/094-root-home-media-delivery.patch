@@ -1,0 +1,136 @@
+From 5b9cc3b157d16dd69f4be7fe71249a9bf1a1497d Mon Sep 17 00:00:00 2001
+From: Anry777 <Anry777@users.noreply.github.com>
+Date: Sat, 30 May 2026 11:11:31 +0300
+Subject: [PATCH] fix(gateway): allow media artifacts under root home
+
+---
+ gateway/platforms/base.py           | 32 +++++++++++++--
+ tests/gateway/test_platform_base.py | 64 +++++++++++++++++++++++++++++
+ 2 files changed, 93 insertions(+), 3 deletions(-)
+
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index 91e360e7f..1eb8ea8ed 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -942,14 +942,40 @@ def _media_delivery_strict_mode() -> bool:
+ 
+ def _media_delivery_denied_paths() -> List[Path]:
+     """Return absolute denylist paths under which delivery is never allowed."""
+-    denied = [Path(p) for p in _MEDIA_DELIVERY_DENIED_PREFIXES]
+     home = Path(os.path.expanduser("~"))
++    try:
++        resolved_home = home.expanduser().resolve(strict=False)
++    except (OSError, RuntimeError, ValueError):
++        resolved_home = None
++
++    denied: List[Path] = []
++    for raw_prefix in _MEDIA_DELIVERY_DENIED_PREFIXES:
++        prefix = Path(raw_prefix)
++        try:
++            resolved_prefix = prefix.expanduser().resolve(strict=False)
++        except (OSError, RuntimeError, ValueError):
++            resolved_prefix = None
++        # Root-run Hermes deployments use /root as the active user's home.
++        # Do not deny the whole current home directory just because it is also
++        # a sensitive system prefix; the home-relative denies below still block
++        # ~/.ssh, ~/.aws, ~/.hermes/auth.json, and similar credentials. A
++        # foreign /root path remains denied when $HOME points elsewhere.
++        if (
++            resolved_home is not None
++            and resolved_prefix is not None
++            and resolved_prefix == resolved_home
++            and resolved_prefix.name == "root"
++        ):
++            continue
++        denied.append(prefix)
++
+     for sub in _MEDIA_DELIVERY_DENIED_HOME_SUBPATHS:
+         denied.append(home / sub)
+-    # The Hermes home itself contains credentials (auth.json, .env) — only the
+-    # cache subdirectories under it are explicitly allowlisted above.
++    # The Hermes home itself contains credentials (auth.json, auth.lock, .env)
++    # — only the cache subdirectories under it are explicitly allowlisted above.
+     denied.append(_HERMES_HOME / ".env")
+     denied.append(_HERMES_HOME / "auth.json")
++    denied.append(_HERMES_HOME / "auth.lock")
+     denied.append(_HERMES_HOME / "credentials")
+     return denied
+ 
+diff --git a/tests/gateway/test_platform_base.py b/tests/gateway/test_platform_base.py
+index 8be8feb2a..a0509244d 100644
+--- a/tests/gateway/test_platform_base.py
++++ b/tests/gateway/test_platform_base.py
+@@ -587,6 +587,70 @@ class TestMediaDeliveryDefaultMode:
+             f.write_bytes(b"x")
+             assert BasePlatformAdapter.validate_media_delivery_path(str(f)) == str(f.resolve())
+ 
++    def test_accepts_zip_under_current_root_home(self, tmp_path, monkeypatch):
++        """Root-run private gateways must be able to return normal artifacts
++        under the root user's home. A denylist entry that matches the current
++        $HOME should not reject the whole home directory.
++        """
++        self._patch_roots(monkeypatch)
++
++        fake_root_home = tmp_path / "root"
++        artifact = fake_root_home / "project" / "out.zip"
++        artifact.parent.mkdir(parents=True)
++        artifact.write_bytes(b"PK\x05\x06" + b"\0" * 18)
++        monkeypatch.setenv("HOME", str(fake_root_home))
++        monkeypatch.setattr(
++            "gateway.platforms.base._MEDIA_DELIVERY_DENIED_PREFIXES",
++            (str(fake_root_home),),
++        )
++
++        assert BasePlatformAdapter.validate_media_delivery_path(str(artifact)) == str(artifact.resolve())
++
++    def test_rejects_foreign_root_home(self, tmp_path, monkeypatch):
++        """If /root is not the active user's home, it stays a foreign system
++        path and remains blocked.
++        """
++        self._patch_roots(monkeypatch)
++
++        fake_root_home = tmp_path / "root"
++        fake_user_home = tmp_path / "home" / "alice"
++        artifact = fake_root_home / "project" / "out.zip"
++        artifact.parent.mkdir(parents=True)
++        fake_user_home.mkdir(parents=True)
++        artifact.write_bytes(b"PK\x05\x06" + b"\0" * 18)
++        monkeypatch.setenv("HOME", str(fake_user_home))
++        monkeypatch.setattr(
++            "gateway.platforms.base._MEDIA_DELIVERY_DENIED_PREFIXES",
++            (str(fake_root_home),),
++        )
++
++        assert BasePlatformAdapter.validate_media_delivery_path(str(artifact)) is None
++
++    def test_current_root_home_still_rejects_sensitive_subpaths(self, tmp_path, monkeypatch):
++        """Allowing root's home must not allow credentials under it."""
++        self._patch_roots(monkeypatch)
++
++        fake_root_home = tmp_path / "root"
++        ssh_key = fake_root_home / ".ssh" / "id_rsa"
++        hermes_home = fake_root_home / ".hermes"
++        auth_json = hermes_home / "auth.json"
++        ssh_key.parent.mkdir(parents=True)
++        hermes_home.mkdir(parents=True)
++        ssh_key.write_text("PRIVATE KEY")
++        auth_json.write_text("{}")
++        monkeypatch.setenv("HOME", str(fake_root_home))
++        monkeypatch.setattr(
++            "gateway.platforms.base._HERMES_HOME",
++            hermes_home,
++        )
++        monkeypatch.setattr(
++            "gateway.platforms.base._MEDIA_DELIVERY_DENIED_PREFIXES",
++            (str(fake_root_home),),
++        )
++
++        assert BasePlatformAdapter.validate_media_delivery_path(str(ssh_key)) is None
++        assert BasePlatformAdapter.validate_media_delivery_path(str(auth_json)) is None
++
+     def test_denylist_still_blocks_credentials(self, tmp_path, monkeypatch):
+         """Default mode is permissive but not naive — credential paths
+         remain blocked. Simulate $HOME so ~/.ssh resolves into tmp_path.
+-- 
+2.39.5
+
