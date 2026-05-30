@@ -331,6 +331,39 @@
         "Credential paths under the home directory and Hermes auth/env files remain blocked; /root remains blocked when it is not the active home."
       ],
       "exported_from": "5b9cc3b157d16dd69f4be7fe71249a9bf1a1497d"
+    },
+    {
+      "id": "gateway-busy-text-compat",
+      "file": "patches/v2026.5.29/095-gateway-busy-text-compat.patch",
+      "title_en": "Gateway busy TEXT compatibility",
+      "title_ru": "Совместимость busy TEXT в gateway",
+      "description_en": "Restores 0.14-compatible busy input semantics for existing profiles: when display.busy_text_mode is absent, ordinary TEXT follow-ups inherit display.busy_input_mode instead of silently switching to queue mode. Explicit busy_text_mode: queue remains honored.",
+      "description_ru": "Возвращает совместимость busy input для старых profiles: если display.busy_text_mode отсутствует, обычные TEXT follow-up сообщения наследуют display.busy_input_mode вместо молчаливого перехода в queue mode. Явный busy_text_mode: queue сохраняется.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_runtime_config_env_expansion.py",
+          "tests/gateway/test_config_env_bridge_authority.py",
+          "tests/gateway/test_interrupt_key_match.py",
+          "tests/gateway/test_command_bypass_active_session.py",
+          "tests/gateway/test_steer_command.py"
+        ],
+        "live_smoke": "hermesfix Telegram busy TEXT probe showed display.busy_input_mode=interrupt plus absent busy_text_mode no longer takes the queue_text_debounce branch."
+      },
+      "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
+      "refreshed_for": "v2026.5.29",
+      "rollback": "patches/v2026.5.29/095-gateway-busy-text-compat.rollback.patch",
+      "impact": [
+        "Existing 0.14-era profiles with display.busy_input_mode: interrupt keep interrupting ordinary TEXT follow-ups after the 0.15.1 upgrade.",
+        "Profiles that explicitly set display.busy_text_mode: queue continue to queue/debounce busy TEXT follow-ups."
+      ],
+      "exported_from": "runtime-upstream-v2026.5.29-local"
     }
   ],
   "retired_patches": [

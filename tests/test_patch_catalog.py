@@ -181,6 +181,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "gateway-document-media-types",
                 "neurogate-provider-plugin",
                 "root-home-media-delivery",
+                "gateway-busy-text-compat",
             ],
         )
         self.assertNotIn("codex-sdk-output-none-recovery", ids)
@@ -202,6 +203,11 @@ class PatchCatalogTests(unittest.TestCase):
 
         lsp_patch_text = (RELEASE_2026_5_29_PATCH_DIR / "090-lsp-configured-websocket-transport.patch").read_text(encoding="utf-8")
         self.assertIn("websockets>=15.0.0,<16.0.0", lsp_patch_text)
+
+        busy_patch_text = (RELEASE_2026_5_29_PATCH_DIR / "095-gateway-busy-text-compat.patch").read_text(encoding="utf-8")
+        self.assertIn("_load_busy_text_mode", busy_patch_text)
+        self.assertIn("test_busy_text_mode_inherits_busy_input_mode_when_absent", busy_patch_text)
+        self.assertIn("display.busy_input_mode", busy_patch_text)
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

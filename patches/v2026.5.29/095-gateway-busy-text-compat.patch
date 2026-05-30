@@ -1,0 +1,72 @@
+diff --git a/gateway/run.py b/gateway/run.py
+index 81e7153d2..aef53dc0d 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -2973,14 +2973,23 @@ class GatewayRunner:
+ 
+     @staticmethod
+     def _load_busy_text_mode() -> str:
+-        """Load normal busy TEXT follow-up behavior from config/env."""
++        """Load normal busy TEXT follow-up behavior from config/env.
++
++        Backward compatibility: pre-0.15 profiles only had
++        ``display.busy_input_mode``.  When the newer text-specific knob is
++        absent, inherit the legacy busy-input policy so TEXT follow-ups keep
++        interrupting/steering for existing configs instead of silently
++        switching to queue semantics.
++        """
+         mode = os.getenv("HERMES_GATEWAY_BUSY_TEXT_MODE", "").strip().lower()
+         if not mode:
+             cfg = _load_gateway_runtime_config()
+             mode = str(cfg_get(cfg, "display", "busy_text_mode", default="") or "").strip().lower()
+-        if mode == "interrupt":
+-            return "interrupt"
+-        return "queue"
++        if mode in {"interrupt", "queue"}:
++            return mode
++        if mode:
++            logger.warning("Unknown busy_text_mode '%s', falling back to busy_input_mode", mode)
++        return GatewayRunner._load_busy_input_mode()
+ 
+     @staticmethod
+     def _load_restart_drain_timeout() -> float:
+diff --git a/tests/gateway/test_runtime_config_env_expansion.py b/tests/gateway/test_runtime_config_env_expansion.py
+index e77e9daaa..0313de89a 100644
+--- a/tests/gateway/test_runtime_config_env_expansion.py
++++ b/tests/gateway/test_runtime_config_env_expansion.py
+@@ -19,6 +19,7 @@ def gateway_home(monkeypatch, tmp_path):
+     monkeypatch.delenv("HERMES_PREFILL_MESSAGES_FILE", raising=False)
+     monkeypatch.delenv("HERMES_EPHEMERAL_SYSTEM_PROMPT", raising=False)
+     monkeypatch.delenv("HERMES_GATEWAY_BUSY_INPUT_MODE", raising=False)
++    monkeypatch.delenv("HERMES_GATEWAY_BUSY_TEXT_MODE", raising=False)
+     monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
+     monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
+     return tmp_path
+@@ -33,6 +34,27 @@ def test_load_prefill_messages_expands_env_var_path(monkeypatch, gateway_home):
+     assert gateway_run.GatewayRunner._load_prefill_messages() == prefill
+ 
+ 
++def test_busy_text_mode_inherits_busy_input_mode_when_absent(gateway_home):
++    """0.14-compatible configs must keep TEXT follow-ups interrupting.
++
++    Before 0.15.1 there was only display.busy_input_mode.  If a profile sets
++    that legacy knob to interrupt and omits the newer busy_text_mode, ordinary
++    TEXT follow-ups should inherit interrupt instead of silently queueing.
++    """
++    _write_config(gateway_home, "display:\n  busy_input_mode: interrupt\n")
++
++    assert gateway_run.GatewayRunner._load_busy_text_mode() == "interrupt"
++
++
++def test_busy_text_mode_explicit_queue_overrides_busy_input_mode(gateway_home):
++    _write_config(
++        gateway_home,
++        "display:\n  busy_input_mode: interrupt\n  busy_text_mode: queue\n",
++    )
++
++    assert gateway_run.GatewayRunner._load_busy_text_mode() == "queue"
++
++
+ @pytest.mark.parametrize(
+     ("config_body", "env_name", "env_value", "loader_name", "expected"),
+     [
