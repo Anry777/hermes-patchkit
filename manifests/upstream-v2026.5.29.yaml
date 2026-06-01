@@ -68,8 +68,8 @@
       "file": "patches/v2026.5.29/040-telegram-free-response-target-gating.patch",
       "title_en": "Telegram free-response target gating",
       "title_ru": "Target gating для Telegram free-response групп",
-      "description_en": "Extends upstream Telegram gating with PatchKit target-safety rules for free-response groups, allowed_chats guest-mode bypass, ignored threads, and profile config bridges.",
-      "description_ru": "Расширяет upstream Telegram gating PatchKit target-safety правилами для free-response groups, allowed_chats guest-mode bypass, ignored threads и profile config bridges.",
+      "description_en": "Extends upstream Telegram gating with PatchKit target-safety rules for free-response groups, allowed_chats guest-mode bypass, ignored threads, profile config bridges, and stable Telegram sender identity visibility.",
+      "description_ru": "Расширяет upstream Telegram gating PatchKit target-safety правилами для free-response groups, allowed_chats guest-mode bypass, ignored threads, profile config bridges и видимостью стабильного Telegram sender identity.",
       "category": "messaging",
       "track": "upstream-fix",
       "optional": true,
@@ -77,11 +77,14 @@
       "depends_on": [],
       "conflicts_with": [],
       "status": "exported",
-      "exported_from": "4d68da99e2c445a9b58cddb08017963b1a0540b5",
+      "exported_from": "55486f37cec3b0eb43ed0fddac2dcd66e265aa66",
       "verification": {
         "focused_tests": [
           "tests/gateway/test_telegram_group_gating.py",
-          "tests/gateway/test_telegram_mention_boundaries.py"
+          "tests/gateway/test_telegram_mention_boundaries.py",
+          "tests/gateway/test_session.py",
+          "tests/gateway/test_pii_redaction.py",
+          "tests/gateway/test_shared_group_sender_prefix.py"
         ]
       },
       "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
