@@ -1,3 +1,117 @@
+diff --git b/agent/model_metadata.py a/agent/model_metadata.py
+index d5e28466a..a2d9b2daa 100644
+--- b/agent/model_metadata.py
++++ a/agent/model_metadata.py
+@@ -413,79 +413,6 @@ def _is_known_provider_base_url(base_url: str) -> bool:
+     return _infer_provider_from_url(base_url) is not None
+ 
+ 
+-def _lookup_profile_model_context(profile: Any, model: str) -> Optional[int]:
+-    """Return provider-profile context_length for *model*, if declared."""
+-    context_map = getattr(profile, "model_context_lengths", None) or {}
+-    if not isinstance(context_map, dict):
+-        return None
+-
+-    model_bare = _strip_provider_prefix(model).strip()
+-    model_lower = model_bare.lower()
+-    model_normalized = _normalize_model_version(model_lower)
+-
+-    for key, value in context_map.items():
+-        if not isinstance(key, str) or not isinstance(value, int) or value <= 0:
+-            continue
+-        key_bare = _strip_provider_prefix(key).strip().lower()
+-        if key_bare == model_lower or _normalize_model_version(key_bare) == model_normalized:
+-            return value
+-    return None
+-
+-
+-def _resolve_provider_plugin_context_length(
+-    provider: str,
+-    model: str,
+-    base_url: str = "",
+-) -> Optional[int]:
+-    """Resolve per-model context windows declared by provider plugins.
+-
+-    Provider plugins can serve the same bare model slug with a provider-specific
+-    enforced window (for example NeuroGate gpt-5.5 is 272k while direct OpenAI
+-    gpt-5.5 is larger). Keep those limits in the provider profile instead of
+-    leaking provider-specific overrides into broad DEFAULT_CONTEXT_LENGTHS.
+-    """
+-    try:
+-        from providers import get_provider_profile, list_providers
+-    except Exception:
+-        return None
+-
+-    checked: set[str] = set()
+-
+-    def _check(name: str) -> Optional[int]:
+-        key = (name or "").strip().lower()
+-        if not key or key in checked:
+-            return None
+-        checked.add(key)
+-        profile = get_provider_profile(key)
+-        if profile is None:
+-            return None
+-        return _lookup_profile_model_context(profile, model)
+-
+-    if provider:
+-        ctx = _check(provider)
+-        if ctx:
+-            return ctx
+-
+-    if base_url:
+-        inferred = _infer_provider_from_url(base_url)
+-        if inferred:
+-            ctx = _check(inferred)
+-            if ctx:
+-                return ctx
+-
+-        try:
+-            for profile in list_providers():
+-                host = profile.get_hostname()
+-                if host and base_url_host_matches(base_url, host):
+-                    ctx = _lookup_profile_model_context(profile, model)
+-                    if ctx:
+-                        return ctx
+-        except Exception:
+-            pass
+-
+-    return None
+-
+-
+ def is_local_endpoint(base_url: str) -> bool:
+     """Return True if base_url points to a local machine.
+ 
+@@ -1547,10 +1474,9 @@ def get_model_context_length(
+           cache fallback with suffix/version normalisation.  Only
+           portal-derived values are persisted to disk.
+        c. Codex OAuth /models probe
+-       d. Provider-plugin per-model context windows
+-       e. GMI /models endpoint
+-       f. Ollama native /api/show probe (any base_url, provider-agnostic)
+-       g. models.dev registry lookup (with :cloud/-cloud suffix fallback)
++       d. GMI /models endpoint
++       e. Ollama native /api/show probe (any base_url, provider-agnostic)
++       f. models.dev registry lookup (with :cloud/-cloud suffix fallback)
+     6. OpenRouter live API metadata (Kimi-family 32k guard)
+     7. Hardcoded defaults (broad family patterns, longest-key-first)
+     8. Local server query (last resort)
+@@ -1743,15 +1669,6 @@ def get_model_context_length(
+             if base_url:
+                 save_context_length(model, base_url, codex_ctx)
+             return codex_ctx
+-
+-    plugin_ctx = _resolve_provider_plugin_context_length(
+-        effective_provider or provider,
+-        model,
+-        base_url=base_url or "",
+-    )
+-    if plugin_ctx:
+-        return plugin_ctx
+-
+     if effective_provider == "gmi" and base_url:
+         # GMI exposes authoritative context_length via /models, but it is not
+         # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
 diff --git b/hermes_cli/model_switch.py a/hermes_cli/model_switch.py
 index b3e98e308..b493db5ba 100644
 --- b/hermes_cli/model_switch.py
@@ -192,6 +306,84 @@ index c81e9c264..a19a4584f 100644
      # 3. Try models.dev directly (for providers not in our ALIASES)
      try:
          from agent.models_dev import get_provider_info as _mdev_provider
+diff --git b/plugins/model-providers/neurogate/__init__.py a/plugins/model-providers/neurogate/__init__.py
+index 6764399e6..45768f22f 100644
+--- b/plugins/model-providers/neurogate/__init__.py
++++ a/plugins/model-providers/neurogate/__init__.py
+@@ -14,9 +14,6 @@ neurogate = ProviderProfile(
+     base_url="https://api.neurogate.space/v1",
+     auth_type="api_key",
+     default_aux_model="gpt-5.4-mini",
+-    model_context_lengths={
+-        "gpt-5.5": 272_000,
+-    },
+     fallback_models=(
+         "gpt-5.5",
+         "gpt-5.4",
+diff --git b/providers/base.py a/providers/base.py
+index 3c8f7cef4..fa6765d10 100644
+--- b/providers/base.py
++++ a/providers/base.py
+@@ -61,11 +61,6 @@ class ProviderProfile:
+     # Only agentic models that support tool calling should appear here.
+     fallback_models: tuple = ()
+ 
+-    # model_context_lengths: provider-enforced context windows for specific
+-    # model ids. Used when the same bare model slug has different limits on
+-    # this provider than on the direct upstream API or other providers.
+-    model_context_lengths: dict[str, int] = field(default_factory=dict)
+-
+     # hostname: base hostname for URL→provider reverse-mapping in model_metadata.py
+     # e.g. "api.gmi-serving.com". Derived from base_url when empty.
+     hostname: str = ""
+diff --git b/tests/agent/test_model_metadata.py a/tests/agent/test_model_metadata.py
+index 5e9d1eff7..20a4bacaa 100644
+--- b/tests/agent/test_model_metadata.py
++++ a/tests/agent/test_model_metadata.py
+@@ -280,43 +280,6 @@ class TestDefaultContextLengths:
+         assert len(DEFAULT_CONTEXT_LENGTHS) >= 10
+ 
+ 
+-# =========================================================================
+-# Provider plugin context-window resolution
+-# =========================================================================
+-
+-class TestProviderPluginContextLength:
+-    def test_neurogate_gpt55_uses_provider_plugin_context_window(self):
+-        """NeuroGate serves gpt-5.5 with a provider-enforced 272k window.
+-
+-        The direct OpenAI fallback for the same bare slug is 1.05M, so this
+-        must resolve through provider-plugin metadata rather than generic
+-        model-family defaults.
+-        """
+-        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
+-             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
+-             patch("agent.models_dev.lookup_models_dev_context", return_value=None), \
+-             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
+-            assert get_model_context_length(
+-                model="gpt-5.5",
+-                base_url="https://api.neurogate.space/v1",
+-                api_key="",
+-                provider="neurogate",
+-            ) == 272_000
+-
+-    def test_neurogate_context_window_can_resolve_from_plugin_base_url(self):
+-        """URL-inferred provider plugins should get the same per-model window."""
+-        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
+-             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
+-             patch("agent.models_dev.lookup_models_dev_context", return_value=None), \
+-             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
+-            assert get_model_context_length(
+-                model="gpt-5.5",
+-                base_url="https://api.neurogate.space/v1",
+-                api_key="",
+-                provider="",
+-            ) == 272_000
+-
+-
+ # =========================================================================
+ # Codex OAuth context-window resolution (provider="openai-codex")
+ # =========================================================================
 diff --git b/tests/hermes_cli/test_model_switch_custom_providers.py a/tests/hermes_cli/test_model_switch_custom_providers.py
 index 9b93082da..4d88942b3 100644
 --- b/tests/hermes_cli/test_model_switch_custom_providers.py

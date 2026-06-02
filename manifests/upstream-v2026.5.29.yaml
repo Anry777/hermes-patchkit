@@ -312,8 +312,8 @@
       "file": "patches/v2026.5.29/096-provider-plugin-model-switch.patch",
       "title_en": "Provider plugins in model switcher",
       "title_ru": "Provider plugins в model switcher",
-      "description_en": "Makes provider-module plugins under plugins/model-providers usable by the shared /model and /mode switch path, provider labels, API-mode detection, and the no-args model picker without duplicate config.yaml providers entries.",
-      "description_ru": "Делает provider-module plugins из plugins/model-providers доступными для общего path /model и /mode, provider labels, API-mode detection и no-args model picker без дублирующих entries в config.yaml providers.",
+      "description_en": "Makes provider-module plugins under plugins/model-providers usable by the shared /model and /mode switch path, provider labels, API-mode detection, no-args model picker, and provider-specific context-window resolution without duplicate config.yaml providers entries.",
+      "description_ru": "Делает provider-module plugins из plugins/model-providers доступными для общего path /model и /mode, provider labels, API-mode detection, no-args model picker и provider-specific context-window resolution без дублирующих entries в config.yaml providers.",
       "category": "provider",
       "track": "upstream-fix",
       "optional": true,
@@ -327,7 +327,8 @@
           "tests/hermes_cli/test_list_picker_providers.py",
           "tests/hermes_cli/test_neurogate_auth.py",
           "tests/providers/test_plugin_discovery.py",
-          "tests/providers/test_provider_profiles.py"
+          "tests/providers/test_provider_profiles.py",
+          "tests/agent/test_model_metadata.py"
         ]
       },
       "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
@@ -336,9 +337,11 @@
       "impact": [
         "resolve_provider_full() can resolve any registered ProviderProfile, not only built-in/models.dev/config providers.",
         "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as neurogate.",
+        "ProviderProfile can declare per-model context windows, and get_model_context_length() uses them before broad family defaults.",
+        "NeuroGate gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
         "No duplicate config.yaml providers entry is required for bundled or user model-provider plugins."
       ],
-      "exported_from": "b4df533d328387f78f0c9d8e0760e3007b48b338"
+      "exported_from": "afbf16cff47db3e43a08e4359e2e90a518edab50"
     },
     {
       "id": "root-home-media-delivery",
