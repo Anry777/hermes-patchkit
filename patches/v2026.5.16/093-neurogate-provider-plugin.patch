@@ -25,7 +25,6 @@ index 000000000..676a4fba5
 +
 +neurogate = ProviderProfile(
 +    name="neurogate",
-+    aliases=("neurogate-space", "neurogate-api"),
 +    display_name="NeuroGate",
 +    description="OpenAI Responses-compatible proxy for GPT-5.x models",
 +    signup_url="https://neurogate.space/",
@@ -79,7 +78,9 @@ index 000000000..4765b96d7
 +    from hermes_cli.auth_commands import auth_add_command
 +    from hermes_cli.runtime_provider import resolve_runtime_provider
 +
-+    assert resolve_provider("neurogate-space") == "neurogate"
++    assert resolve_provider("neurogate") == "neurogate"
++    assert "neurogate-space" not in PROVIDER_REGISTRY
++    assert "neurogate-api" not in PROVIDER_REGISTRY
 +    assert "neurogate" in PROVIDER_REGISTRY
 +
 +    class _Args:
@@ -145,13 +146,10 @@ index df96a80fd..6bcae9c38 100644
      def test_unknown_provider_returns_none(self):
          assert get_provider_profile("nonexistent-provider") is None
  
-+    def test_neurogate_alias_lookup(self):
-+        space = get_provider_profile("neurogate-space")
-+        api = get_provider_profile("neurogate-api")
-+        assert space is not None
-+        assert api is not None
-+        assert space.name == "neurogate"
-+        assert api.name == "neurogate"
++    def test_neurogate_has_no_aliases(self):
++        assert get_provider_profile("neurogate") is not None
++        assert get_provider_profile("neurogate-space") is None
++        assert get_provider_profile("neurogate-api") is None
 +
      def test_all_providers_have_name(self):
          get_provider_profile("nvidia")  # trigger discovery

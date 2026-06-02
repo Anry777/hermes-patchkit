@@ -1,19 +1,16 @@
-From 37c15e94d180db581db00c3b64ea4a0a7f61d278 Mon Sep 17 00:00:00 2001
-From: Anry777 <Anry777@users.noreply.github.com>
-Date: Fri, 29 May 2026 07:55:59 +0300
-Subject: [PATCH] patchkit: reanchor neurogate provider plugin for v2026.5.29
+From f458ae9e41ecff33ec97550c1907354f512af3d4 Mon Sep 17 00:00:00 2001
+From: Hermes Runtime <hermes-runtime@localhost>
+Date: Mon, 1 Jun 2026 00:00:00 +0000
+Subject: [PATCH] fix(provider): remove NeuroGate aliases
 
 ---
- hermes_cli/runtime_provider.py                |  2 +
- plugins/model-providers/neurogate/__init__.py | 26 ++++++++++++
- plugins/model-providers/neurogate/plugin.yaml |  5 +++
- tests/hermes_cli/test_neurogate_auth.py       | 41 +++++++++++++++++++
+ hermes_cli/runtime_provider.py                |  2 ++
+ plugins/model-providers/neurogate/__init__.py | 25 ++++++++++++++++
+ plugins/model-providers/neurogate/plugin.yaml |  5 ++++
+ tests/hermes_cli/test_neurogate_auth.py       | 43 +++++++++++++++++++++++++++
  tests/providers/test_plugin_discovery.py      |  3 +-
- tests/providers/test_provider_profiles.py     | 18 ++++++++
- 6 files changed, 94 insertions(+), 1 deletion(-)
- create mode 100644 plugins/model-providers/neurogate/__init__.py
- create mode 100644 plugins/model-providers/neurogate/plugin.yaml
- create mode 100644 tests/hermes_cli/test_neurogate_auth.py
+ tests/providers/test_provider_profiles.py     | 15 ++++++++++
+ 6 files changed, 92 insertions(+), 1 deletion(-)
 
 diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
 index c40316e02..c259666f5 100644
@@ -30,10 +27,10 @@ index c40316e02..c259666f5 100644
      if normalized.endswith("/anthropic"):
 diff --git a/plugins/model-providers/neurogate/__init__.py b/plugins/model-providers/neurogate/__init__.py
 new file mode 100644
-index 000000000..676a4fba5
+index 000000000..45768f22f
 --- /dev/null
 +++ b/plugins/model-providers/neurogate/__init__.py
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,25 @@
 +"""NeuroGate provider profile."""
 +
 +from providers import register_provider
@@ -42,7 +39,6 @@ index 000000000..676a4fba5
 +
 +neurogate = ProviderProfile(
 +    name="neurogate",
-+    aliases=("neurogate-space", "neurogate-api"),
 +    display_name="NeuroGate",
 +    description="OpenAI Responses-compatible proxy for GPT-5.x models",
 +    signup_url="https://neurogate.space/",
@@ -73,10 +69,10 @@ index 000000000..4de5048e0
 +author: Hermes PatchKit
 diff --git a/tests/hermes_cli/test_neurogate_auth.py b/tests/hermes_cli/test_neurogate_auth.py
 new file mode 100644
-index 000000000..4765b96d7
+index 000000000..434ad4666
 --- /dev/null
 +++ b/tests/hermes_cli/test_neurogate_auth.py
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +"""Tests for NeuroGate auth and runtime provider wiring."""
 +
 +from __future__ import annotations
@@ -96,7 +92,9 @@ index 000000000..4765b96d7
 +    from hermes_cli.auth_commands import auth_add_command
 +    from hermes_cli.runtime_provider import resolve_runtime_provider
 +
-+    assert resolve_provider("neurogate-space") == "neurogate"
++    assert resolve_provider("neurogate") == "neurogate"
++    assert "neurogate-space" not in PROVIDER_REGISTRY
++    assert "neurogate-api" not in PROVIDER_REGISTRY
 +    assert "neurogate" in PROVIDER_REGISTRY
 +
 +    class _Args:
@@ -140,20 +138,17 @@ index be5c56122..f77518eb7 100644
          assert required in names, f"Missing profile: {required}"
  
 diff --git a/tests/providers/test_provider_profiles.py b/tests/providers/test_provider_profiles.py
-index 7a2bb0815..e824401d9 100644
+index 7a2bb0815..3684cffec 100644
 --- a/tests/providers/test_provider_profiles.py
 +++ b/tests/providers/test_provider_profiles.py
-@@ -23,12 +23,30 @@ class TestRegistry:
+@@ -23,12 +23,27 @@ class TestRegistry:
      def test_unknown_provider_returns_none(self):
          assert get_provider_profile("nonexistent-provider") is None
  
-+    def test_neurogate_alias_lookup(self):
-+        space = get_provider_profile("neurogate-space")
-+        api = get_provider_profile("neurogate-api")
-+        assert space is not None
-+        assert api is not None
-+        assert space.name == "neurogate"
-+        assert api.name == "neurogate"
++    def test_neurogate_has_no_aliases(self):
++        assert get_provider_profile("neurogate") is not None
++        assert get_provider_profile("neurogate-space") is None
++        assert get_provider_profile("neurogate-api") is None
 +
      def test_all_providers_have_name(self):
          get_provider_profile("nvidia")  # trigger discovery
@@ -174,6 +169,3 @@ index 7a2bb0815..e824401d9 100644
  class TestNvidiaProfile:
      def test_max_tokens(self):
          p = get_provider_profile("nvidia")
--- 
-2.39.5
-

@@ -1,8 +1,22 @@
+From f458ae9e41ecff33ec97550c1907354f512af3d4 Mon Sep 17 00:00:00 2001
+From: Hermes Runtime <hermes-runtime@localhost>
+Date: Mon, 1 Jun 2026 00:00:00 +0000
+Subject: [PATCH] rollback: fix(provider): remove NeuroGate aliases
+
+---
+ hermes_cli/runtime_provider.py                |  2 ++
+ plugins/model-providers/neurogate/__init__.py | 25 ++++++++++++++++
+ plugins/model-providers/neurogate/plugin.yaml |  5 ++++
+ tests/hermes_cli/test_neurogate_auth.py       | 43 +++++++++++++++++++++++++++
+ tests/providers/test_plugin_discovery.py      |  3 +-
+ tests/providers/test_provider_profiles.py     | 15 ++++++++++
+ 6 files changed, 92 insertions(+), 1 deletion(-)
+
 diff --git b/hermes_cli/runtime_provider.py a/hermes_cli/runtime_provider.py
-index e515ccd9b..c0baf14db 100644
+index c259666f5..c40316e02 100644
 --- b/hermes_cli/runtime_provider.py
 +++ a/hermes_cli/runtime_provider.py
-@@ -79,8 +79,6 @@ def _detect_api_mode_for_url(base_url: str) -> Optional[str]:
+@@ -91,8 +91,6 @@ def _detect_api_mode_for_url(base_url: str) -> Optional[str]:
      hostname = base_url_hostname(base_url)
      if hostname == "api.x.ai":
          return "codex_responses"
@@ -13,10 +27,10 @@ index e515ccd9b..c0baf14db 100644
      if normalized.endswith("/anthropic"):
 diff --git b/plugins/model-providers/neurogate/__init__.py a/plugins/model-providers/neurogate/__init__.py
 deleted file mode 100644
-index 676a4fba5..000000000
+index 45768f22f..000000000
 --- b/plugins/model-providers/neurogate/__init__.py
 +++ /dev/null
-@@ -1,26 +0,0 @@
+@@ -1,25 +0,0 @@
 -"""NeuroGate provider profile."""
 -
 -from providers import register_provider
@@ -55,10 +69,10 @@ index 4de5048e0..000000000
 -author: Hermes PatchKit
 diff --git b/tests/hermes_cli/test_neurogate_auth.py a/tests/hermes_cli/test_neurogate_auth.py
 deleted file mode 100644
-index 4765b96d7..000000000
+index 434ad4666..000000000
 --- b/tests/hermes_cli/test_neurogate_auth.py
 +++ /dev/null
-@@ -1,41 +0,0 @@
+@@ -1,43 +0,0 @@
 -"""Tests for NeuroGate auth and runtime provider wiring."""
 -
 -from __future__ import annotations
@@ -103,10 +117,10 @@ index 4765b96d7..000000000
 -    assert runtime["base_url"] == "https://api.neurogate.space/v1"
 -    assert runtime["api_key"] == "ng-test-key"
 diff --git b/tests/providers/test_plugin_discovery.py a/tests/providers/test_plugin_discovery.py
-index 6fc887a18..a7cbb7d90 100644
+index f77518eb7..be5c56122 100644
 --- b/tests/providers/test_plugin_discovery.py
 +++ a/tests/providers/test_plugin_discovery.py
-@@ -39,27 +39,26 @@ def test_bundled_plugins_discovered():
+@@ -39,7 +39,7 @@ def test_bundled_plugins_discovered():
      assert plugins_dir.is_dir(), f"Missing {plugins_dir}"
  
      child_dirs = [c for c in plugins_dir.iterdir() if c.is_dir()]
@@ -115,22 +129,7 @@ index 6fc887a18..a7cbb7d90 100644
  
      for child in child_dirs:
          assert (child / "__init__.py").exists(), f"{child.name} missing __init__.py"
-         assert (child / "plugin.yaml").exists(), f"{child.name} missing plugin.yaml"
- 
- 
--def test_all_35_profiles_register():
--    """After discovery, the registry must contain exactly 35 distinct profiles."""
-+def test_all_34_profiles_register():
-+    """After discovery, the registry must contain exactly 34 distinct profiles."""
-     _clear_provider_caches()
-     from providers import list_providers
- 
-     profiles = list_providers()
-     names = sorted(p.name for p in profiles)
--    assert len(names) == 35, f"Expected 35 profiles, got {len(names)}: {names}"
-+    assert len(names) == 34, f"Expected 34 profiles, got {len(names)}: {names}"
- 
-     # Spot-check representative providers from different categories
+@@ -71,7 +71,6 @@ def test_all_profiles_register():
      for required in (
          "openrouter", "anthropic", "custom", "bedrock", "openai-codex",
          "minimax-oauth", "gmi", "xiaomi", "alibaba-coding-plan",
@@ -139,10 +138,10 @@ index 6fc887a18..a7cbb7d90 100644
          assert required in names, f"Missing profile: {required}"
  
 diff --git b/tests/providers/test_provider_profiles.py a/tests/providers/test_provider_profiles.py
-index 6bcae9c38..df96a80fd 100644
+index 3684cffec..7a2bb0815 100644
 --- b/tests/providers/test_provider_profiles.py
 +++ a/tests/providers/test_provider_profiles.py
-@@ -23,30 +23,12 @@ class TestRegistry:
+@@ -23,27 +23,12 @@ class TestRegistry:
      def test_unknown_provider_returns_none(self):
          assert get_provider_profile("nonexistent-provider") is None
  
