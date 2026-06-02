@@ -15,6 +15,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
+- `096-provider-plugin-model-switch`: teaches the shared `/model`/`/mode` provider resolver and no-args model picker to use registered `plugins/model-providers/*` `ProviderProfile` entries, so plugin-backed providers such as `neurogate` no longer need duplicate `config.yaml providers:` stanzas and no longer fail with `Unknown provider` in the switch path.
 - `093-neurogate-provider-plugin`: removes the `neurogate-space` and `neurogate-api` aliases from the NeuroGate provider profile; the only supported provider id is now `neurogate`, preventing `hermes auth` from displaying/seeding duplicate credential-pool providers from the same `NEUROGATE_API_KEY`.
 - `092-gateway-document-media-types`: renames and broadens the old `092-1c-document-types` unit so gateway document/media attachment handling stays consistent; `.epf`/`.cfe` remain supported and explicit `MEDIA:<path>` directives now extract supported Markdown/JSON/YAML/HTML artifacts as native attachments instead of leaking them as plain text.
 - `094-root-home-media-delivery`: fixes Telegram/Discord media delivery for root-run single-user gateways by no longer treating the active `/root` home as wholly unsafe; normal artifacts such as `.zip` files can be sent while credential subpaths and Hermes auth/env files stay blocked.

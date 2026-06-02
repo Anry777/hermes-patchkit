@@ -308,6 +308,39 @@
       "exported_from": "f458ae9e4"
     },
     {
+      "id": "provider-plugin-model-switch",
+      "file": "patches/v2026.5.29/096-provider-plugin-model-switch.patch",
+      "title_en": "Provider plugins in model switcher",
+      "title_ru": "Provider plugins в model switcher",
+      "description_en": "Makes provider-module plugins under plugins/model-providers usable by the shared /model and /mode switch path, provider labels, API-mode detection, and the no-args model picker without duplicate config.yaml providers entries.",
+      "description_ru": "Делает provider-module plugins из plugins/model-providers доступными для общего path /model и /mode, provider labels, API-mode detection и no-args model picker без дублирующих entries в config.yaml providers.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_model_switch_custom_providers.py",
+          "tests/hermes_cli/test_list_picker_providers.py",
+          "tests/hermes_cli/test_neurogate_auth.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/providers/test_provider_profiles.py"
+        ]
+      },
+      "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
+      "refreshed_for": "v2026.5.29",
+      "rollback": "patches/v2026.5.29/096-provider-plugin-model-switch.rollback.patch",
+      "impact": [
+        "resolve_provider_full() can resolve any registered ProviderProfile, not only built-in/models.dev/config providers.",
+        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as neurogate.",
+        "No duplicate config.yaml providers entry is required for bundled or user model-provider plugins."
+      ],
+      "exported_from": "b4df533d328387f78f0c9d8e0760e3007b48b338"
+    },
+    {
       "id": "root-home-media-delivery",
       "file": "patches/v2026.5.29/094-root-home-media-delivery.patch",
       "title_en": "Root-home media delivery safety fix",

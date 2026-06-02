@@ -12,6 +12,7 @@
     "email-smtp-ssl",
     "gateway-document-media-types",
     "neurogate-provider-plugin",
+    "provider-plugin-model-switch",
     "root-home-media-delivery",
     "gateway-busy-text-compat"
   ]

@@ -1,0 +1,337 @@
+diff --git a/hermes_cli/model_switch.py b/hermes_cli/model_switch.py
+index b493db5ba..b3e98e308 100644
+--- a/hermes_cli/model_switch.py
++++ b/hermes_cli/model_switch.py
+@@ -29,6 +29,7 @@ from hermes_cli.providers import (
+     custom_provider_slug,
+     determine_api_mode,
+     get_label,
++    get_provider_plugin,
+     is_aggregator,
+     resolve_provider_full,
+ )
+@@ -1472,6 +1473,72 @@ def list_authenticated_providers(
+         seen_slugs.add(_cp.slug.lower())
+         _record_builtin_endpoint(_cp.slug)
+ 
++    # --- 2c. Provider-module plugins (bundled/user plugins under plugins/model-providers) ---
++    # These providers can be registered dynamically through ProviderProfile and
++    # may not exist in models.dev, HERMES_OVERLAYS, CANONICAL_PROVIDERS, or
++    # config.yaml providers:.  Keep the picker in sync with the resolver used by
++    # /model --provider and /mode.
++    try:
++        import importlib
++        _provider_module = importlib.import_module("providers")
++        _plugin_profiles = _provider_module.list_providers()
++    except Exception:
++        _plugin_profiles = []
++
++    for _profile in _plugin_profiles:
++        _plugin_pdef = get_provider_plugin(getattr(_profile, "name", ""))
++        if _plugin_pdef is None:
++            continue
++        _slug = _plugin_pdef.id
++        if not _slug or _slug.lower() in seen_slugs:
++            continue
++
++        _has_plugin_creds = False
++        if _plugin_pdef.auth_type == "api_key" and _plugin_pdef.api_key_env_vars:
++            _has_plugin_creds = any(os.environ.get(ev) for ev in _plugin_pdef.api_key_env_vars)
++
++        if not _has_plugin_creds:
++            try:
++                from hermes_cli.auth import _load_auth_store
++                _store = _load_auth_store()
++                if _store:
++                    _providers_store = _store.get("providers", {})
++                    _credential_pool = _store.get("credential_pool", {})
++                    if _slug in _providers_store or _credential_pool.get(_slug):
++                        _has_plugin_creds = True
++            except Exception as exc:
++                logger.debug("Auth store check failed for provider plugin %s: %s", _slug, exc)
++
++        if not _has_plugin_creds:
++            try:
++                from agent.credential_pool import load_pool
++                _plugin_pool = load_pool(_slug)
++                if _plugin_pool.has_credentials():
++                    _has_plugin_creds = True
++            except Exception as exc:
++                logger.debug("Credential pool check failed for provider plugin %s: %s", _slug, exc)
++
++        if not _has_plugin_creds:
++            continue
++
++        _plugin_model_ids = cached_provider_model_ids(_slug)
++        if not _plugin_model_ids:
++            _plugin_model_ids = list(getattr(_profile, "fallback_models", ()) or [])
++        if not _plugin_model_ids:
++            _plugin_model_ids = curated.get(_slug, [])
++
++        results.append({
++            "slug": _slug,
++            "name": _plugin_pdef.name,
++            "is_current": _slug == current_provider,
++            "is_user_defined": False,
++            "models": _plugin_model_ids[:max_models],
++            "total_models": len(_plugin_model_ids),
++            "source": "provider-plugin",
++        })
++        seen_slugs.add(_slug.lower())
++        _record_builtin_endpoint(_slug)
++
+     # --- 3. User-defined endpoints from config ---
+     # Track (name, base_url) of what section 3 emits so section 4 can skip
+     # any overlapping ``custom_providers:`` entries.  Callers typically pass
+diff --git a/hermes_cli/providers.py b/hermes_cli/providers.py
+index a19a4584f..c81e9c264 100644
+--- a/hermes_cli/providers.py
++++ b/hermes_cli/providers.py
+@@ -403,6 +403,63 @@ def normalize_provider(name: str) -> str:
+     return ALIASES.get(key, key)
+ 
+ 
++def _provider_profile_to_def(profile: Any) -> ProviderDef:
++    """Convert a provider-module ProviderProfile into the model-switch ProviderDef.
++
++    Provider profiles use ``api_mode`` (``chat_completions``,
++    ``codex_responses``, ...), while the model-switch provider catalog stores
++    the corresponding transport name.  Keep this conversion in one place so
++    plugin-backed providers behave like built-ins without requiring duplicate
++    ``config.yaml providers:`` entries.
++    """
++    api_mode = str(getattr(profile, "api_mode", "") or "chat_completions")
++    api_mode_to_transport = {v: k for k, v in TRANSPORT_TO_API_MODE.items()}
++    transport = api_mode_to_transport.get(api_mode, api_mode)
++    if transport not in TRANSPORT_TO_API_MODE:
++        transport = "openai_chat"
++
++    env_vars = tuple(str(v) for v in (getattr(profile, "env_vars", ()) or ()) if v)
++    api_key_env_vars = tuple(
++        v for v in env_vars if not v.endswith("_BASE_URL") and not v.endswith("_URL")
++    )
++    base_url_env_var = next(
++        (v for v in env_vars if v.endswith("_BASE_URL") or v.endswith("_URL")),
++        "",
++    )
++
++    return ProviderDef(
++        id=str(getattr(profile, "name", "") or ""),
++        name=str(getattr(profile, "display_name", "") or getattr(profile, "name", "")),
++        transport=transport,
++        api_key_env_vars=api_key_env_vars or env_vars,
++        base_url=str(getattr(profile, "base_url", "") or ""),
++        base_url_env_var=base_url_env_var,
++        is_aggregator=False,
++        auth_type=str(getattr(profile, "auth_type", "api_key") or "api_key"),
++        doc=str(getattr(profile, "signup_url", "") or ""),
++        source="provider-plugin",
++    )
++
++
++def get_provider_plugin(name: str) -> Optional[ProviderDef]:
++    """Resolve a provider-module plugin profile into a ProviderDef.
++
++    This covers bundled and user plugins under ``plugins/model-providers/*``.
++    It is intentionally separate from :func:`get_provider`, which remains the
++    built-in/models.dev resolver used by older callers.
++    """
++    try:
++        import importlib
++        provider_module = importlib.import_module("providers")
++        profile = provider_module.get_provider_profile(name.strip().lower())
++    except Exception:
++        profile = None
++    if profile is None:
++        return None
++    pdef = _provider_profile_to_def(profile)
++    return pdef if pdef.id else None
++
++
+ def get_provider(name: str) -> Optional[ProviderDef]:
+     """Look up a built-in provider by id or alias.
+ 
+@@ -481,11 +538,16 @@ def get_label(provider_id: str) -> str:
+     if canonical in _LABEL_OVERRIDES:
+         return _LABEL_OVERRIDES[canonical]
+ 
+-    # Try models.dev
++    # Try models.dev / Hermes overlays
+     pdef = get_provider(canonical)
+     if pdef:
+         return pdef.name
+ 
++    # Try provider-module plugins (bundled or user plugins)
++    pdef = get_provider_plugin(canonical)
++    if pdef:
++        return pdef.name
++
+     return canonical
+ 
+ 
+@@ -519,6 +581,10 @@ def determine_api_mode(provider: str, base_url: str = "") -> str:
+                 return "codex_responses"
+         return TRANSPORT_TO_API_MODE.get(pdef.transport, "chat_completions")
+ 
++    plugin_pdef = get_provider_plugin(provider)
++    if plugin_pdef is not None:
++        return TRANSPORT_TO_API_MODE.get(plugin_pdef.transport, "chat_completions")
++
+     # Direct provider checks for providers not in HERMES_OVERLAYS
+     if provider == "bedrock":
+         return "bedrock_converse"
+@@ -699,6 +765,11 @@ def resolve_provider_full(
+     if custom_pdef is not None:
+         return custom_pdef
+ 
++    # 2c. Provider-module plugins (bundled/user plugins under plugins/model-providers)
++    plugin_pdef = get_provider_plugin(canonical) or get_provider_plugin(name)
++    if plugin_pdef is not None:
++        return plugin_pdef
++
+     # 3. Try models.dev directly (for providers not in our ALIASES)
+     try:
+         from agent.models_dev import get_provider_info as _mdev_provider
+diff --git a/tests/hermes_cli/test_model_switch_custom_providers.py b/tests/hermes_cli/test_model_switch_custom_providers.py
+index 4d88942b3..9b93082da 100644
+--- a/tests/hermes_cli/test_model_switch_custom_providers.py
++++ b/tests/hermes_cli/test_model_switch_custom_providers.py
+@@ -8,6 +8,8 @@ only looked at `providers:`.
+ import hermes_cli.providers as providers_mod
+ from hermes_cli.model_switch import list_authenticated_providers, switch_model
+ from hermes_cli.providers import resolve_provider_full
++from providers import register_provider
++from providers.base import ProviderProfile
+ 
+ 
+ _MOCK_VALIDATION = {
+@@ -45,6 +47,40 @@ def test_list_authenticated_providers_includes_custom_providers(monkeypatch):
+     )
+ 
+ 
++def test_list_authenticated_providers_includes_provider_plugin(monkeypatch):
++    """No-args /model menus should include credentialed provider plugins."""
++    register_provider(
++        ProviderProfile(
++            name="plugin-list-test",
++            display_name="Plugin List Test",
++            api_mode="chat_completions",
++            env_vars=("PLUGIN_LIST_TEST_API_KEY",),
++            base_url="https://plugin-list.example/v1",
++            auth_type="api_key",
++            fallback_models=("plugin-list-model-a", "plugin-list-model-b"),
++        )
++    )
++    monkeypatch.setenv("PLUGIN_LIST_TEST_API_KEY", "test-key")
++    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
++    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
++    monkeypatch.setattr("hermes_cli.models.cached_provider_model_ids", lambda *a, **k: [])
++
++    providers = list_authenticated_providers(
++        current_provider="openai-codex",
++        user_providers={},
++        custom_providers=[],
++        max_models=50,
++    )
++
++    assert any(
++        p["slug"] == "plugin-list-test"
++        and p["name"] == "Plugin List Test"
++        and p["models"] == ["plugin-list-model-a", "plugin-list-model-b"]
++        and p["source"] == "provider-plugin"
++        for p in providers
++    )
++
++
+ def test_resolve_provider_full_finds_named_custom_provider():
+     """Explicit /model --provider should resolve saved custom_providers entries."""
+     resolved = resolve_provider_full(
+@@ -65,6 +101,37 @@ def test_resolve_provider_full_finds_named_custom_provider():
+     assert resolved.source == "user-config"
+ 
+ 
++def test_resolve_provider_full_finds_provider_plugin_profile():
++    """Provider-module plugins should resolve without config.yaml providers entries."""
++    register_provider(
++        ProviderProfile(
++            name="plugin-switch-test",
++            display_name="Plugin Switch Test",
++            api_mode="codex_responses",
++            env_vars=("PLUGIN_SWITCH_TEST_API_KEY", "PLUGIN_SWITCH_TEST_BASE_URL"),
++            base_url="https://plugin-switch.example/v1",
++            auth_type="api_key",
++            fallback_models=("plugin-model-a", "plugin-model-b"),
++        )
++    )
++
++    resolved = resolve_provider_full(
++        "plugin-switch-test",
++        user_providers={},
++        custom_providers=[],
++    )
++
++    assert resolved is not None
++    assert resolved.id == "plugin-switch-test"
++    assert resolved.name == "Plugin Switch Test"
++    assert resolved.transport == "codex_responses"
++    assert resolved.api_key_env_vars == ("PLUGIN_SWITCH_TEST_API_KEY",)
++    assert resolved.base_url == "https://plugin-switch.example/v1"
++    assert resolved.base_url_env_var == "PLUGIN_SWITCH_TEST_BASE_URL"
++    assert resolved.auth_type == "api_key"
++    assert resolved.source == "provider-plugin"
++
++
+ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
+     """Shared /model switch pipeline should accept --provider for custom_providers."""
+     monkeypatch.setattr(
+@@ -104,6 +171,50 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
+     assert result.api_key == "no-key-required"
+ 
+ 
++def test_switch_model_accepts_explicit_provider_plugin(monkeypatch):
++    """The shared /model and /mode switch path should accept provider plugins."""
++    register_provider(
++        ProviderProfile(
++            name="plugin-switch-explicit",
++            display_name="Plugin Switch Explicit",
++            api_mode="chat_completions",
++            env_vars=("PLUGIN_SWITCH_EXPLICIT_API_KEY",),
++            base_url="https://plugin-explicit.example/v1",
++            auth_type="api_key",
++            fallback_models=("plugin-explicit-model",),
++        )
++    )
++    monkeypatch.setattr(
++        "hermes_cli.runtime_provider.resolve_runtime_provider",
++        lambda **kwargs: {
++            "api_key": "plugin-key",
++            "base_url": "https://plugin-explicit.example/v1",
++            "api_mode": "chat_completions",
++        },
++    )
++    monkeypatch.setattr("hermes_cli.models.validate_requested_model", lambda *a, **k: _MOCK_VALIDATION)
++    monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
++    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
++
++    result = switch_model(
++        raw_input="plugin-explicit-model",
++        current_provider="openai-codex",
++        current_model="gpt-5.4",
++        current_base_url="https://chatgpt.com/backend-api/codex",
++        current_api_key="",
++        explicit_provider="plugin-switch-explicit",
++        user_providers={},
++        custom_providers=[],
++    )
++
++    assert result.success is True
++    assert result.target_provider == "plugin-switch-explicit"
++    assert result.provider_label == "Plugin Switch Explicit"
++    assert result.new_model == "plugin-explicit-model"
++    assert result.base_url == "https://plugin-explicit.example/v1"
++    assert result.api_key == "plugin-key"
++
++
+ def test_list_groups_same_name_custom_providers_into_one_row(monkeypatch):
+     """Multiple custom_providers entries sharing a name should produce one row
+     with all models collected, not N duplicate rows."""

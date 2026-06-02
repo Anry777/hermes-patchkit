@@ -6,6 +6,7 @@
     "telegram-free-response-target-gating",
     "homeassistant-tool-config-url",
     "codex-auxiliary-tool-role-flattening",
-    "root-home-media-delivery"
+    "root-home-media-delivery",
+    "provider-plugin-model-switch"
   ]
 }
