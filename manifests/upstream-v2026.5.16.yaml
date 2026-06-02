@@ -307,7 +307,7 @@
       "verification": {
         "focused_tests": [
           "tests/providers/test_plugin_discovery.py",
-          "tests/providers/test_provider_profiles.py::TestRegistry::test_neurogate_alias_lookup",
+          "tests/providers/test_provider_profiles.py::TestRegistry::test_neurogate_has_no_aliases",
           "tests/providers/test_provider_profiles.py::TestNeuroGateProfile",
           "tests/hermes_cli/test_neurogate_auth.py"
         ]
