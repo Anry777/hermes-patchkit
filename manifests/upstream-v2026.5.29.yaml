@@ -403,6 +403,39 @@
         "Profiles that explicitly set display.busy_text_mode: queue continue to queue/debounce busy TEXT follow-ups."
       ],
       "exported_from": "runtime-upstream-v2026.5.29-local"
+    },
+    {
+      "id": "gateway-explicit-media-delivery-safety",
+      "file": "patches/v2026.5.29/097-gateway-explicit-media-delivery-safety.patch",
+      "title_en": "Explicit gateway local-file delivery",
+      "title_ru": "Явная отправка локальных файлов через gateway",
+      "description_en": "Makes native outbound local-file delivery explicit by default: MEDIA:/path directives and structured artifacts remain attachment candidates, while bare absolute paths in assistant text stay visible text unless gateway.auto_upload_local_paths explicitly restores legacy extraction.",
+      "description_ru": "Делает outbound delivery локальных файлов явным по умолчанию: MEDIA:/path directives и structured artifacts остаются кандидатами на attachment, а bare absolute paths в тексте assistant остаются видимым текстом, если gateway.auto_upload_local_paths явно не возвращает legacy extraction.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_auto_upload_local_paths.py",
+          "tests/gateway/test_extract_local_files.py",
+          "tests/gateway/test_platform_base.py",
+          "tests/gateway/test_background_command.py",
+          "tests/gateway/test_config.py"
+        ]
+      },
+      "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
+      "refreshed_for": "v2026.5.29",
+      "rollback": "patches/v2026.5.29/097-gateway-explicit-media-delivery-safety.rollback.patch",
+      "impact": [
+        "Ordinary absolute paths in gateway responses remain user-visible text by default instead of becoming native attachment uploads.",
+        "Explicit MEDIA:/path directives and structured kanban artifacts still pass through existing media validation and delivery paths.",
+        "Operators can restore legacy bare-path extraction with gateway.auto_upload_local_paths: true; gateway.strict remains a separate validation layer."
+      ],
+      "exported_from": "9efb2dfdfe2ffae2f1741d600d3239c01ad53c8c"
     }
   ],
   "retired_patches": [

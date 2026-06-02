@@ -15,6 +15,7 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Fixed
+- `097-gateway-explicit-media-delivery-safety`: makes outbound local-file delivery explicit by default: bare absolute paths in gateway responses remain text, while `MEDIA:/path` directives and structured artifacts continue to deliver as native attachments after validation; `gateway.auto_upload_local_paths: true` restores legacy bare-path extraction when explicitly needed.
 - `096-provider-plugin-model-switch`: teaches the shared `/model`/`/mode` provider resolver, no-args model picker, and context-length resolver to use registered `plugins/model-providers/*` `ProviderProfile` entries. Plugin-backed providers such as `neurogate` no longer need duplicate `config.yaml providers:` stanzas, no longer fail with `Unknown provider` in the switch path, and can declare provider-enforced per-model windows such as `neurogate` + `gpt-5.5` = 272,000 tokens.
 - `093-neurogate-provider-plugin`: removes the `neurogate-space` and `neurogate-api` aliases from the NeuroGate provider profile; the only supported provider id is now `neurogate`, preventing `hermes auth` from displaying/seeding duplicate credential-pool providers from the same `NEUROGATE_API_KEY`.
 - `092-gateway-document-media-types`: renames and broadens the old `092-1c-document-types` unit so gateway document/media attachment handling stays consistent; `.epf`/`.cfe` remain supported and explicit `MEDIA:<path>` directives now extract supported Markdown/JSON/YAML/HTML artifacts as native attachments instead of leaking them as plain text.

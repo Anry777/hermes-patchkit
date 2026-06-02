@@ -1,0 +1,518 @@
+diff --git b/gateway/platforms/base.py a/gateway/platforms/base.py
+index 537ae0b3e..a21471cb5 100644
+--- b/gateway/platforms/base.py
++++ a/gateway/platforms/base.py
+@@ -829,7 +829,6 @@ _HERMES_HOME = get_hermes_home()
+ MEDIA_DELIVERY_ALLOW_DIRS_ENV = "HERMES_MEDIA_ALLOW_DIRS"
+ MEDIA_DELIVERY_TRUST_RECENT_ENV = "HERMES_MEDIA_TRUST_RECENT_FILES"
+ MEDIA_DELIVERY_TRUST_RECENT_SECONDS_ENV = "HERMES_MEDIA_TRUST_RECENT_SECONDS"
+-AUTO_UPLOAD_LOCAL_PATHS_ENV = "HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"
+ # Strict mode toggles the original allowlist+recency path-validation behavior.
+ # Off by default — symmetric with inbound (we accept any document type the
+ # user uploads), and with the denylist still blocking obvious credential /
+@@ -926,19 +925,6 @@ def _media_delivery_recency_seconds() -> float:
+     return float(_MEDIA_DELIVERY_TRUST_RECENT_DEFAULT_SECONDS)
+ 
+ 
+-def _env_flag_enabled(env_var: str, default: bool = False) -> bool:
+-    """Return a boolean feature flag from common env truthy/falsy strings."""
+-    raw = os.environ.get(env_var)
+-    if raw is None:
+-        return default
+-    normalized = raw.strip().lower()
+-    if normalized in ("1", "true", "yes", "on"):
+-        return True
+-    if normalized in ("0", "false", "no", "off", ""):
+-        return False
+-    return default
+-
+-
+ def _media_delivery_strict_mode() -> bool:
+     """Return True when path validation should require allowlist/recency match.
+ 
+@@ -950,19 +936,8 @@ def _media_delivery_strict_mode() -> bool:
+     gateways where prompt injection from one user shouldn't be able to
+     exfiltrate the host's secrets to that same user.
+     """
+-    return _env_flag_enabled(MEDIA_DELIVERY_STRICT_ENV, default=False)
+-
+-
+-def auto_upload_local_paths_enabled() -> bool:
+-    """Return True when legacy bare local path auto-upload is enabled.
+-
+-    Safe default is False: ordinary absolute paths remain text and only
+-    explicit ``MEDIA:/path`` directives become native attachment candidates.
+-    Operators can opt back into legacy behavior with
+-    ``gateway.auto_upload_local_paths: true`` (bridged to
+-    ``HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS=1``) or the env var directly.
+-    """
+-    return _env_flag_enabled(AUTO_UPLOAD_LOCAL_PATHS_ENV, default=False)
++    raw = os.environ.get(MEDIA_DELIVERY_STRICT_ENV, "0").strip().lower()
++    return raw in ("1", "true", "yes", "on")
+ 
+ 
+ def _media_delivery_denied_paths() -> List[Path]:
+@@ -3693,15 +3668,12 @@ class BasePlatformAdapter(ABC):
+                 if images:
+                     logger.info("[%s] extract_images found %d image(s) in response (%d chars)", self.name, len(images), len(response))
+ 
+-                # Legacy bare local path auto-upload is opt-in.  In the safe
+-                # default, ordinary absolute paths remain visible text and
+-                # only explicit MEDIA:/path directives become attachments.
+-                local_files = []
+-                if auto_upload_local_paths_enabled():
+-                    local_files, text_content = self.extract_local_files(text_content)
+-                    local_files = self.filter_local_delivery_paths(local_files)
+-                    if local_files:
+-                        logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
++                # Auto-detect bare local file paths for native media delivery
++                # (helps small models that don't use MEDIA: syntax)
++                local_files, text_content = self.extract_local_files(text_content)
++                local_files = self.filter_local_delivery_paths(local_files)
++                if local_files:
++                    logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
+                 
+                 # Auto-TTS: if voice message, generate audio FIRST (before sending text)
+                 # Gated via ``_should_auto_tts_for_chat``: fires when the chat has
+diff --git b/gateway/platforms/weixin.py a/gateway/platforms/weixin.py
+index 78813dbb4..613c8283b 100644
+--- b/gateway/platforms/weixin.py
++++ a/gateway/platforms/weixin.py
+@@ -62,7 +62,6 @@ from gateway.platforms.base import (
+     MessageEvent,
+     MessageType,
+     SendResult,
+-    auto_upload_local_paths_enabled,
+     cache_audio_from_bytes,
+     cache_document_from_bytes,
+     cache_image_from_bytes,
+@@ -1682,12 +1681,8 @@ class WeixinAdapter(BasePlatformAdapter):
+         media_files, cleaned_content = self.extract_media(content)
+         media_files = self.filter_media_delivery_paths(media_files)
+         _, image_cleaned = self.extract_images(cleaned_content)
+-        if auto_upload_local_paths_enabled():
+-            local_files, final_content = self.extract_local_files(image_cleaned)
+-            local_files = self.filter_local_delivery_paths(local_files)
+-        else:
+-            local_files = []
+-            final_content = image_cleaned
++        local_files, final_content = self.extract_local_files(image_cleaned)
++        local_files = self.filter_local_delivery_paths(local_files)
+ 
+         _AUDIO_EXTS = {".ogg", ".opus", ".mp3", ".wav", ".m4a", ".flac"}
+         _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
+diff --git b/gateway/run.py a/gateway/run.py
+index 9604d173b..aef53dc0d 100644
+--- b/gateway/run.py
++++ a/gateway/run.py
+@@ -786,12 +786,6 @@ def _reload_runtime_env_preserving_config_authority() -> None:
+     if isinstance(agent_cfg, dict) and "max_turns" in agent_cfg:
+         os.environ["HERMES_MAX_ITERATIONS"] = str(agent_cfg["max_turns"])
+ 
+-    gateway_cfg = cfg.get("gateway", {})
+-    if isinstance(gateway_cfg, dict) and "auto_upload_local_paths" in gateway_cfg:
+-        os.environ["HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"] = (
+-            "1" if gateway_cfg.get("auto_upload_local_paths") else "0"
+-        )
+-
+ 
+ _DOCKER_VOLUME_SPEC_RE = re.compile(r"^(?P<host>.+):(?P<container>/[^:]+?)(?::(?P<options>[^:]+))?$")
+ _DOCKER_MEDIA_OUTPUT_CONTAINER_PATHS = {"/output", "/outputs"}
+@@ -964,11 +958,6 @@ if _config_path.exists():
+             _trust_recent_seconds = _gateway_cfg.get("trust_recent_files_seconds")
+             if _trust_recent_seconds is not None:
+                 os.environ["HERMES_MEDIA_TRUST_RECENT_SECONDS"] = str(_trust_recent_seconds)
+-            _auto_upload_local_paths = _gateway_cfg.get("auto_upload_local_paths")
+-            if _auto_upload_local_paths is not None:
+-                os.environ["HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"] = (
+-                    "1" if _auto_upload_local_paths else "0"
+-                )
+     except Exception as _bridge_err:
+         # Previously this was silent (`except Exception: pass`), which
+         # hid partial bridge failures and let .env defaults shadow
+@@ -1051,7 +1040,6 @@ from gateway.platforms.base import (
+     MessageEvent,
+     MessageType,
+     _reply_anchor_for_event,
+-    auto_upload_local_paths_enabled,
+     merge_pending_message_event,
+ )
+ from gateway.restart import (
+@@ -5101,14 +5089,14 @@ class GatewayRunner:
+                                 kind, sub["task_id"], platform_str, sub["chat_id"], board_slug,
+                             )
+                             # After delivering the text notification, surface
+-                            # explicit artifact paths the worker passed via
+-                            # ``kanban_complete(artifacts=[...])`` as native
+-                            # uploads. Bare paths embedded only in ``summary``
+-                            # or legacy ``result`` are treated as artifacts
+-                            # only when gateway.auto_upload_local_paths opts
+-                            # back into legacy extraction. Only fires on the
+-                            # ``completed`` event so we never spam attachments
+-                            # on retries.
++                            # any artifact paths the worker referenced in
++                            # ``kanban_complete(summary=..., artifacts=[...])``
++                            # (or the legacy ``result`` field) as native
++                            # uploads. ``extract_local_files`` finds bare
++                            # absolute paths in the summary;
++                            # ``send_document`` / ``send_image_file`` uploads
++                            # them. Only fires on the ``completed`` event so
++                            # we never spam attachments on retries.
+                             if kind == "completed":
+                                 try:
+                                     await self._deliver_kanban_artifacts(
+@@ -5258,8 +5246,8 @@ class GatewayRunner:
+ 
+         Sources scanned, in priority order:
+           1. ``event_payload['artifacts']`` (explicit list — preferred)
+-          2. ``event_payload['summary']`` when legacy bare-path upload is enabled
+-          3. ``task.result`` when legacy bare-path upload is enabled
++          2. ``event_payload['summary']`` (truncated first line)
++          3. ``task.result`` (legacy fallback)
+ 
+         Files are deduplicated, missing files are silently skipped (the
+         path may have been mentioned for reference only), and delivery
+@@ -5281,8 +5269,6 @@ class GatewayRunner:
+             seen.add(expanded)
+             candidates.append(expanded)
+ 
+-        legacy_bare_path_upload = auto_upload_local_paths_enabled()
+-
+         # 1. Explicit artifacts list in payload.
+         if isinstance(event_payload, dict):
+             raw = event_payload.get("artifacts")
+@@ -5291,15 +5277,15 @@ class GatewayRunner:
+                     if isinstance(item, str):
+                         _add(item)
+ 
+-            # 2. Legacy: paths embedded in the payload summary.
++            # 2. Paths embedded in the payload summary.
+             summary = event_payload.get("summary")
+-            if legacy_bare_path_upload and isinstance(summary, str) and summary:
++            if isinstance(summary, str) and summary:
+                 paths, _ = adapter.extract_local_files(summary)
+                 for p in paths:
+                     _add(p)
+ 
+         # 3. Legacy: paths embedded in task.result.
+-        if legacy_bare_path_upload and task is not None and getattr(task, "result", None):
++        if task is not None and getattr(task, "result", None):
+             result_text = str(task.result)
+             paths, _ = adapter.extract_local_files(result_text)
+             for p in paths:
+@@ -11604,11 +11590,8 @@ class GatewayRunner:
+             media_files, _ = adapter.extract_media(response)
+             media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+             _, cleaned = adapter.extract_images(response)
+-            if auto_upload_local_paths_enabled():
+-                local_files, _ = adapter.extract_local_files(cleaned)
+-                local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
+-            else:
+-                local_files = []
++            local_files, _ = adapter.extract_local_files(cleaned)
++            local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
+ 
+             _thread_meta = self._thread_metadata_for_source(event.source, self._reply_anchor_for_event(event))
+ 
+diff --git b/hermes_cli/config.py a/hermes_cli/config.py
+index c0e4c87af..ff1f988f6 100644
+--- b/hermes_cli/config.py
++++ a/hermes_cli/config.py
+@@ -1806,35 +1806,23 @@ DEFAULT_CONFIG = {
+     # Gateway settings — control how messaging platforms (Telegram, Discord,
+     # Slack, etc.) deliver agent-produced files as native attachments.
+     "gateway": {
+-        # Safe default: ordinary absolute paths in assistant text remain text.
+-        # Only explicit MEDIA:/path directives or structured artifact fields
+-        # become native attachment candidates. Set this true to restore the
+-        # legacy behavior where bare local paths such as /tmp/report.xlsx are
+-        # extracted from the response text and uploaded after validation.
+-        "auto_upload_local_paths": False,
+-        # Path validation mode for native attachment candidates. This is a
+-        # separate safety layer from auto_upload_local_paths: MEDIA:/path is
+-        # always a candidate, and legacy bare-path candidates only exist when
+-        # auto_upload_local_paths is true. All candidates still pass through
+-        # validate_media_delivery_path().
++        # When false (default), any file path the agent emits is delivered
++        # as a native attachment as long as it isn't under the credential /
++        # system-path denylist (/etc, /proc, ~/.ssh, ~/.aws, ~/.hermes/.env,
++        # auth.json, etc.). This matches the symmetry of inbound delivery
++        # — we accept any document type the user uploads, and the agent
++        # can hand back any file that isn't a credential.
+         #
+-        # When false (default), an attachment candidate is delivered as long as
+-        # it is an existing regular file outside the credential / system-path
+-        # denylist (/etc, /proc, ~/.ssh, ~/.aws, ~/.hermes/.env, auth.json,
+-        # etc.). This matches the private/single-user symmetry of inbound
+-        # delivery while keeping obvious secrets blocked.
+-        #
+-        # When true, fall back to the older allowlist+recency-window behavior:
+-        # files must live under the Hermes cache, under
++        # When true, fall back to the older allowlist+recency-window
++        # behavior: files must live under the Hermes cache, under
+         # ``media_delivery_allow_dirs``, or be freshly produced inside the
+-        # ``trust_recent_files_seconds`` window. Recommended for public-facing
+-        # gateways where prompt injection from one user shouldn't be able to
+-        # exfiltrate the host's secrets to that same user. Bridged to
+-        # HERMES_MEDIA_DELIVERY_STRICT.
++        # ``trust_recent_files_seconds`` window. Recommended for
++        # public-facing gateways where prompt injection from one user
++        # shouldn't be able to exfiltrate the host's secrets to that same
++        # user. Bridged to HERMES_MEDIA_DELIVERY_STRICT.
+         "strict": False,
+-        # Extra directories from which local files may be uploaded as native
+-        # gateway attachments after becoming explicit attachment candidates.
+-        # Files inside the Hermes
++        # Extra directories from which model-emitted bare file paths may be
++        # uploaded as native gateway attachments. Files inside the Hermes
+         # cache (~/.hermes/cache/{documents,images,audio,video,screenshots})
+         # are always trusted; this list adds operator-controlled roots
+         # (project dirs, scratch dirs, mounted shares). Accepts a list of
+diff --git b/tests/gateway/test_auto_upload_local_paths.py a/tests/gateway/test_auto_upload_local_paths.py
+deleted file mode 100644
+index a6070b82c..000000000
+--- b/tests/gateway/test_auto_upload_local_paths.py
++++ /dev/null
+@@ -1,242 +0,0 @@
+-"""Gateway media delivery requires explicit MEDIA: by default."""
+-
+-import pytest
+-
+-from gateway.config import GatewayConfig, Platform, PlatformConfig
+-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, SendResult
+-from gateway.run import GatewayRunner
+-from gateway.session import SessionSource
+-
+-
+-class RecordingAdapter(BasePlatformAdapter):
+-    """Minimal adapter that records outbound text and native file sends."""
+-
+-    def __init__(self):
+-        super().__init__(PlatformConfig(enabled=True), Platform.TELEGRAM)
+-        self.sent_texts: list[str] = []
+-        self.sent_documents: list[str] = []
+-        self.sent_videos: list[str] = []
+-        self.sent_image_batches: list[list[str]] = []
+-        self.sent_voices: list[str] = []
+-
+-    async def connect(self) -> bool:
+-        return True
+-
+-    async def disconnect(self) -> None:
+-        return None
+-
+-    async def send(self, chat_id: str, content: str, reply_to=None, metadata=None) -> SendResult:
+-        self.sent_texts.append(content)
+-        return SendResult(success=True, message_id=f"text-{len(self.sent_texts)}")
+-
+-    async def send_document(
+-        self,
+-        chat_id: str,
+-        file_path: str,
+-        caption=None,
+-        file_name=None,
+-        reply_to=None,
+-        metadata=None,
+-        **kwargs,
+-    ) -> SendResult:
+-        self.sent_documents.append(file_path)
+-        return SendResult(success=True, message_id=f"doc-{len(self.sent_documents)}")
+-
+-    async def send_video(
+-        self,
+-        chat_id: str,
+-        video_path: str,
+-        caption=None,
+-        reply_to=None,
+-        metadata=None,
+-        **kwargs,
+-    ) -> SendResult:
+-        self.sent_videos.append(video_path)
+-        return SendResult(success=True, message_id=f"video-{len(self.sent_videos)}")
+-
+-    async def send_multiple_images(self, chat_id: str, images, metadata=None, human_delay=0.0) -> None:
+-        self.sent_image_batches.append([url for url, _alt in images])
+-
+-    async def send_voice(
+-        self,
+-        chat_id: str,
+-        audio_path: str,
+-        caption=None,
+-        reply_to=None,
+-        metadata=None,
+-        **kwargs,
+-    ) -> SendResult:
+-        self.sent_voices.append(audio_path)
+-        return SendResult(success=True, message_id=f"voice-{len(self.sent_voices)}")
+-
+-    async def send_typing(self, chat_id: str, metadata=None) -> None:
+-        return None
+-
+-    async def _keep_typing(self, chat_id: str, interval: float = 2.0, metadata=None, stop_event=None) -> None:
+-        return None
+-
+-    async def get_chat_info(self, chat_id: str):
+-        return {"name": "Test chat", "type": "dm"}
+-
+-
+-@pytest.fixture(autouse=True)
+-def _gateway_media_env(monkeypatch):
+-    # Each test starts in the new safe default: bare local paths are not upload candidates.
+-    monkeypatch.delenv("HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS", raising=False)
+-    monkeypatch.delenv("HERMES_MEDIA_DELIVERY_STRICT", raising=False)
+-    monkeypatch.delenv("HERMES_MEDIA_ALLOW_DIRS", raising=False)
+-    monkeypatch.delenv("HERMES_MEDIA_TRUST_RECENT_FILES", raising=False)
+-    monkeypatch.delenv("HERMES_MEDIA_TRUST_RECENT_SECONDS", raising=False)
+-    monkeypatch.setenv("HERMES_HUMAN_DELAY_MIN_MS", "0")
+-    monkeypatch.setenv("HERMES_HUMAN_DELAY_MAX_MS", "0")
+-
+-
+-def _event() -> MessageEvent:
+-    return MessageEvent(
+-        text="trigger",
+-        source=SessionSource(platform=Platform.TELEGRAM, chat_id="chat-1", user_id="user-1"),
+-    )
+-
+-
+-async def _deliver_response(adapter: RecordingAdapter, response: str) -> None:
+-    async def handler(_event):
+-        return response
+-
+-    adapter.set_message_handler(handler)
+-    await adapter._process_message_background(_event(), "telegram:chat-1")
+-
+-
+-@pytest.mark.asyncio
+-async def test_bare_local_path_is_text_by_default(tmp_path):
+-    report = tmp_path / "report.xlsx"
+-    report.write_bytes(b"xlsx")
+-    adapter = RecordingAdapter()
+-
+-    await _deliver_response(adapter, f"Отчёт лежит тут: {report}")
+-
+-    assert adapter.sent_documents == []
+-    assert adapter.sent_texts == [f"Отчёт лежит тут: {report}"]
+-
+-
+-@pytest.mark.asyncio
+-async def test_media_directive_still_sends_document_and_is_removed_from_text(tmp_path):
+-    report = tmp_path / "report.xlsx"
+-    report.write_bytes(b"xlsx")
+-    adapter = RecordingAdapter()
+-
+-    await _deliver_response(adapter, f"Готово.\n\nMEDIA:{report}")
+-
+-    assert adapter.sent_documents == [str(report)]
+-    assert adapter.sent_texts == ["Готово."]
+-    assert "MEDIA:" not in adapter.sent_texts[0]
+-
+-
+-@pytest.mark.asyncio
+-async def test_legacy_flag_restores_bare_local_path_upload(monkeypatch, tmp_path):
+-    monkeypatch.setenv("HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS", "1")
+-    report = tmp_path / "report.xlsx"
+-    report.write_bytes(b"xlsx")
+-    adapter = RecordingAdapter()
+-
+-    await _deliver_response(adapter, f"Отчёт: {report}")
+-
+-    assert adapter.sent_documents == [str(report)]
+-    assert adapter.sent_texts == ["Отчёт:"]
+-
+-
+-@pytest.mark.asyncio
+-async def test_strict_still_blocks_legacy_bare_local_paths(monkeypatch, tmp_path):
+-    monkeypatch.setenv("HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS", "1")
+-    monkeypatch.setenv("HERMES_MEDIA_DELIVERY_STRICT", "1")
+-    monkeypatch.setenv("HERMES_MEDIA_TRUST_RECENT_FILES", "0")
+-    secret = tmp_path / "secret.txt"
+-    secret.write_bytes(b"secret")
+-    adapter = RecordingAdapter()
+-
+-    await _deliver_response(adapter, f"Ключ: {secret}")
+-
+-    assert adapter.sent_documents == []
+-    # Legacy extraction still strips candidates before validation, preserving old behavior
+-    # when the operator explicitly opts into bare-path auto-upload.
+-    assert adapter.sent_texts == ["Ключ:"]
+-
+-
+-@pytest.mark.asyncio
+-async def test_incident_style_profile_report_path_remains_text_by_default(tmp_path):
+-    report_dir = tmp_path / "root" / ".hermes" / "profiles" / "video_monitoring" / "reports"
+-    report_dir.mkdir(parents=True)
+-    report = report_dir / "video_monitoring_full_report_20260520_193404.xlsx"
+-    report.write_bytes(b"xlsx")
+-    adapter = RecordingAdapter()
+-
+-    await _deliver_response(adapter, str(report))
+-
+-    assert adapter.sent_documents == []
+-    assert adapter.sent_texts == [str(report)]
+-
+-
+-@pytest.mark.asyncio
+-async def test_post_stream_delivery_ignores_bare_paths_by_default(tmp_path):
+-    report = tmp_path / "post_stream.xlsx"
+-    report.write_bytes(b"xlsx")
+-    runner = GatewayRunner(GatewayConfig())
+-    adapter = RecordingAdapter()
+-
+-    await runner._deliver_media_from_response(f"Итог: {report}", _event(), adapter)
+-
+-    assert adapter.sent_documents == []
+-    assert adapter.sent_image_batches == []
+-
+-
+-@pytest.mark.asyncio
+-async def test_post_stream_delivery_keeps_media_directive(tmp_path):
+-    report = tmp_path / "post_stream_media.xlsx"
+-    report.write_bytes(b"xlsx")
+-    runner = GatewayRunner(GatewayConfig())
+-    adapter = RecordingAdapter()
+-
+-    await runner._deliver_media_from_response(f"MEDIA:{report}", _event(), adapter)
+-
+-    assert adapter.sent_documents == [str(report)]
+-
+-
+-@pytest.mark.asyncio
+-async def test_kanban_summary_bare_path_is_not_artifact_by_default(tmp_path):
+-    report = tmp_path / "summary.xlsx"
+-    report.write_bytes(b"xlsx")
+-    runner = GatewayRunner(GatewayConfig())
+-    adapter = RecordingAdapter()
+-
+-    await runner._deliver_kanban_artifacts(
+-        adapter=adapter,
+-        chat_id="chat-1",
+-        metadata={},
+-        event_payload={"summary": f"Готово: {report}"},
+-        task=None,
+-    )
+-
+-    assert adapter.sent_documents == []
+-
+-
+-@pytest.mark.asyncio
+-async def test_kanban_structured_artifacts_remain_explicit_source(tmp_path):
+-    report = tmp_path / "artifact.xlsx"
+-    report.write_bytes(b"xlsx")
+-    runner = GatewayRunner(GatewayConfig())
+-    adapter = RecordingAdapter()
+-
+-    await runner._deliver_kanban_artifacts(
+-        adapter=adapter,
+-        chat_id="chat-1",
+-        metadata={},
+-        event_payload={"summary": "Готово", "artifacts": [str(report)]},
+-        task=None,
+-    )
+-
+-    assert adapter.sent_documents == [str(report)]
+-
+-
+-def test_default_config_disables_bare_local_path_auto_upload():
+-    from hermes_cli.config import DEFAULT_CONFIG
+-
+-    assert DEFAULT_CONFIG["gateway"]["auto_upload_local_paths"] is False

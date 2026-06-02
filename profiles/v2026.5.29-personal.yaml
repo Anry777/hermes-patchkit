@@ -14,6 +14,7 @@
     "neurogate-provider-plugin",
     "provider-plugin-model-switch",
     "root-home-media-delivery",
-    "gateway-busy-text-compat"
+    "gateway-busy-text-compat",
+    "gateway-explicit-media-delivery-safety"
   ]
 }
