@@ -1,0 +1,14 @@
+{
+  "name": "v2026.6.5-upstream-fixes",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "homeassistant-tool-config-url",
+    "codex-auxiliary-tool-role-flattening",
+    "gateway-document-media-types",
+    "provider-plugin-model-switch",
+    "gateway-busy-text-compat",
+    "gateway-explicit-media-delivery-safety"
+  ]
+}

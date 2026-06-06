@@ -1,0 +1,422 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.6.5",
+    "commit": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43"
+  },
+  "patches": [
+    {
+      "id": "auth-profile-root-fallback",
+      "file": "patches/v2026.6.5/020-auth-profile-root-fallback.patch",
+      "title_en": "Shared root auth.json for profiles",
+      "title_ru": "Единый root auth.json для профилей",
+      "description_en": "Keeps PatchKit root-global auth.json/auth.lock semantics across profiles on top of the upstream 0.14 read-only fallback primitives.",
+      "description_ru": "Сохраняет PatchKit semantics root-global auth.json/auth.lock для профилей поверх upstream 0.14 read-only fallback primitives.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_reads_shared_root_store_even_when_profile_auth_exists",
+          "tests/hermes_cli/test_auth_commands.py::test_profile_auth_writes_mutate_shared_root_store_not_profile_store",
+          "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_reads_shared_root_auth_from_profile",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
+          "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_reads_shared_root_auth_from_profile"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5"
+    },
+    {
+      "id": "credential-pool-recovery",
+      "file": "patches/v2026.6.5/030-credential-pool-recovery.patch",
+      "title_en": "Improve credential pool recovery",
+      "title_ru": "Улучшить recovery credential pool",
+      "description_en": "Carries PatchKit credential-pool recovery semantics on top of upstream 0.16 pool status changes: active credential IDs, stale exhausted recovery, fail-closed unknown/invalid entries, and lease-aware rotation.",
+      "description_ru": "Переносит PatchKit credential-pool recovery поверх upstream 0.16 pool status changes: active credential IDs, recovery stale exhausted entries, fail-closed unknown/invalid entries и lease-aware rotation.",
+      "category": "auth",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [
+        "auth-profile-root-fallback"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "verification": {
+        "focused_tests": [
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
+          "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
+          "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
+          "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
+          "tests/run_agent/test_run_agent.py::TestRunConversation::test_successful_response_records_credential_pool_success",
+          "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5"
+    },
+    {
+      "id": "telegram-free-response-target-gating",
+      "file": "patches/v2026.6.5/040-telegram-free-response-target-gating.patch",
+      "title_en": "Telegram free-response target gating",
+      "title_ru": "Target gating для Telegram free-response групп",
+      "description_en": "Extends upstream Telegram gating with PatchKit target-safety rules for free-response groups, allowed_chats guest-mode bypass, ignored threads, profile config bridges, and stable Telegram sender identity visibility.",
+      "description_ru": "Расширяет upstream Telegram gating PatchKit target-safety правилами для free-response groups, allowed_chats guest-mode bypass, ignored threads, profile config bridges и видимостью стабильного Telegram sender identity.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_group_gating.py",
+          "tests/gateway/test_telegram_mention_boundaries.py",
+          "tests/gateway/test_session.py",
+          "tests/gateway/test_pii_redaction.py",
+          "tests/gateway/test_shared_group_sender_prefix.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5"
+    },
+    {
+      "id": "homeassistant-tool-config-url",
+      "file": "patches/v2026.6.5/050-homeassistant-tool-config-url.patch",
+      "title_en": "Home Assistant tools use profile config URL",
+      "title_ru": "Home Assistant tools берут URL из profile config",
+      "description_en": "Lets LLM-callable Home Assistant tools resolve platforms.homeassistant.extra.url from profile config.yaml when HASS_URL is not set, keeping env overrides and the existing local fallback.",
+      "description_ru": "Позволяет LLM-callable Home Assistant tools брать platforms.homeassistant.extra.url из profile config.yaml, если HASS_URL не задан, сохраняя env overrides и прежний local fallback.",
+      "category": "tools",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/tools/test_homeassistant_tool.py",
+          "tests/integration/test_ha_integration.py",
+          "tests/gateway/test_homeassistant.py"
+        ],
+        "live_smoke": "ha_list_entities with HASS_URL absent and platforms.homeassistant.extra.url from profile config.yaml resolved the configured Home Assistant URL and returned success"
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "codex-auxiliary-tool-role-flattening",
+      "file": "patches/v2026.6.5/061-codex-auxiliary-tool-role-flattening.patch",
+      "title_en": "Flatten unsupported transcript roles for Codex auxiliary Responses calls",
+      "title_ru": "Flatten unsupported transcript roles в Codex auxiliary Responses calls",
+      "description_en": "Preserves PatchKit role-flattening for Codex auxiliary Responses calls on top of the upstream 0.15 streaming adapter refactor.",
+      "description_ru": "Сохраняет PatchKit role-flattening для Codex auxiliary Responses calls поверх upstream 0.15 streaming adapter refactor.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "verification": {
+        "focused_tests": [
+          "tests/agent/test_auxiliary_client_codex.py"
+        ]
+      }
+    },
+    {
+      "id": "max-platform-plugin",
+      "file": "patches/v2026.6.5/070-max-platform-plugin.patch",
+      "title_en": "MAX messenger platform plugin",
+      "title_ru": "Platform plugin для MAX messenger",
+      "description_en": "Adds MAX messenger as an official Hermes platform plugin instead of core gateway patches: webhook-first production inbound delivery, explicit polling fallback for local testing, native image/file/audio attachments, safe media directives, send_message media delivery, and MAX Markdown formatting.",
+      "description_ru": "Добавляет MAX messenger как официальный Hermes platform plugin вместо core gateway patches: webhook-first production inbound delivery, явный polling fallback для локального теста, native image/file/audio attachments, безопасные media directives, media delivery через send_message и MAX Markdown formatting.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_platform_registry.py",
+          "tests/gateway/test_run_progress_topics.py",
+          "tests/gateway/test_display_config.py",
+          "tests/plugins/test_max_platform_plugin.py"
+        ]
+      },
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5"
+    },
+    {
+      "id": "api-server-provider-proxy",
+      "file": "patches/v2026.6.5/080-api-server-provider-proxy.patch",
+      "title_en": "API Server provider proxy mode",
+      "title_ru": "Provider proxy mode для API Server",
+      "description_en": "Adds opt-in raw provider proxy modes to the OpenAI-compatible API server: explicit-catalog Chat Completions routing, OpenAI-compatible provider passthrough, Codex Responses chat compatibility, and a Responses-native codex_responses_proxy bridge for openai-codex OAuth clients without creating AIAgent instances.",
+      "description_ru": "Добавляет opt-in raw provider proxy modes в OpenAI-compatible API Server: explicit-catalog Chat Completions routing, pass-through для OpenAI-compatible provider'ов, Chat Completions compatibility для Codex Responses и Responses-native codex_responses_proxy bridge для openai-codex OAuth clients без создания AIAgent.",
+      "category": "api",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "reanchor-v2026.6.5-temp-worktree",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_api_server_provider_proxy.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5"
+    },
+    {
+      "id": "lsp-configured-websocket-transport",
+      "file": "patches/v2026.6.5/090-lsp-configured-websocket-transport.patch",
+      "title_en": "Config-driven LSP WebSocket transport",
+      "title_ru": "Config-driven WebSocket transport для Hermes LSP",
+      "description_en": "Adds a reusable LSP transport abstraction plus config-defined custom language servers, including WebSocket endpoints and extension-to-languageId mappings such as .bsl -> bsl, without hardcoded profile paths or endpoints. Re-anchored with websockets>=15,<16 to stay compatible with upstream daytona pins.",
+      "description_ru": "Добавляет reusable transport abstraction для Hermes LSP и config-defined custom language servers, включая WebSocket endpoints и mapping extension -> languageId вроде .bsl -> bsl, без hardcoded profile paths или endpoints. Re-anchor использует websockets>=15,<16 для совместимости с upstream daytona pins.",
+      "category": "lsp",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/agent/lsp/test_configured_servers.py",
+          "tests/agent/lsp/test_websocket_transport.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "LSPClient speaks through LSPTransport instead of direct subprocess stdio only.",
+        "Configured lsp.servers/custom_servers entries can register new extensions and language IDs.",
+        "WebSocket LSP targets are marked configured/unavailable by controlled diagnostics, not by binary install status."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "email-smtp-ssl",
+      "file": "patches/v2026.6.5/091-email-smtp-ssl.patch",
+      "title_en": "Email SMTP SSL/implicit TLS support",
+      "title_ru": "Поддержка SMTP SSL/implicit TLS для Email",
+      "description_en": "Adds EMAIL_SMTP_SECURITY env variable to choose SMTP_SSL (implicit TLS, port 465) vs STARTTLS (explicit TLS). Affects gateway EmailAdapter and send_message_tool. When unset, defaults to SMTP_SSL on port 465, STARTTLS otherwise.",
+      "description_ru": "Добавляет env-переменную EMAIL_SMTP_SECURITY для выбора SMTP_SSL (implicit TLS, порт 465) vs STARTTLS (explicit TLS). Затрагивает gateway EmailAdapter и send_message_tool. По умолчанию SMTP_SSL на порту 465, STARTTLS на остальных.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_email.py",
+          "tests/tools/test_send_message_tool.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "Email SMTP connections now support implicit TLS (SMTP_SSL) via EMAIL_SMTP_SECURITY env or smtp_port==465 auto-detection.",
+        "STARTTLS remains the default for non-465 ports; no behavior change unless EMAIL_SMTP_SECURITY is set or port is 465."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "gateway-document-media-types",
+      "file": "patches/v2026.6.5/092-gateway-document-media-types.patch",
+      "title_en": "Gateway document/media attachment types",
+      "title_ru": "Типы document/media attachments в gateway",
+      "description_en": "Shrinks PatchKit media-type handling on top of upstream 0.16 media allowlists: keeps .epf/.cfe binary document support, shared MEDIA cleanup aliases, Windows explicit MEDIA path handling, and parity tests.",
+      "description_ru": "Сокращает PatchKit media-type handling поверх upstream 0.16 media allowlists: оставляет .epf/.cfe как binary documents, shared MEDIA cleanup aliases, Windows explicit MEDIA paths и parity tests.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_document_cache.py",
+          "tests/gateway/test_platform_base.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        ".epf and .cfe files are accepted as document uploads in messaging platforms.",
+        "Explicit MEDIA:<path> directives and bare local path detection share one attachment extension allowlist, so Markdown/JSON/YAML/HTML artifacts are delivered as native attachments rather than plain text.",
+        "The broad legacy \\S+ MEDIA fallback remains absent; accepted directives still require known attachment extensions."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "neurogate-provider-plugin",
+      "file": "patches/v2026.6.5/093-neurogate-provider-plugin.patch",
+      "title_en": "NeuroGate model provider plugin",
+      "title_ru": "Model provider plugin для NeuroGate",
+      "description_en": "Adds NeuroGate as a bundled model-provider plugin with one canonical provider id (`neurogate`), hermes auth API-key support, default Responses API routing for api.neurogate.space, fallback GPT-5.x catalog entries, and focused auth/runtime regression tests.",
+      "description_ru": "Добавляет NeuroGate как bundled model-provider plugin с одним canonical provider id (`neurogate`), поддержкой API-key через hermes auth, default routing на Responses API для api.neurogate.space, fallback catalog GPT-5.x моделей и focused auth/runtime regression tests.",
+      "category": "provider",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_neurogate_auth.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/providers/test_provider_profiles.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "`hermes auth add neurogate --type api-key` persists credentials into the shared credential pool with base URL https://api.neurogate.space/v1.",
+        "Runtime provider resolution maps NeuroGate to `codex_responses` so GPT-5.x / Responses-compatible calls do not fall back to Chat Completions."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "gateway-busy-text-compat",
+      "file": "patches/v2026.6.5/095-gateway-busy-text-compat.patch",
+      "title_en": "Gateway busy TEXT compatibility",
+      "title_ru": "Совместимость busy TEXT в gateway",
+      "description_en": "Restores 0.14-compatible busy input semantics for existing profiles: when display.busy_text_mode is absent, ordinary TEXT follow-ups inherit display.busy_input_mode instead of silently switching to queue mode. Explicit busy_text_mode: queue remains honored.",
+      "description_ru": "Возвращает совместимость busy input для старых profiles: если display.busy_text_mode отсутствует, обычные TEXT follow-up сообщения наследуют display.busy_input_mode вместо молчаливого перехода в queue mode. Явный busy_text_mode: queue сохраняется.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_runtime_config_env_expansion.py",
+          "tests/gateway/test_config_env_bridge_authority.py",
+          "tests/gateway/test_interrupt_key_match.py",
+          "tests/gateway/test_command_bypass_active_session.py",
+          "tests/gateway/test_steer_command.py"
+        ],
+        "live_smoke": "hermesfix Telegram busy TEXT probe showed display.busy_input_mode=interrupt plus absent busy_text_mode no longer takes the queue_text_debounce branch."
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "Existing 0.14-era profiles with display.busy_input_mode: interrupt keep interrupting ordinary TEXT follow-ups after the 0.15.1 upgrade.",
+        "Profiles that explicitly set display.busy_text_mode: queue continue to queue/debounce busy TEXT follow-ups."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "provider-plugin-model-switch",
+      "file": "patches/v2026.6.5/096-provider-plugin-model-switch.patch",
+      "title_en": "Provider plugins in model switcher",
+      "title_ru": "Provider plugins в model switcher",
+      "description_en": "Makes provider-module plugins under plugins/model-providers usable by the shared /model and /mode switch path, provider labels, API-mode detection, no-args model picker, and provider-specific context-window resolution without duplicate config.yaml providers entries.",
+      "description_ru": "Делает provider-module plugins из plugins/model-providers доступными для общего path /model и /mode, provider labels, API-mode detection, no-args model picker и provider-specific context-window resolution без дублирующих entries в config.yaml providers.",
+      "category": "provider",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_model_switch_custom_providers.py",
+          "tests/hermes_cli/test_list_picker_providers.py",
+          "tests/hermes_cli/test_neurogate_auth.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/providers/test_provider_profiles.py",
+          "tests/agent/test_model_metadata.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "resolve_provider_full() can resolve any registered ProviderProfile, not only built-in/models.dev/config providers.",
+        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as neurogate.",
+        "ProviderProfile can declare per-model context windows, and get_model_context_length() uses them before broad family defaults.",
+        "NeuroGate gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
+        "No duplicate config.yaml providers entry is required for bundled or user model-provider plugins."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "gateway-explicit-media-delivery-safety",
+      "file": "patches/v2026.6.5/097-gateway-explicit-media-delivery-safety.patch",
+      "title_en": "Explicit gateway local-file delivery",
+      "title_ru": "Явная отправка локальных файлов через gateway",
+      "description_en": "Re-anchors explicit local-file delivery safety on upstream 0.16: explicit MEDIA:/path directives stay deliverable, while bare absolute path auto-upload remains opt-in via gateway.auto_upload_local_paths.",
+      "description_ru": "Re-anchor explicit local-file delivery safety на upstream 0.16: явные MEDIA:/path directives остаются deliverable, а bare absolute path auto-upload остаётся opt-in через gateway.auto_upload_local_paths.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_auto_upload_local_paths.py",
+          "tests/gateway/test_extract_local_files.py",
+          "tests/gateway/test_platform_base.py",
+          "tests/gateway/test_background_command.py",
+          "tests/gateway/test_config.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "Ordinary absolute paths in gateway responses remain user-visible text by default instead of becoming native attachment uploads.",
+        "Explicit MEDIA:/path directives and structured kanban artifacts still pass through existing media validation and delivery paths.",
+        "Operators can restore legacy bare-path extraction with gateway.auto_upload_local_paths: true; gateway.strict remains a separate validation layer."
+      ],
+      "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    }
+  ],
+  "retired_patches": [
+    {
+      "id": "codex-sdk-output-none-recovery",
+      "retired_for": "v2026.5.29",
+      "reason_en": "Upstream 0.15 Codex runtime consumes raw Responses events and builds output from response.output_item.done, avoiding the old response.output=None SDK crash path.",
+      "reason_ru": "В upstream 0.15 Codex runtime читает raw Responses events и собирает output из response.output_item.done, поэтому старый crash path response.output=None в SDK больше не переносится.",
+      "previous_file": "patches/v2026.5.16/062-codex-sdk-output-none-recovery.patch"
+    },
+    {
+      "id": "root-home-media-delivery",
+      "retired_for": "v2026.6.5",
+      "reason_en": "Upstream 0.16 accepts the active /root home as a deliverable media location while keeping credential subdirectories and Hermes auth/env files blocked, so the standalone PatchKit root-home media unit is no longer needed.",
+      "reason_ru": "Upstream 0.16 уже разрешает active /root home как deliverable media location и сохраняет блокировку credential subdirs/Hermes auth/env files, поэтому отдельный PatchKit unit root-home media больше не нужен.",
+      "previous_file": "patches/v2026.5.29/094-root-home-media-delivery.patch"
+    }
+  ]
+}

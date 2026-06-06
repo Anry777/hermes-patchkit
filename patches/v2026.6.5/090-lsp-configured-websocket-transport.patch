@@ -1,0 +1,1548 @@
+diff --git a/agent/lsp/cli.py b/agent/lsp/cli.py
+index 139baa213..783251938 100644
+--- a/agent/lsp/cli.py
++++ b/agent/lsp/cli.py
+@@ -34,6 +34,9 @@ def register_subparser(subparsers: argparse._SubParsersAction) -> None:
+     sub_status.add_argument(
+         "--json", action="store_true", help="Emit machine-readable JSON"
+     )
++    sub_status.add_argument(
++        "--check", action="store_true", help="Health-check configured websocket servers"
++    )
+ 
+     sub_list = sub.add_parser("list", help="List supported language servers")
+     sub_list.add_argument(
+@@ -63,6 +66,9 @@ def register_subparser(subparsers: argparse._SubParsersAction) -> None:
+     sub_which = sub.add_parser("which", help="Print binary path for a server")
+     sub_which.add_argument("server", help="Server id")
+ 
++    sub_test = sub.add_parser("test", help="Health-check a configured LSP server")
++    sub_test.add_argument("server", help="Server id")
++
+     parser.set_defaults(func=run_lsp_command)
+ 
+ 
+@@ -71,7 +77,7 @@ def run_lsp_command(args: argparse.Namespace) -> int:
+     sub = getattr(args, "lsp_command", None) or "status"
+     try:
+         if sub == "status":
+-            return _cmd_status(getattr(args, "json", False))
++            return _cmd_status(getattr(args, "json", False), getattr(args, "check", False))
+         if sub == "list":
+             return _cmd_list(getattr(args, "installed_only", False))
+         if sub == "install":
+@@ -82,35 +88,59 @@ def run_lsp_command(args: argparse.Namespace) -> int:
+             return _cmd_restart()
+         if sub == "which":
+             return _cmd_which(args.server)
++        if sub == "test":
++            return _cmd_test(args.server)
+         sys.stderr.write(f"unknown lsp subcommand: {sub}\n")
+         return 2
+     except KeyboardInterrupt:
+         return 130
+ 
+ 
+-def _cmd_status(emit_json: bool) -> int:
++def _load_lsp_cfg() -> dict:
++    try:
++        from hermes_cli.config import load_config
++        cfg = load_config()
++    except Exception:  # noqa: BLE001
++        return {}
++    lsp_cfg = (cfg.get("lsp") or {}) if isinstance(cfg, dict) else {}
++    return lsp_cfg if isinstance(lsp_cfg, dict) else {}
++
++
++def _configured_registry():
++    from agent.lsp.servers import build_servers_from_lsp_config
++    return build_servers_from_lsp_config(_load_lsp_cfg())[0]
++
++
++def _cmd_status(emit_json: bool, check: bool = False) -> int:
+     from agent.lsp import get_service
+-    from agent.lsp.servers import SERVERS
+     from agent.lsp.install import detect_status
++    from agent.lsp.servers import server_availability
+ 
+     svc = get_service()
+     service_active = svc is not None
+-    info = svc.get_status() if svc is not None else {"enabled": False}
+-
+-    if emit_json:
+-        import json
+-        payload = {
+-            "service": info,
+-            "registry": [
++    info = svc.get_status() if svc is not None else {"enabled": False, "servers": []}
++    registry = info.get("servers") or []
++    if not registry:
++        registry = []
++        for s in _configured_registry():
++            availability, reason = server_availability(s)
++            registry.append(
+                 {
+                     "server_id": s.server_id,
+                     "extensions": list(s.extensions),
+                     "description": s.description,
+-                    "binary_status": detect_status(_recipe_pkg_for(s.server_id)),
++                    "source": "configured" if s.configured else "builtin",
++                    "transport": s.transport_type,
++                    "target": s.transport_target,
++                    "availability": availability,
++                    "availability_reason": reason,
++                    "binary_status": detect_status(_recipe_pkg_for(s.server_id)) if s.transport_type != "websocket" else availability,
+                 }
+-                for s in SERVERS
+-            ],
+-        }
++            )
++
++    if emit_json:
++        import json
++        payload = {"service": info, "registry": registry}
+         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+         return 0
+ 
+@@ -153,37 +183,60 @@ def _cmd_status(emit_json: bool) -> int:
+     out.append("")
+     out.append("Registered Servers")
+     out.append("==================")
+-    for s in SERVERS:
+-        pkg = _recipe_pkg_for(s.server_id)
+-        status = detect_status(pkg)
++    for s in registry:
++        server_id = s["server_id"]
++        extensions = list(s.get("extensions") or [])
++        transport = s.get("transport") or "stdio"
++        status = s.get("availability") or s.get("binary_status") or "unknown"
++        if transport != "websocket" and "binary_status" not in s:
++            status = detect_status(_recipe_pkg_for(server_id))
+         marker = {
+             "installed": "✓",
++            "configured": "✓",
++            "builtin": "·",
+             "missing": "·",
+             "manual-only": "?",
++            "unavailable": "!",
+         }.get(status, " ")
+-        ext_summary = ", ".join(list(s.extensions)[:5])
+-        if len(s.extensions) > 5:
+-            ext_summary += f", … (+{len(s.extensions) - 5})"
++        ext_summary = ", ".join(extensions[:5])
++        if len(extensions) > 5:
++            ext_summary += f", … (+{len(extensions) - 5})"
++        source = s.get("source") or "builtin"
+         out.append(
+-            f"  {marker} {s.server_id:24s} [{status:11s}] {ext_summary}"
++            f"  {marker} {server_id:24s} [{status}] {ext_summary}"
+         )
+-        if s.description:
+-            out.append(f"      {s.description}")
++        if transport != "stdio":
++            out.append(f"      {source}; {transport} {s.get('target') or ''}".rstrip())
++        if s.get("description"):
++            out.append(f"      {s['description']}")
++        if status == "unavailable" and s.get("availability_reason"):
++            out.append(f"      unavailable: {s['availability_reason']}")
++    if check:
++        out.append("")
++        out.append("Health checks")
++        out.append("=============")
++        for s in registry:
++            if s.get("transport") != "websocket":
++                continue
++            rc, lines = _healthcheck_server_dict(s)
++            prefix = "ok" if rc == 0 else "failed"
++            out.append(f"  {s['server_id']}: {prefix}")
++            out.extend(f"    {line}" for line in lines)
+     sys.stdout.write("\n".join(out) + "\n")
+     return 0
+ 
+ 
+ def _cmd_list(installed_only: bool) -> int:
+-    from agent.lsp.servers import SERVERS
+     from agent.lsp.install import detect_status
++    from agent.lsp.servers import server_availability
+ 
+-    for s in SERVERS:
+-        pkg = _recipe_pkg_for(s.server_id)
+-        status = detect_status(pkg)
+-        if installed_only and status != "installed":
++    for s in _configured_registry():
++        availability, _reason = server_availability(s)
++        status = availability if s.transport_type == "websocket" else detect_status(_recipe_pkg_for(s.server_id))
++        if installed_only and status not in {"installed", "configured"}:
+             continue
+         sys.stdout.write(
+-            f"{s.server_id:24s} [{status:11s}] {','.join(s.extensions)}\n"
++            f"{s.server_id:24s} [{status}] {','.join(s.extensions)}\n"
+         )
+     return 0
+ 
+@@ -249,6 +302,14 @@ def _cmd_restart() -> int:
+ def _cmd_which(server_id: str) -> int:
+     from agent.lsp.install import INSTALL_RECIPES, _existing_binary
+ 
++    for srv in _configured_registry():
++        if srv.server_id == server_id and srv.transport_type == "websocket":
++            if srv.transport_target:
++                sys.stdout.write(f"websocket {srv.transport_target}\n")
++                return 0
++            sys.stderr.write(f"{server_id}: websocket url not configured\n")
++            return 1
++
+     recipe = INSTALL_RECIPES.get(server_id)
+     bin_name = (recipe or {}).get("bin", server_id)
+     resolved = _existing_binary(bin_name)
+@@ -259,6 +320,61 @@ def _cmd_which(server_id: str) -> int:
+     return 1
+ 
+ 
++def _cmd_test(server_id: str) -> int:
++    registry = _configured_registry()
++    for srv in registry:
++        if srv.server_id == server_id:
++            rc, lines = _healthcheck_server_def(srv)
++            for line in lines:
++                stream = sys.stdout if rc == 0 else sys.stderr
++                stream.write(line + "\n")
++            return rc
++    sys.stderr.write(f"{server_id}: unknown LSP server\n")
++    return 2
++
++
++def _healthcheck_server_dict(srv: dict) -> tuple[int, list[str]]:
++    target = srv.get("target")
++    if srv.get("transport") != "websocket" or not target:
++        return 1, ["only configured websocket servers can be health-checked"]
++    return _healthcheck_websocket(str(srv.get("server_id") or "lsp"), str(target))
++
++
++def _healthcheck_server_def(srv) -> tuple[int, list[str]]:
++    if srv.transport_type != "websocket" or not srv.transport_target:
++        return 1, ["only configured websocket servers can be health-checked"]
++    return _healthcheck_websocket(srv.server_id, srv.transport_target)
++
++
++def _healthcheck_websocket(server_id: str, url: str) -> tuple[int, list[str]]:
++    import asyncio
++    from agent.lsp.client import LSPClient
++    from agent.lsp.transports import WebSocketLSPTransport
++
++    async def _run() -> tuple[int, list[str]]:
++        client = LSPClient(
++            server_id=server_id,
++            workspace_root="/",
++            transport=WebSocketLSPTransport(server_id, url),
++        )
++        try:
++            await client.start()
++            caps = (client.initialize_result or {}).get("capabilities")
++            if not isinstance(caps, dict):
++                await client.shutdown()
++                return 1, ["connected", "initialize: failed", "capabilities missing"]
++            await client.shutdown()
++            return 0, ["connected", "initialize: ok", "capabilities received"]
++        except Exception as e:  # noqa: BLE001
++            try:
++                await client.shutdown()
++            except Exception:  # noqa: BLE001
++                pass
++            return 1, [f"connection failed: {type(e).__name__}: {e}"]
++
++    return asyncio.run(_run())
++
++
+ def _recipe_pkg_for(server_id: str) -> str:
+     """Map a registry ``server_id`` to its install-recipe package key."""
+     # The mapping lives here (not in install.py) because it's a CLI
+diff --git a/agent/lsp/client.py b/agent/lsp/client.py
+index c135e554c..275b7aeea 100644
+--- a/agent/lsp/client.py
++++ b/agent/lsp/client.py
+@@ -1,8 +1,8 @@
+-"""Async LSP client over stdin/stdout.
++"""Async LSP client over a configurable transport.
+ 
+ One :class:`LSPClient` corresponds to one ``(language_server, workspace_root)``
+ pair — exactly what OpenCode keys clients on, and the same shape Claude
+-Code uses.  The client owns a child process, drives the JSON-RPC
++Code uses.  The client owns a JSON-RPC transport, drives the protocol
+ exchange, and exposes:
+ 
+ - :meth:`open_file` / :meth:`change_file` — text document sync
+@@ -55,13 +55,12 @@ from agent.lsp.protocol import (
+     LSPProtocolError,
+     LSPRequestError,
+     classify_message,
+-    encode_message,
+     make_error_response,
+     make_notification,
+     make_request,
+     make_response,
+-    read_message,
+ )
++from agent.lsp.transports import LSPTransport, StdioLSPTransport
+ 
+ logger = logging.getLogger("agent.lsp.client")
+ 
+@@ -146,23 +145,28 @@ class LSPClient:
+         *,
+         server_id: str,
+         workspace_root: str,
+-        command: List[str],
++        command: Optional[List[str]] = None,
+         env: Optional[Dict[str, str]] = None,
+         cwd: Optional[str] = None,
+         initialization_options: Optional[Dict[str, Any]] = None,
+         seed_diagnostics_on_first_push: bool = False,
++        transport: Optional[LSPTransport] = None,
+     ) -> None:
+         self.server_id = server_id
+         self.workspace_root = workspace_root
+-        self._command = list(command)
++        self._command = list(command or [])
+         self._env = env
+         self._cwd = cwd or workspace_root
+         self._init_options = initialization_options or {}
+         self._seed_first_push = seed_diagnostics_on_first_push
+ 
+-        # Process + streams
+-        self._proc: Optional[asyncio.subprocess.Process] = None
+-        self._stderr_task: Optional[asyncio.Task] = None
++        # Transport + reader loop
++        self._transport: LSPTransport = transport or StdioLSPTransport(
++            server_id,
++            self._command,
++            env=env,
++            cwd=self._cwd,
++        )
+         self._reader_task: Optional[asyncio.Task] = None
+ 
+         # Request/response correlation
+@@ -220,7 +224,11 @@ class LSPClient:
+ 
+     @property
+     def is_running(self) -> bool:
+-        return self._state == "running" and self._proc is not None and self._proc.returncode is None
++        return self._state == "running" and self._transport.is_running
++
++    @property
++    def initialize_result(self) -> Optional[Dict[str, Any]]:
++        return self._initialize_result
+ 
+     @property
+     def state(self) -> str:
+@@ -242,7 +250,7 @@ class LSPClient:
+             self._state = "running"
+         except Exception:
+             self._state = "error"
+-            await self._cleanup_process()
++            await self._cleanup_transport()
+             raise
+ 
+     @staticmethod
+@@ -254,55 +262,15 @@ class LSPClient:
+         return cmd
+ 
+     async def _spawn(self) -> None:
+-        env = dict(os.environ)
+-        if self._env:
+-            env.update(self._env)
+ 
+-        cmd = self._command
+-        if sys.platform == "win32":
+-            cmd = self._win_wrap_cmd(cmd)
++        await self._transport.start()
+ 
+-        try:
+-            self._proc = await asyncio.create_subprocess_exec(
+-                cmd[0],
+-                *cmd[1:],
+-                stdin=asyncio.subprocess.PIPE,
+-                stdout=asyncio.subprocess.PIPE,
+-                stderr=asyncio.subprocess.PIPE,
+-                env=env,
+-                cwd=self._cwd,
+-            )
+-        except FileNotFoundError as e:
+-            raise LSPProtocolError(
+-                f"LSP server binary not found: {cmd[0]} ({e})"
+-            ) from e
+-
+-        # Drain stderr at debug level — if we don't, the pipe buffer
+-        # fills and the server hangs.
+-        self._stderr_task = asyncio.create_task(self._drain_stderr())
+-        # Start the reader loop.
+         self._reader_task = asyncio.create_task(self._reader_loop())
+ 
+-    async def _drain_stderr(self) -> None:
+-        if self._proc is None or self._proc.stderr is None:
+-            return
+-        try:
+-            while True:
+-                line = await self._proc.stderr.readline()
+-                if not line:
+-                    break
+-                text = line.decode("utf-8", errors="replace").rstrip()
+-                if text:
+-                    logger.debug("[%s] stderr: %s", self.server_id, text[:1000])
+-        except (asyncio.CancelledError, OSError):
+-            pass
+-
+     async def _reader_loop(self) -> None:
+-        if self._proc is None or self._proc.stdout is None:
+-            return
+         try:
+             while True:
+-                msg = await read_message(self._proc.stdout)
++                msg = await self._transport.recv()
+                 if msg is None:
+                     logger.debug("[%s] server closed stdout cleanly", self.server_id)
+                     break
+@@ -421,57 +389,34 @@ class LSPClient:
+                     pass
+         finally:
+             self._state = "stopped"
+-            await self._cleanup_process()
++            await self._cleanup_transport()
+ 
+-    async def _cleanup_process(self) -> None:
++    async def _cleanup_transport(self) -> None:
+         if self._reader_task is not None and not self._reader_task.done():
+             self._reader_task.cancel()
+             try:
+                 await self._reader_task
+             except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                 pass
+-        if self._stderr_task is not None and not self._stderr_task.done():
+-            self._stderr_task.cancel()
+-            try:
+-                await self._stderr_task
+-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+-                pass
+-        proc = self._proc
+-        self._proc = None
+-        if proc is None:
+-            return
+-        if proc.returncode is None:
+-            try:
+-                proc.terminate()
+-                try:
+-                    await asyncio.wait_for(proc.wait(), timeout=SHUTDOWN_GRACE)
+-                except asyncio.TimeoutError:
+-                    try:
+-                        proc.kill()
+-                        await proc.wait()
+-                    except ProcessLookupError:
+-                        pass
+-            except ProcessLookupError:
+-                pass
++        await self._transport.close()
+ 
+     # ------------------------------------------------------------------
+     # request / notification plumbing
+     # ------------------------------------------------------------------
+ 
+     async def _send_request(self, method: str, params: Any) -> Any:
+-        if self._proc is None or self._proc.stdin is None or self._proc.stdin.is_closing():
+-            raise LSPProtocolError(f"cannot send {method!r}: stdin closed")
+         loop = asyncio.get_running_loop()
+         req_id = self._next_id
+         self._next_id += 1
+         fut: asyncio.Future = loop.create_future()
+         self._pending[req_id] = fut
+         try:
+-            self._proc.stdin.write(encode_message(make_request(req_id, method, params)))
+-            await self._proc.stdin.drain()
+-        except (BrokenPipeError, ConnectionResetError, OSError) as e:
++            await self._transport.send(make_request(req_id, method, params))
++        except Exception as e:  # noqa: BLE001
+             self._pending.pop(req_id, None)
+-            raise LSPProtocolError(f"send failed for {method!r}: {e}") from e
++            if isinstance(e, LSPProtocolError):
++                raise LSPProtocolError(f"send failed for {method!r}: {e}") from e
++            raise LSPProtocolError(f"send failed for {method!r}: {type(e).__name__}: {e}") from e
+         try:
+             return await fut
+         finally:
+@@ -494,30 +439,21 @@ class LSPClient:
+                 raise
+ 
+     async def _send_notification(self, method: str, params: Any) -> None:
+-        if self._proc is None or self._proc.stdin is None or self._proc.stdin.is_closing():
+-            return
+         try:
+-            self._proc.stdin.write(encode_message(make_notification(method, params)))
+-            await self._proc.stdin.drain()
+-        except (BrokenPipeError, ConnectionResetError, OSError) as e:
++            await self._transport.send(make_notification(method, params))
++        except Exception as e:  # noqa: BLE001
+             logger.debug("[%s] notify %s failed: %s", self.server_id, method, e)
+ 
+     async def _send_response(self, req_id: Any, result: Any) -> None:
+-        if self._proc is None or self._proc.stdin is None or self._proc.stdin.is_closing():
+-            return
+         try:
+-            self._proc.stdin.write(encode_message(make_response(req_id, result)))
+-            await self._proc.stdin.drain()
+-        except (BrokenPipeError, ConnectionResetError, OSError):
++            await self._transport.send(make_response(req_id, result))
++        except Exception:  # noqa: BLE001
+             pass
+ 
+     async def _send_error_response(self, req_id: Any, code: int, message: str) -> None:
+-        if self._proc is None or self._proc.stdin is None or self._proc.stdin.is_closing():
+-            return
+         try:
+-            self._proc.stdin.write(encode_message(make_error_response(req_id, code, message)))
+-            await self._proc.stdin.drain()
+-        except (BrokenPipeError, ConnectionResetError, OSError):
++            await self._transport.send(make_error_response(req_id, code, message))
++        except Exception:  # noqa: BLE001
+             pass
+ 
+     def _dispatch_response(self, req_id: int, msg: dict) -> None:
+diff --git a/agent/lsp/manager.py b/agent/lsp/manager.py
+index aebb4881c..a49678643 100644
+--- a/agent/lsp/manager.py
++++ b/agent/lsp/manager.py
+@@ -48,9 +48,16 @@ from agent.lsp.client import (
+ )
+ from agent.lsp.servers import (
+     ServerContext,
++
++    ServerDef,
++    SpawnSpec,
++    build_servers_from_lsp_config,
++
+     find_server_for_file,
+     language_id_for,
++    server_availability,
+ )
++from agent.lsp.transports import WebSocketLSPTransport
+ from agent.lsp.workspace import (
+     clear_cache,
+     resolve_workspace_for_file,
+@@ -155,6 +162,8 @@ class LSPService:
+         init_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+         disabled_servers: Optional[List[str]] = None,
+         idle_timeout: float = DEFAULT_IDLE_TIMEOUT,
++        servers: Optional[List[ServerDef]] = None,
++        language_by_ext: Optional[Dict[str, str]] = None,
+     ) -> None:
+         self._enabled = enabled
+         self._wait_mode = wait_mode if wait_mode in {"document", "full"} else "document"
+@@ -165,6 +174,8 @@ class LSPService:
+         self._init_overrides = init_overrides or {}
+         self._disabled_servers = set(disabled_servers or [])
+         self._idle_timeout = idle_timeout
++        self._servers = list(servers) if servers is not None else None
++        self._language_by_ext = dict(language_by_ext) if language_by_ext is not None else None
+ 
+         self._loop = _BackgroundLoop()
+         if self._enabled:
+@@ -226,6 +237,7 @@ class LSPService:
+                 if isinstance(init, dict):
+                     init_overrides[name] = init
+ 
++        configured_servers, language_by_ext = build_servers_from_lsp_config(lsp_cfg)
+         return cls(
+             enabled=enabled,
+             wait_mode=wait_mode,
+@@ -235,6 +247,8 @@ class LSPService:
+             env_overrides=env_overrides,
+             init_overrides=init_overrides,
+             disabled_servers=disabled,
++            servers=configured_servers,
++            language_by_ext=language_by_ext,
+         )
+ 
+     # ------------------------------------------------------------------
+@@ -245,6 +259,16 @@ class LSPService:
+         """Return True iff this service should be consulted at all."""
+         return self._enabled
+ 
++    def _find_server_for_file(self, file_path: str) -> Optional[ServerDef]:
++        return find_server_for_file(file_path, servers=self._servers)
++
++    def _language_id_for(self, file_path: str) -> str:
++        return language_id_for(file_path, language_by_ext=self._language_by_ext)
++
++    def _registry(self) -> List[ServerDef]:
++        from agent.lsp.servers import SERVERS
++        return list(self._servers) if self._servers is not None else list(SERVERS)
++
+     def enabled_for(self, file_path: str) -> bool:
+         """Return True iff LSP should run for this specific file.
+ 
+@@ -260,7 +284,7 @@ class LSPService:
+         """
+         if not self._enabled:
+             return False
+-        srv = find_server_for_file(file_path)
++        srv = self._find_server_for_file(file_path)
+         if srv is None or srv.server_id in self._disabled_servers:
+             return False
+         ws_root, gated_in = resolve_workspace_for_file(file_path)
+@@ -336,7 +360,7 @@ class LSPService:
+ 
+         # Resolve server_id eagerly so we can emit structured logs even
+         # when the request errors out below.
+-        srv = find_server_for_file(file_path)
++        srv = self._find_server_for_file(file_path)
+         server_id = srv.server_id if srv else "?"
+ 
+         try:
+@@ -400,7 +424,7 @@ class LSPService:
+         ``exc`` is whatever exception the outer wrapper caught — used
+         only for logging, never re-raised.
+         """
+-        srv = find_server_for_file(file_path)
++        srv = self._find_server_for_file(file_path)
+         if srv is None:
+             return
+         ws_root, gated = resolve_workspace_for_file(file_path)
+@@ -451,7 +475,7 @@ class LSPService:
+         if client is None:
+             return []
+         try:
+-            version = await client.open_file(file_path, language_id=language_id_for(file_path))
++            version = await client.open_file(file_path, language_id=self._language_id_for(file_path))
+             await client.wait_for_diagnostics(file_path, version, mode=self._wait_mode)
+         except Exception as e:  # noqa: BLE001
+             logger.debug("snapshot open/wait failed: %s", e)
+@@ -464,7 +488,7 @@ class LSPService:
+         if client is None:
+             return []
+         try:
+-            version = await client.open_file(file_path, language_id=language_id_for(file_path))
++            version = await client.open_file(file_path, language_id=self._language_id_for(file_path))
+             await client.save_file(file_path)
+             await client.wait_for_diagnostics(file_path, version, mode=self._wait_mode)
+         except Exception as e:  # noqa: BLE001
+@@ -475,7 +499,7 @@ class LSPService:
+ 
+     async def _current_diags_async(self, file_path: str) -> List[Dict[str, Any]]:
+         ws, gated = resolve_workspace_for_file(file_path)
+-        srv = find_server_for_file(file_path)
++        srv = self._find_server_for_file(file_path)
+         if not (ws and gated and srv):
+             return []
+         with self._state_lock:
+@@ -485,7 +509,7 @@ class LSPService:
+         return list(client.diagnostics_for(file_path))
+ 
+     async def _get_or_spawn(self, file_path: str) -> Optional[LSPClient]:
+-        srv = find_server_for_file(file_path)
++        srv = self._find_server_for_file(file_path)
+         if srv is None:
+             return None
+         if srv.server_id in self._disabled_servers:
+@@ -540,6 +564,14 @@ class LSPService:
+                 self._broken.add(key)
+                 spawn_future.set_result(None)
+                 return None
++            transport = None
++            if spec.transport == "websocket":
++                if not spec.url:
++                    eventlog.log_server_unavailable(srv.server_id, "websocket url")
++                    self._broken.add(key)
++                    spawn_future.set_result(None)
++                    return None
++                transport = WebSocketLSPTransport(srv.server_id, spec.url)
+             client = LSPClient(
+                 server_id=srv.server_id,
+                 workspace_root=spec.workspace_root,
+@@ -548,6 +580,7 @@ class LSPService:
+                 cwd=spec.cwd,
+                 initialization_options=spec.initialization_options,
+                 seed_diagnostics_on_first_push=spec.seed_diagnostics_on_first_push or srv.seed_first_push,
++                transport=transport,
+             )
+             try:
+                 await client.start()
+@@ -594,6 +627,21 @@ class LSPService:
+                 for k, c in self._clients.items()
+             ]
+             broken = list(self._broken)
++        servers = []
++        for srv in self._registry():
++            availability, reason = server_availability(srv)
++            servers.append(
++                {
++                    "server_id": srv.server_id,
++                    "extensions": list(srv.extensions),
++                    "description": srv.description,
++                    "source": "configured" if srv.configured else "builtin",
++                    "transport": srv.transport_type,
++                    "target": srv.transport_target,
++                    "availability": availability,
++                    "availability_reason": reason,
++                }
++            )
+         return {
+             "enabled": self._enabled,
+             "wait_mode": self._wait_mode,
+@@ -602,6 +650,7 @@ class LSPService:
+             "clients": clients,
+             "broken": broken,
+             "disabled_servers": sorted(self._disabled_servers),
++            "servers": servers,
+         }
+ 
+ 
+diff --git a/agent/lsp/servers.py b/agent/lsp/servers.py
+index 8ba87be94..c0c9d9279 100644
+--- a/agent/lsp/servers.py
++++ b/agent/lsp/servers.py
+@@ -25,7 +25,10 @@ import shutil
+ from dataclasses import dataclass, field
+ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+ 
+-from agent.lsp.workspace import nearest_root
++
++from agent.lsp.workspace import nearest_root, normalize_path
++from agent.lsp.transports import validate_websocket_url, websocket_dependency_available
++
+ 
+ logger = logging.getLogger("agent.lsp.servers")
+ 
+@@ -115,12 +118,14 @@ class SpawnSpec:
+     marker not found, exclude marker hit, etc.).
+     """
+ 
+-    command: List[str]
+-    workspace_root: str
+-    cwd: str
++    command: List[str] = field(default_factory=list)
++    workspace_root: str = ""
++    cwd: str = ""
+     env: Dict[str, str] = field(default_factory=dict)
+     initialization_options: Dict[str, Any] = field(default_factory=dict)
+     seed_diagnostics_on_first_push: bool = False
++    transport: str = "stdio"
++    url: Optional[str] = None
+ 
+ 
+ @dataclass
+@@ -143,6 +148,10 @@ class ServerDef:
+     build_spawn: Callable[[str, "ServerContext"], Optional[SpawnSpec]]
+     seed_first_push: bool = False
+     description: str = ""
++    language_id: Optional[str] = None
++    transport_type: str = "stdio"
++    transport_target: Optional[str] = None
++    configured: bool = False
+ 
+     def matches(self, file_path: str) -> bool:
+         """Return True iff this server handles ``file_path``."""
+@@ -828,6 +837,184 @@ def _root_java(file_path: str, workspace: str) -> Optional[str]:
+ # ---------------------------------------------------------------------------
+ 
+ 
++# ---------------------------------------------------------------------------
++# config-driven custom server support
++# ---------------------------------------------------------------------------
++
++
++def _normalize_extension(ext: Any) -> Optional[str]:
++    if not isinstance(ext, str):
++        return None
++    value = ext.strip()
++    if not value:
++        return None
++    if value.startswith("."):
++        return value.lower()
++    # Preserve extensionless basename matches like Dockerfile when users
++    # intentionally pass a mixed-case name; normal language extensions get a dot.
++    if value.lower() == value and value.isalnum():
++        return "." + value.lower()
++    return value
++
++
++def _normalize_extensions(value: Any) -> Tuple[str, ...]:
++    if isinstance(value, str):
++        value = [value]
++    if not isinstance(value, (list, tuple)):
++        return ()
++    out: List[str] = []
++    for item in value:
++        ext = _normalize_extension(item)
++        if ext and ext not in out:
++            out.append(ext)
++    return tuple(out)
++
++
++def _transport_parts(sub: Dict[str, Any]) -> Tuple[str, Optional[str]]:
++    raw = sub.get("transport")
++    if isinstance(raw, dict):
++        transport_type = str(raw.get("type") or "stdio").strip().lower()
++        url = raw.get("url") or sub.get("url")
++    elif isinstance(raw, str):
++        transport_type = raw.strip().lower()
++        url = sub.get("url")
++    else:
++        transport_type = "stdio" if sub.get("command") else ""
++        url = sub.get("url")
++    return transport_type, str(url) if url is not None else None
++
++
++def _root_resolver_from_config(mode: Any) -> Callable[[str, str], Optional[str]]:
++    # First cut: config-defined servers default to the git workspace root.
++    # That matches current LSPService gating and avoids profile/path hardcoding.
++    # More modes can be added later without touching language-specific registry code.
++    return lambda fp, ws: ws
++
++
++def _configured_server_from_entry(name: str, sub: Any) -> Optional[ServerDef]:
++    if not isinstance(sub, dict):
++        return None
++    extensions = _normalize_extensions(sub.get("extensions"))
++    language_id = sub.get("language_id")
++    if not isinstance(language_id, str) or not language_id.strip() or not extensions:
++        return None
++
++    server_id = str(sub.get("server_id") or name).strip()
++    if not server_id:
++        return None
++    language_id = language_id.strip()
++    transport_type, url = _transport_parts(sub)
++    command = sub.get("command")
++    command_list = [str(x) for x in command] if isinstance(command, list) and command else []
++    env_cfg = sub.get("env")
++    env = {str(k): str(v) for k, v in env_cfg.items()} if isinstance(env_cfg, dict) else {}
++    init = sub.get("initialization_options")
++    init_options = init if isinstance(init, dict) else {}
++    root_resolver = _root_resolver_from_config(sub.get("workspace_root"))
++    seed_first_push = bool(sub.get("seed_diagnostics_on_first_push", False))
++    description = str(sub.get("description") or f"Configured LSP server — {server_id}")
++
++    def _spawn(root: str, ctx: ServerContext) -> Optional[SpawnSpec]:
++        if transport_type == "websocket":
++            if not url:
++                return None
++            if validate_websocket_url(url):
++                return None
++            if not websocket_dependency_available():
++                return None
++            return SpawnSpec(
++                command=[],
++                workspace_root=root,
++                cwd=root,
++                env=env,
++                initialization_options=init_options,
++                seed_diagnostics_on_first_push=seed_first_push,
++                transport="websocket",
++                url=url,
++            )
++        if transport_type in ("stdio", ""):
++            cmd = command_list or ctx.binary_overrides.get(server_id, [])
++            if not cmd:
++                return None
++            merged_env = dict(env)
++            merged_env.update(ctx.env_overrides.get(server_id, {}))
++            merged_init = dict(init_options)
++            merged_init.update(ctx.init_overrides.get(server_id, {}))
++            return SpawnSpec(
++                command=cmd,
++                workspace_root=root,
++                cwd=root,
++                env=merged_env,
++                initialization_options=merged_init,
++                seed_diagnostics_on_first_push=seed_first_push,
++                transport="stdio",
++            )
++        return None
++
++    return ServerDef(
++        server_id=server_id,
++        extensions=extensions,
++        resolve_root=root_resolver,
++        build_spawn=_spawn,
++        seed_first_push=seed_first_push,
++        description=description,
++        language_id=language_id,
++        transport_type=transport_type or "stdio",
++        transport_target=url if transport_type == "websocket" else (" ".join(command_list) if command_list else None),
++        configured=True,
++    )
++
++
++def _iter_configured_server_entries(lsp_cfg: Any):
++    if not isinstance(lsp_cfg, dict):
++        return
++    servers_cfg = lsp_cfg.get("servers") or {}
++    if isinstance(servers_cfg, dict):
++        for name, sub in servers_cfg.items():
++            # Existing built-in overrides often only contain command/env/init.
++            # Treat entries as new server definitions only when they declare
++            # extensions + language_id, i.e. enough data to route files by config.
++            if isinstance(sub, dict) and (sub.get("extensions") is not None or sub.get("language_id") is not None):
++                yield str(name), sub
++    custom_cfg = lsp_cfg.get("custom_servers") or {}
++    if isinstance(custom_cfg, dict):
++        for name, sub in custom_cfg.items():
++            yield str(name), sub
++
++
++def build_servers_from_lsp_config(lsp_cfg: Any) -> Tuple[List[ServerDef], Dict[str, str]]:
++    """Return built-in servers plus config-defined custom server definitions.
++
++    This is intentionally pure: it does not mutate the module-level ``SERVERS``
++    or ``LANGUAGE_BY_EXT``.  Each profile/session gets its own registry view.
++    """
++    servers = list(SERVERS)
++    language_by_ext = dict(LANGUAGE_BY_EXT)
++    for name, sub in _iter_configured_server_entries(lsp_cfg):
++        srv = _configured_server_from_entry(name, sub)
++        if srv is None:
++            continue
++        servers = [existing for existing in servers if existing.server_id != srv.server_id]
++        servers.append(srv)
++        for ext in srv.extensions:
++            language_by_ext[ext] = srv.language_id or language_by_ext.get(ext, "plaintext")
++    return servers, language_by_ext
++
++
++def server_availability(srv: ServerDef) -> Tuple[str, str]:
++    """Return (availability, reason) for CLI/status display."""
++    if srv.transport_type == "websocket":
++        if not srv.transport_target:
++            return "unavailable", "missing websocket url"
++        url_error = validate_websocket_url(srv.transport_target)
++        if url_error:
++            return "unavailable", url_error
++        if not websocket_dependency_available():
++            return "unavailable", "websockets package is not installed"
++        return "configured", "websocket target configured"
++    return "configured" if srv.configured else "builtin", "stdio server"
++
++
+ SERVERS: List[ServerDef] = [
+     ServerDef(
+         server_id="pyright",
+@@ -1015,18 +1202,20 @@ SERVERS: List[ServerDef] = [
+ ]
+ 
+ 
+-def find_server_for_file(file_path: str) -> Optional[ServerDef]:
++def find_server_for_file(file_path: str, *, servers: Optional[Sequence[ServerDef]] = None) -> Optional[ServerDef]:
+     """Return the registry entry that handles ``file_path``, or None."""
+-    for srv in SERVERS:
++    registry = servers if servers is not None else SERVERS
++    for srv in registry:
+         if srv.matches(file_path):
+             return srv
+     return None
+ 
+ 
+-def language_id_for(path: str) -> str:
++def language_id_for(path: str, *, language_by_ext: Optional[Dict[str, str]] = None) -> str:
+     """Return the LSP languageId to send in didOpen for ``path``."""
+     ext = _file_ext_or_basename(path)
+-    return LANGUAGE_BY_EXT.get(ext, "plaintext")
++    mapping = language_by_ext if language_by_ext is not None else LANGUAGE_BY_EXT
++    return mapping.get(ext, "plaintext")
+ 
+ 
+ __all__ = [
+@@ -1036,5 +1225,7 @@ __all__ = [
+     "SERVERS",
+     "find_server_for_file",
+     "language_id_for",
++    "build_servers_from_lsp_config",
++    "server_availability",
+     "LANGUAGE_BY_EXT",
+ ]
+diff --git a/agent/lsp/transports.py b/agent/lsp/transports.py
+new file mode 100644
+index 000000000..79c46e2fe
+--- /dev/null
++++ b/agent/lsp/transports.py
+@@ -0,0 +1,253 @@
++"""Transport layer for Hermes LSP clients.
++
++The LSP client speaks JSON-RPC envelopes.  How those envelopes move is a
++transport concern: built-in servers normally use stdio Content-Length framing,
++while externally managed servers can expose one JSON-RPC message per WebSocket
++frame.
++"""
++from __future__ import annotations
++
++import asyncio
++import json
++import logging
++import os
++from typing import Any, Dict, List, Optional, Protocol
++from urllib.parse import urlparse
++
++from agent.lsp.protocol import LSPProtocolError, encode_message, read_message
++
++logger = logging.getLogger("agent.lsp.transports")
++
++
++class LSPTransport(Protocol):
++    """Minimal async JSON-RPC envelope transport for :class:`LSPClient`."""
++
++    async def start(self) -> None: ...
++
++    async def send(self, payload: dict) -> None: ...
++
++    async def recv(self) -> Optional[dict]: ...
++
++    async def close(self) -> None: ...
++
++    @property
++    def is_running(self) -> bool: ...
++
++    def describe(self) -> str: ...
++
++
++def validate_websocket_url(url: str) -> Optional[str]:
++    """Return an error string when *url* is not a usable ws/wss URL."""
++    parsed = urlparse(str(url or ""))
++    if parsed.scheme not in {"ws", "wss"}:
++        return "invalid websocket url: scheme must be ws or wss"
++    if not parsed.netloc:
++        return "invalid websocket url: missing host"
++    return None
++
++
++def _import_websockets_connect():
++    try:
++        import websockets  # type: ignore
++    except ImportError as e:  # pragma: no cover - exercised via monkeypatch
++        raise ImportError("websockets package is required for LSP websocket transport") from e
++    return websockets.connect
++
++
++def websocket_dependency_available() -> bool:
++    try:
++        _import_websockets_connect()
++        return True
++    except ImportError:
++        return False
++
++
++class StdioLSPTransport:
++    """Content-Length framed LSP transport over a subprocess stdio pair."""
++
++    def __init__(
++        self,
++        server_id: str,
++        command: List[str],
++        *,
++        env: Optional[Dict[str, str]] = None,
++        cwd: Optional[str] = None,
++    ) -> None:
++        self.server_id = server_id
++        self.command = list(command)
++        self.env = env
++        self.cwd = cwd
++        self._proc: Optional[asyncio.subprocess.Process] = None
++        self._stderr_task: Optional[asyncio.Task] = None
++
++    @property
++    def is_running(self) -> bool:
++        return self._proc is not None and self._proc.returncode is None
++
++    def describe(self) -> str:
++        return "stdio " + " ".join(self.command)
++
++    async def start(self) -> None:
++        if not self.command:
++            raise LSPProtocolError("stdio LSP transport requires a command")
++        env = dict(os.environ)
++        if self.env:
++            env.update(self.env)
++        try:
++            self._proc = await asyncio.create_subprocess_exec(
++                self.command[0],
++                *self.command[1:],
++                stdin=asyncio.subprocess.PIPE,
++                stdout=asyncio.subprocess.PIPE,
++                stderr=asyncio.subprocess.PIPE,
++                env=env,
++                cwd=self.cwd,
++            )
++        except FileNotFoundError as e:
++            raise LSPProtocolError(
++                f"LSP server binary not found: {self.command[0]} ({e})"
++            ) from e
++        self._stderr_task = asyncio.create_task(self._drain_stderr())
++
++    async def _drain_stderr(self) -> None:
++        proc = self._proc
++        if proc is None or proc.stderr is None:
++            return
++        try:
++            while True:
++                line = await proc.stderr.readline()
++                if not line:
++                    break
++                text = line.decode("utf-8", errors="replace").rstrip()
++                if text:
++                    logger.debug("[%s] stderr: %s", self.server_id, text[:1000])
++        except (asyncio.CancelledError, OSError):
++            pass
++
++    async def send(self, payload: dict) -> None:
++        proc = self._proc
++        if proc is None or proc.stdin is None or proc.stdin.is_closing():
++            raise LSPProtocolError("cannot send: stdio stdin closed")
++        try:
++            proc.stdin.write(encode_message(payload))
++            await proc.stdin.drain()
++        except (BrokenPipeError, ConnectionResetError, OSError) as e:
++            raise LSPProtocolError(f"stdio send failed: {e}") from e
++
++    async def recv(self) -> Optional[dict]:
++        proc = self._proc
++        if proc is None or proc.stdout is None:
++            return None
++        return await read_message(proc.stdout)
++
++    async def close(self) -> None:
++        if self._stderr_task is not None and not self._stderr_task.done():
++            self._stderr_task.cancel()
++            try:
++                await self._stderr_task
++            except (asyncio.CancelledError, Exception):  # noqa: BLE001
++                pass
++        proc = self._proc
++        self._proc = None
++        if proc is None:
++            return
++        if proc.returncode is None:
++            try:
++                await asyncio.wait_for(proc.wait(), timeout=0.2)
++                return
++            except asyncio.TimeoutError:
++                pass
++        if proc.returncode is None:
++            try:
++                proc.terminate()
++                try:
++                    await asyncio.wait_for(proc.wait(), timeout=2.0)
++                except asyncio.TimeoutError:
++                    try:
++                        proc.kill()
++                        await proc.wait()
++                    except ProcessLookupError:
++                        pass
++            except ProcessLookupError:
++                pass
++
++
++class WebSocketLSPTransport:
++    """LSP transport where each JSON-RPC envelope is one WebSocket frame."""
++
++    def __init__(self, server_id: str, url: str) -> None:
++        self.server_id = server_id
++        self.url = str(url or "")
++        self._ws: Any = None
++
++    @property
++    def is_running(self) -> bool:
++        return self._ws is not None
++
++    def describe(self) -> str:
++        return f"websocket {self.url}"
++
++    async def start(self) -> None:
++        url_error = validate_websocket_url(self.url)
++        if url_error:
++            raise LSPProtocolError(url_error)
++        try:
++            connect = _import_websockets_connect()
++        except ImportError as e:
++            raise LSPProtocolError("websockets package is required for LSP websocket transport") from e
++        try:
++            self._ws = await connect(self.url)
++        except Exception as e:  # noqa: BLE001
++            raise LSPProtocolError(f"websocket connect failed: {type(e).__name__}: {e}") from e
++
++    async def send(self, payload: dict) -> None:
++        if self._ws is None:
++            raise LSPProtocolError("cannot send: websocket is not connected")
++        try:
++            await self._ws.send(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
++        except Exception as e:  # noqa: BLE001
++            raise LSPProtocolError(f"websocket send failed: {type(e).__name__}: {e}") from e
++
++    async def recv(self) -> Optional[dict]:
++        if self._ws is None:
++            return None
++        try:
++            frame = await self._ws.recv()
++        except Exception as e:  # noqa: BLE001
++            raise LSPProtocolError(f"websocket recv failed: {type(e).__name__}: {e}") from e
++        if frame is None:
++            return None
++        if isinstance(frame, bytes):
++            try:
++                frame = frame.decode("utf-8")
++            except UnicodeDecodeError as e:
++                raise LSPProtocolError(f"non-UTF-8 websocket LSP frame: {e}") from e
++        if not isinstance(frame, str):
++            raise LSPProtocolError(f"unsupported websocket LSP frame type: {type(frame).__name__}")
++        try:
++            msg = json.loads(frame)
++        except json.JSONDecodeError as e:
++            raise LSPProtocolError(f"invalid JSON websocket LSP frame: {e}") from e
++        if not isinstance(msg, dict):
++            raise LSPProtocolError("websocket LSP frame must decode to a JSON object")
++        return msg
++
++    async def close(self) -> None:
++        ws = self._ws
++        self._ws = None
++        if ws is None:
++            return
++        try:
++            await ws.close()
++        except Exception:  # noqa: BLE001
++            pass
++
++
++__all__ = [
++    "LSPTransport",
++    "StdioLSPTransport",
++    "WebSocketLSPTransport",
++    "LSPProtocolError",
++    "validate_websocket_url",
++    "websocket_dependency_available",
++]
+diff --git a/pyproject.toml b/pyproject.toml
+index f49643bcc..b4893a250 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -110,6 +110,7 @@ edge-tts = ["edge-tts==7.2.7"]
+ modal = ["modal==1.3.4"]
+ daytona = ["daytona==0.155.0"]
+ hindsight = ["hindsight-client==0.6.1"]
++lsp-websocket = ["websockets>=15.0.0,<16.0.0"]
+ dev = ["debugpy==1.8.20", "pytest==9.0.2", "pytest-asyncio==1.3.0", "pytest-timeout==2.4.0", "mcp==1.26.0", "starlette==1.0.1", "ty==0.0.21", "ruff==0.15.10", "setuptools==82.0.1"]  # starlette: CVE-2026-48710
+ messaging = ["python-telegram-bot[webhooks]==22.6", "discord.py[voice]==2.7.1", "aiohttp==3.13.3", "brotlicffi==1.2.0.1", "slack-bolt==1.27.0", "slack-sdk==3.40.1", "qrcode==7.4.2"]
+ cron = []  # croniter is now a core dependency; this extra kept for back-compat
+diff --git a/tests/agent/lsp/test_configured_servers.py b/tests/agent/lsp/test_configured_servers.py
+new file mode 100644
+index 000000000..45839c240
+--- /dev/null
++++ b/tests/agent/lsp/test_configured_servers.py
+@@ -0,0 +1,155 @@
++"""Tests for config-driven LSP server registration."""
++from __future__ import annotations
++
++from pathlib import Path
++
++from agent.lsp.manager import LSPService
++from agent.lsp.servers import ServerDef, build_servers_from_lsp_config, find_server_for_file, language_id_for
++
++
++def _bsl_lsp_config(url: str = "ws://127.0.0.1:8025/lsp") -> dict:
++    return {
++        "enabled": True,
++        "servers": {
++            "bsl-language-server": {
++                "language_id": "bsl",
++                "extensions": [".bsl"],
++                "transport": {"type": "websocket", "url": url},
++                "workspace_root": "git",
++            }
++        },
++    }
++
++
++def test_custom_server_config_registers_extension_and_language_id():
++    servers, language_by_ext = build_servers_from_lsp_config(_bsl_lsp_config())
++
++    srv = find_server_for_file("/repo/src/module.bsl", servers=servers)
++
++    assert srv is not None
++    assert srv.server_id == "bsl-language-server"
++    assert srv.configured is True
++    assert srv.transport_type == "websocket"
++    assert srv.transport_target == "ws://127.0.0.1:8025/lsp"
++    assert language_id_for("/repo/src/module.bsl", language_by_ext=language_by_ext) == "bsl"
++
++
++def test_legacy_custom_servers_alias_is_supported():
++    cfg = {
++        "custom_servers": {
++            "bsl": {
++                "server_id": "bsl-language-server",
++                "language_id": "bsl",
++                "extensions": ["bsl"],
++                "transport": "websocket",
++                "url": "ws://127.0.0.1:8025/lsp",
++            }
++        }
++    }
++
++    servers, language_by_ext = build_servers_from_lsp_config(cfg)
++
++    srv = find_server_for_file("/repo/module.bsl", servers=servers)
++    assert srv is not None
++    assert srv.server_id == "bsl-language-server"
++    assert srv.extensions == (".bsl",)
++    assert language_id_for("/repo/module.bsl", language_by_ext=language_by_ext) == "bsl"
++
++
++def test_configured_websocket_server_does_not_require_binary_install():
++    servers, language_by_ext = build_servers_from_lsp_config(_bsl_lsp_config())
++    svc = LSPService(
++        enabled=True,
++        wait_mode="document",
++        wait_timeout=0.2,
++        install_strategy="manual",
++        servers=servers,
++        language_by_ext=language_by_ext,
++    )
++    try:
++        info = svc.get_status()
++    finally:
++        svc.shutdown()
++
++    configured = {s["server_id"]: s for s in info["servers"]}
++    assert configured["bsl-language-server"]["source"] == "configured"
++    assert configured["bsl-language-server"]["transport"] == "websocket"
++    assert configured["bsl-language-server"]["availability"] == "configured"
++
++
++def test_invalid_websocket_url_is_controlled_unavailable(tmp_path: Path, monkeypatch):
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    (repo / ".git").mkdir()
++    bsl = repo / "module.bsl"
++    bsl.write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8")
++    monkeypatch.chdir(repo)
++
++    servers, language_by_ext = build_servers_from_lsp_config(_bsl_lsp_config("http://127.0.0.1/lsp"))
++    svc = LSPService(
++        enabled=True,
++        wait_mode="document",
++        wait_timeout=0.2,
++        install_strategy="manual",
++        servers=servers,
++        language_by_ext=language_by_ext,
++    )
++    try:
++        assert svc.enabled_for(str(bsl))
++        assert svc.get_diagnostics_sync(str(bsl), timeout=0.5) == []
++        info = svc.get_status()
++    finally:
++        svc.shutdown()
++
++    configured = {s["server_id"]: s for s in info["servers"]}
++    assert configured["bsl-language-server"]["availability"] == "unavailable"
++    assert "invalid websocket url" in configured["bsl-language-server"]["availability_reason"]
++
++
++def test_lsp_which_prints_websocket_target(monkeypatch, capsys):
++    from agent.lsp import cli
++
++    servers, _ = build_servers_from_lsp_config(_bsl_lsp_config())
++    monkeypatch.setattr(cli, "_configured_registry", lambda: servers)
++
++    rc = cli._cmd_which("bsl-language-server")
++
++    out = capsys.readouterr()
++    assert rc == 0
++    assert out.out.strip() == "websocket ws://127.0.0.1:8025/lsp"
++    assert out.err == ""
++
++
++def test_lsp_list_marks_websocket_server_configured(monkeypatch, capsys):
++    from agent.lsp import cli
++
++    servers, _ = build_servers_from_lsp_config(_bsl_lsp_config())
++    configured = [s for s in servers if s.server_id == "bsl-language-server"]
++    monkeypatch.setattr(cli, "_configured_registry", lambda: configured)
++
++    rc = cli._cmd_list(installed_only=False)
++
++    out = capsys.readouterr()
++    assert rc == 0
++    assert "bsl-language-server" in out.out
++    assert "[configured]" in out.out
++    assert ".bsl" in out.out
++
++
++def test_lsp_test_rejects_stdio_server_without_binary(monkeypatch, capsys):
++    from agent.lsp import cli
++
++    stdio_server = ServerDef(
++        server_id="example-stdio",
++        extensions=(".ex",),
++        resolve_root=lambda fp, ws: ws,
++        build_spawn=lambda root, ctx: None,
++        description="example",
++    )
++    monkeypatch.setattr(cli, "_configured_registry", lambda: [stdio_server])
++
++    rc = cli._cmd_test("example-stdio")
++
++    out = capsys.readouterr()
++    assert rc == 1
++    assert "only configured websocket servers" in out.err
+diff --git a/tests/agent/lsp/test_websocket_transport.py b/tests/agent/lsp/test_websocket_transport.py
+new file mode 100644
+index 000000000..9be5d5bb9
+--- /dev/null
++++ b/tests/agent/lsp/test_websocket_transport.py
+@@ -0,0 +1,124 @@
++"""WebSocket transport coverage for the LSP client."""
++from __future__ import annotations
++
++import asyncio
++import json
++from pathlib import Path
++
++import pytest
++
++from agent.lsp.client import LSPClient
++from agent.lsp.transports import LSPProtocolError, WebSocketLSPTransport
++
++websockets = pytest.importorskip("websockets")
++
++
++async def _ws_lsp_handler(ws):
++    async for raw in ws:
++        if isinstance(raw, bytes):
++            raw = raw.decode("utf-8")
++        msg = json.loads(raw)
++        if msg.get("method") == "initialize" and "id" in msg:
++            await ws.send(
++                json.dumps(
++                    {
++                        "jsonrpc": "2.0",
++                        "id": msg["id"],
++                        "result": {
++                            "capabilities": {
++                                "textDocumentSync": 1,
++                                "hoverProvider": True,
++                                "definitionProvider": True,
++                                "referencesProvider": True,
++                                "documentSymbolProvider": True,
++                            },
++                            "serverInfo": {"name": "mock-websocket-lsp", "version": "0.1"},
++                        },
++                    },
++                    separators=(",", ":"),
++                )
++            )
++            continue
++        if msg.get("method") == "initialized":
++            continue
++        if msg.get("method") == "textDocument/didOpen":
++            params = msg.get("params") or {}
++            td = params.get("textDocument") or {}
++            await ws.send(
++                json.dumps(
++                    {
++                        "jsonrpc": "2.0",
++                        "method": "textDocument/publishDiagnostics",
++                        "params": {
++                            "uri": td.get("uri"),
++                            "version": td.get("version", 0),
++                            "diagnostics": [
++                                {
++                                    "range": {
++                                        "start": {"line": 0, "character": 0},
++                                        "end": {"line": 0, "character": 9},
++                                    },
++                                    "severity": 1,
++                                    "code": "BSL001",
++                                    "source": "mock-bsl-ls",
++                                    "message": "synthetic websocket diagnostic",
++                                }
++                            ],
++                        },
++                    },
++                    separators=(",", ":"),
++                )
++            )
++            continue
++        if msg.get("method") == "textDocument/didSave":
++            continue
++        if msg.get("method") == "shutdown" and "id" in msg:
++            await ws.send(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": None}))
++            continue
++        if msg.get("method") == "exit":
++            await ws.close()
++            return
++
++
++@pytest.mark.asyncio
++async def test_lsp_client_receives_diagnostics_over_websocket(tmp_path: Path):
++    serve = websockets.serve
++    async with serve(_ws_lsp_handler, "127.0.0.1", 0) as server:
++        host, port = server.sockets[0].getsockname()[:2]
++        url = f"ws://{host}:{port}/lsp"
++        f = tmp_path / "module.bsl"
++        f.write_text("Процедура Тест()\nКонецПроцедуры\n", encoding="utf-8")
++
++        client = LSPClient(
++            server_id="bsl-language-server",
++            workspace_root=str(tmp_path),
++            transport=WebSocketLSPTransport("bsl-language-server", url),
++        )
++        await client.start()
++        try:
++            assert client.is_running
++            assert client.initialize_result is not None
++            assert "capabilities" in client.initialize_result
++            version = await client.open_file(str(f), language_id="bsl")
++            await client.wait_for_diagnostics(str(f), version, mode="document")
++            diags = client.diagnostics_for(str(f))
++        finally:
++            await client.shutdown()
++
++    assert len(diags) == 1
++    assert diags[0]["code"] == "BSL001"
++    assert "websocket diagnostic" in diags[0]["message"]
++
++
++@pytest.mark.asyncio
++async def test_missing_websockets_dependency_fails_controlled(monkeypatch):
++    from agent.lsp import transports
++
++    def missing():
++        raise ImportError("No module named websockets")
++
++    monkeypatch.setattr(transports, "_import_websockets_connect", missing)
++    transport = WebSocketLSPTransport("bsl-language-server", "ws://127.0.0.1:8025/lsp")
++
++    with pytest.raises(LSPProtocolError, match="websockets package is required"):
++        await asyncio.wait_for(transport.start(), timeout=1.0)
+diff --git a/uv.lock b/uv.lock
+index 558e5c1c7..67a39d465 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -1499,6 +1499,9 @@ homeassistant = [
+ honcho = [
+     { name = "honcho-ai" },
+ ]
++lsp-websocket = [
++    { name = "websockets" },
++]
+ matrix = [
+     { name = "aiohttp-socks" },
+     { name = "aiosqlite" },
+@@ -1691,9 +1694,12 @@ requires-dist = [
+     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = "==2025.3" },
+     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0,<1" },
+     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = "==0.41.0" },
++    { name = "websockets", marker = "extra == 'lsp-websocket'", specifier = ">=15.0.0,<16.0.0" },
+     { name = "youtube-transcript-api", marker = "extra == 'youtube'", specifier = "==1.2.4" },
+ ]
+-provides-extras = ["anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "hindsight", "dev", "messaging", "cron", "slack", "matrix", "wecom", "cli", "tts-premium", "voice", "pty", "honcho", "vision", "mcp", "nemo-relay", "homeassistant", "sms", "computer-use", "acp", "mistral", "bedrock", "azure-identity", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
++
++provides-extras = ["anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "hindsight", "lsp-websocket", "dev", "messaging", "cron", "slack", "matrix", "wecom", "cli", "tts-premium", "voice", "pty", "honcho", "vision", "mcp", "nemo-relay", "homeassistant", "sms", "computer-use", "acp", "mistral", "bedrock", "azure-identity", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
++
+ 
+ [[package]]
+ name = "hf-xet"

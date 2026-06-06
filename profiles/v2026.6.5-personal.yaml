@@ -1,0 +1,19 @@
+{
+  "name": "v2026.6.5-personal",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "homeassistant-tool-config-url",
+    "codex-auxiliary-tool-role-flattening",
+    "max-platform-plugin",
+    "api-server-provider-proxy",
+    "lsp-configured-websocket-transport",
+    "email-smtp-ssl",
+    "gateway-document-media-types",
+    "neurogate-provider-plugin",
+    "gateway-busy-text-compat",
+    "provider-plugin-model-switch",
+    "gateway-explicit-media-delivery-safety"
+  ]
+}

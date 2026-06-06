@@ -13,11 +13,13 @@ MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.23-240-ge5647d78.yaml"
 RELEASE_2026_4_30_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.30.yaml"
 RELEASE_2026_5_16_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.16.yaml"
 RELEASE_2026_5_29_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.29.yaml"
+RELEASE_2026_6_5_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.6.5.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
 RELEASE_2026_5_16_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.16"
 RELEASE_2026_5_29_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.29"
+RELEASE_2026_6_5_PATCH_DIR = REPO_ROOT / "patches" / "v2026.6.5"
 RELEASE_MAX_PLATFORM_PLUGIN_PATCH = RELEASE_2026_4_30_PATCH_DIR / "070-max-platform-plugin.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
@@ -180,8 +182,10 @@ class PatchCatalogTests(unittest.TestCase):
                 "email-smtp-ssl",
                 "gateway-document-media-types",
                 "neurogate-provider-plugin",
+                "provider-plugin-model-switch",
                 "root-home-media-delivery",
                 "gateway-busy-text-compat",
+                "gateway-explicit-media-delivery-safety",
             ],
         )
         self.assertNotIn("codex-sdk-output-none-recovery", ids)
@@ -208,6 +212,62 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertIn("_load_busy_text_mode", busy_patch_text)
         self.assertIn("test_busy_text_mode_inherits_busy_input_mode_when_absent", busy_patch_text)
         self.assertIn("display.busy_input_mode", busy_patch_text)
+
+    def test_v2026_6_5_manifest_is_pinned_to_hermes_0_16_and_retires_root_home_unit(self):
+        manifest = json.loads(RELEASE_2026_6_5_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.6.5")
+        self.assertEqual(manifest["upstream"]["commit"], "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43")
+
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertEqual(
+            ids,
+            [
+                "auth-profile-root-fallback",
+                "credential-pool-recovery",
+                "telegram-free-response-target-gating",
+                "homeassistant-tool-config-url",
+                "codex-auxiliary-tool-role-flattening",
+                "max-platform-plugin",
+                "api-server-provider-proxy",
+                "lsp-configured-websocket-transport",
+                "email-smtp-ssl",
+                "gateway-document-media-types",
+                "neurogate-provider-plugin",
+                "gateway-busy-text-compat",
+                "provider-plugin-model-switch",
+                "gateway-explicit-media-delivery-safety",
+            ],
+        )
+        self.assertNotIn("root-home-media-delivery", ids)
+        retired_ids = [entry["id"] for entry in manifest.get("retired_patches", [])]
+        self.assertIn("codex-sdk-output-none-recovery", retired_ids)
+        self.assertIn("root-home-media-delivery", retired_ids)
+
+        for entry in manifest["patches"]:
+            self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
+            self.assertEqual(entry["refreshed_for"], "v2026.6.5")
+            self.assertTrue(entry["file"].startswith("patches/v2026.6.5/"))
+            patch_text = (REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git", patch_text)
+            self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+
+        personal_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.5-personal.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(personal_profile["patches"], ids)
+        upstream_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.5-upstream-fixes.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("root-home-media-delivery", upstream_profile["patches"])
+        self.assertIn("gateway-document-media-types", upstream_profile["patches"])
+        provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.5-provider-proxy.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy"])
+
+        media_patch_text = (RELEASE_2026_6_5_PATCH_DIR / "092-gateway-document-media-types.patch").read_text(encoding="utf-8")
+        self.assertIn('".epf"', media_patch_text)
+        self.assertIn('".cfe"', media_patch_text)
+        self.assertIn("MEDIA_TAG_CLEANUP_RE", media_patch_text)
+
+        explicit_media_patch_text = (RELEASE_2026_6_5_PATCH_DIR / "097-gateway-explicit-media-delivery-safety.patch").read_text(encoding="utf-8")
+        self.assertIn("auto_upload_local_paths", explicit_media_patch_text)
+        self.assertIn("test_auto_upload_local_paths", explicit_media_patch_text)
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

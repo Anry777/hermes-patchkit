@@ -1,0 +1,160 @@
+diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
+index cca80e988..014f66733 100644
+--- a/hermes_cli/runtime_provider.py
++++ b/hermes_cli/runtime_provider.py
+@@ -91,6 +91,8 @@ def _detect_api_mode_for_url(base_url: str) -> Optional[str]:
+     hostname = base_url_hostname(base_url)
+     if hostname == "api.x.ai":
+         return "codex_responses"
++    if hostname == "api.neurogate.space":
++        return "codex_responses"
+     if hostname == "api.openai.com":
+         return "codex_responses"
+     if normalized.endswith("/anthropic"):
+diff --git a/plugins/model-providers/neurogate/__init__.py b/plugins/model-providers/neurogate/__init__.py
+new file mode 100644
+index 000000000..6764399e6
+--- /dev/null
++++ b/plugins/model-providers/neurogate/__init__.py
+@@ -0,0 +1,28 @@
++"""NeuroGate provider profile."""
++
++from providers import register_provider
++from providers.base import ProviderProfile
++
++
++neurogate = ProviderProfile(
++    name="neurogate",
++    display_name="NeuroGate",
++    description="OpenAI Responses-compatible proxy for GPT-5.x models",
++    signup_url="https://neurogate.space/",
++    api_mode="codex_responses",
++    env_vars=("NEUROGATE_API_KEY", "NEUROGATE_BASE_URL"),
++    base_url="https://api.neurogate.space/v1",
++    auth_type="api_key",
++    default_aux_model="gpt-5.4-mini",
++    model_context_lengths={
++        "gpt-5.5": 272_000,
++    },
++    fallback_models=(
++        "gpt-5.5",
++        "gpt-5.4",
++        "gpt-5.4-mini",
++        "gpt-5.3-codex",
++    ),
++)
++
++register_provider(neurogate)
+diff --git a/plugins/model-providers/neurogate/plugin.yaml b/plugins/model-providers/neurogate/plugin.yaml
+new file mode 100644
+index 000000000..4de5048e0
+--- /dev/null
++++ b/plugins/model-providers/neurogate/plugin.yaml
+@@ -0,0 +1,5 @@
++name: neurogate-provider
++kind: model-provider
++version: 1.0.0
++description: NeuroGate — OpenAI Responses API proxy for GPT-5.x models
++author: Hermes PatchKit
+diff --git a/tests/hermes_cli/test_neurogate_auth.py b/tests/hermes_cli/test_neurogate_auth.py
+new file mode 100644
+index 000000000..434ad4666
+--- /dev/null
++++ b/tests/hermes_cli/test_neurogate_auth.py
+@@ -0,0 +1,43 @@
++"""Tests for NeuroGate auth and runtime provider wiring."""
++
++from __future__ import annotations
++
++import json
++
++
++def test_auth_add_neurogate_api_key_resolves_responses_runtime(tmp_path, monkeypatch):
++    hermes_home = tmp_path / "hermes"
++    hermes_home.mkdir(parents=True, exist_ok=True)
++    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
++    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
++    monkeypatch.delenv("NEUROGATE_API_KEY", raising=False)
++    monkeypatch.delenv("NEUROGATE_BASE_URL", raising=False)
++
++    from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider
++    from hermes_cli.auth_commands import auth_add_command
++    from hermes_cli.runtime_provider import resolve_runtime_provider
++
++    assert resolve_provider("neurogate") == "neurogate"
++    assert "neurogate-space" not in PROVIDER_REGISTRY
++    assert "neurogate-api" not in PROVIDER_REGISTRY
++    assert "neurogate" in PROVIDER_REGISTRY
++
++    class _Args:
++        provider = "neurogate"
++        auth_type = "api-key"
++        api_key = "ng-test-key"
++        label = "ng"
++
++    auth_add_command(_Args())
++
++    payload = json.loads((hermes_home / "auth.json").read_text())
++    entry = payload["credential_pool"]["neurogate"][0]
++    assert entry["label"] == "ng"
++    assert entry["access_token"] == "ng-test-key"
++    assert entry["base_url"] == "https://api.neurogate.space/v1"
++
++    runtime = resolve_runtime_provider(requested="neurogate")
++    assert runtime["provider"] == "neurogate"
++    assert runtime["api_mode"] == "codex_responses"
++    assert runtime["base_url"] == "https://api.neurogate.space/v1"
++    assert runtime["api_key"] == "ng-test-key"
+diff --git a/tests/providers/test_plugin_discovery.py b/tests/providers/test_plugin_discovery.py
+index fba5a02df..0fbce4a7a 100644
+--- a/tests/providers/test_plugin_discovery.py
++++ b/tests/providers/test_plugin_discovery.py
+@@ -37,7 +37,7 @@ def test_bundled_plugins_discovered():
+     assert plugins_dir.is_dir(), f"Missing {plugins_dir}"
+ 
+     child_dirs = [c for c in plugins_dir.iterdir() if c.is_dir()]
+-    assert len(child_dirs) >= 28, f"Expected at least 28 provider plugins, found {len(child_dirs)}"
++    assert len(child_dirs) >= 29, f"Expected at least 29 provider plugins, found {len(child_dirs)}"
+ 
+     for child in child_dirs:
+         assert (child / "__init__.py").exists(), f"{child.name} missing __init__.py"
+@@ -69,6 +69,7 @@ def test_all_profiles_register():
+     for required in (
+         "openrouter", "anthropic", "custom", "bedrock", "openai-codex",
+         "minimax-oauth", "gmi", "xiaomi", "alibaba-coding-plan",
++        "neurogate",
+     ):
+         assert required in names, f"Missing profile: {required}"
+ 
+diff --git a/tests/providers/test_provider_profiles.py b/tests/providers/test_provider_profiles.py
+index c9e9daa62..c9b22de56 100644
+--- a/tests/providers/test_provider_profiles.py
++++ b/tests/providers/test_provider_profiles.py
+@@ -22,12 +22,27 @@ class TestRegistry:
+     def test_unknown_provider_returns_none(self):
+         assert get_provider_profile("nonexistent-provider") is None
+ 
++    def test_neurogate_has_no_aliases(self):
++        assert get_provider_profile("neurogate") is not None
++        assert get_provider_profile("neurogate-space") is None
++        assert get_provider_profile("neurogate-api") is None
++
+     def test_all_providers_have_name(self):
+         get_provider_profile("nvidia")  # trigger discovery
+         for name, profile in _REGISTRY.items():
+             assert profile.name == name
+ 
+ 
++class TestNeuroGateProfile:
++    def test_responses_api_profile(self):
++        p = get_provider_profile("neurogate")
++        assert p is not None
++        assert p.api_mode == "codex_responses"
++        assert p.base_url == "https://api.neurogate.space/v1"
++        assert p.env_vars == ("NEUROGATE_API_KEY", "NEUROGATE_BASE_URL")
++        assert "gpt-5.4-mini" in p.fallback_models
++
++
+ class TestNvidiaProfile:
+     def test_max_tokens(self):
+         p = get_provider_profile("nvidia")

@@ -14,6 +14,11 @@ The format follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+- re-anchored PatchKit to Hermes Agent `v2026.6.5` / `0.16.0`, adding `manifests/upstream-v2026.6.5.yaml`, release profiles, and refreshed `patches/v2026.6.5/` exports.
+- retired `094-root-home-media-delivery` for `v2026.6.5`: upstream 0.16 absorbed the active `/root` media-delivery behavior while keeping credential paths blocked.
+- shrunk `092-gateway-document-media-types` for upstream 0.16 media allowlists while keeping `.epf`/`.cfe`, shared cleanup aliases, and Windows explicit `MEDIA:` path coverage.
+
 ### Fixed
 - `097-gateway-explicit-media-delivery-safety`: makes outbound local-file delivery explicit by default: bare absolute paths in gateway responses remain text, while `MEDIA:/path` directives and structured artifacts continue to deliver as native attachments after validation; `gateway.auto_upload_local_paths: true` restores legacy bare-path extraction when explicitly needed.
 - `096-provider-plugin-model-switch`: teaches the shared `/model`/`/mode` provider resolver, no-args model picker, and context-length resolver to use registered `plugins/model-providers/*` `ProviderProfile` entries. Plugin-backed providers such as `neurogate` no longer need duplicate `config.yaml providers:` stanzas, no longer fail with `Unknown provider` in the switch path, and can declare provider-enforced per-model windows such as `neurogate` + `gpt-5.5` = 272,000 tokens.
