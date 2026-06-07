@@ -52,6 +52,8 @@
       "exported_from": "reanchor-v2026.6.5-temp-worktree",
       "verification": {
         "focused_tests": [
+          "tests/hermes_cli/test_auth_commands.py::test_auth_add_openai_codex_oauth_persists_independent_pool_entry",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_save_codex_tokens_syncs_only_singleton_alias_manual_device_code_entries",
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
           "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
           "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
