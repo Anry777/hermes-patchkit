@@ -1087,3 +1087,123 @@ index f5fb112f1..8b0c7651a 100644
      assert __import__("os").environ["TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES"] == "true"
      assert __import__("os").environ["TELEGRAM_EXCLUSIVE_BOT_MENTIONS"] == "true"
      assert json.loads(__import__("os").environ["TELEGRAM_MENTION_PATTERNS"]) == [r"^\s*chompy\b"]
+diff --git a/tests/tools/test_send_message_tool.py b/tests/tools/test_send_message_tool.py
+index 56b196a47..f37f7ebb0 100644
+--- a/tests/tools/test_send_message_tool.py
++++ b/tests/tools/test_send_message_tool.py
+@@ -228,6 +228,78 @@ class TestSendMessageTool:
+             force_document=False,
+         )
+ 
++    def test_bare_telegram_target_prefers_current_session_thread(self):
++        home = SimpleNamespace(chat_id="-100home", thread_id="1")
++        config, telegram_cfg = _make_config()
++        config.get_home_channel = lambda _platform: home
++
++        def _session_env(name, default=""):
++            return {
++                "HERMES_SESSION_PLATFORM": "telegram",
++                "HERMES_SESSION_CHAT_ID": "-100current",
++                "HERMES_SESSION_THREAD_ID": "7",
++                "HERMES_SESSION_USER_ID": "user-123",
++            }.get(name, default)
++
++        with patch("gateway.config.load_gateway_config", return_value=config), \
++             patch("tools.interrupt.is_interrupted", return_value=False), \
++             patch("gateway.session_context.get_session_env", side_effect=_session_env), \
++             patch("model_tools._run_async", side_effect=_run_async_immediately), \
++             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
++             patch("gateway.mirror.mirror_to_session", return_value=True):
++            result = json.loads(
++                send_message_tool(
++                    {
++                        "action": "send",
++                        "target": "telegram",
++                        "message": "hello",
++                    }
++                )
++            )
++
++        assert result["success"] is True
++        send_mock.assert_awaited_once_with(
++            Platform.TELEGRAM,
++            telegram_cfg,
++            "-100current",
++            "hello",
++            thread_id="7",
++            media_files=[],
++            force_document=False,
++        )
++
++    def test_bare_telegram_target_preserves_home_channel_thread(self):
++        home = SimpleNamespace(chat_id="-100home", thread_id="7")
++        config, telegram_cfg = _make_config()
++        config.get_home_channel = lambda _platform: home
++
++        with patch("gateway.config.load_gateway_config", return_value=config), \
++             patch("tools.interrupt.is_interrupted", return_value=False), \
++             patch("gateway.session_context.get_session_env", return_value=""), \
++             patch("model_tools._run_async", side_effect=_run_async_immediately), \
++             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
++             patch("gateway.mirror.mirror_to_session", return_value=True):
++            result = json.loads(
++                send_message_tool(
++                    {
++                        "action": "send",
++                        "target": "telegram",
++                        "message": "hello",
++                    }
++                )
++            )
++
++        assert result["success"] is True
++        send_mock.assert_awaited_once_with(
++            Platform.TELEGRAM,
++            telegram_cfg,
++            "-100home",
++            "hello",
++            thread_id="7",
++            media_files=[],
++            force_document=False,
++        )
++
+     def test_display_label_target_resolves_via_channel_directory(self, tmp_path):
+         config, telegram_cfg = _make_config()
+         cache_file = tmp_path / "channel_directory.json"
+diff --git a/tools/send_message_tool.py b/tools/send_message_tool.py
+index f8386a51e..0a9ac7d39 100644
+--- a/tools/send_message_tool.py
++++ b/tools/send_message_tool.py
+@@ -263,6 +263,23 @@ def _handle_send(args):
+     mirror_text = cleaned_message.strip() or _describe_media_for_mirror(media_files)
+ 
+     used_home_channel = False
++    if not chat_id and not target_ref:
++        # In a gateway conversation, a bare same-platform target such as
++        # target="telegram" should send back to the current chat/thread.
++        # Falling through to the platform home channel drops Telegram forum
++        # thread_id and can make attachments appear in the wrong topic.
++        try:
++            from gateway.session_context import get_session_env
++
++            session_platform = get_session_env("HERMES_SESSION_PLATFORM", "")
++            session_chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
++            session_thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "")
++            if session_platform == platform_name and session_chat_id:
++                chat_id = session_chat_id
++                thread_id = session_thread_id or None
++        except Exception:
++            pass
++
+     if not chat_id:
+         home = config.get_home_channel(platform)
+         if not home and platform_name == "weixin":
+@@ -272,6 +289,8 @@ def _handle_send(args):
+                 home = HomeChannel(platform=platform, chat_id=wx_home, name="Weixin Home")
+         if home:
+             chat_id = home.chat_id
++            if thread_id is None:
++                thread_id = getattr(home, "thread_id", None) or None
+             used_home_channel = True
+         else:
+             home_env = _HOME_CHANNEL_ENV_OVERRIDES.get(
