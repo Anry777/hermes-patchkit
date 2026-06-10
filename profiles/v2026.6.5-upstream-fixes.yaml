@@ -9,6 +9,7 @@
     "gateway-document-media-types",
     "provider-plugin-model-switch",
     "gateway-busy-text-compat",
-    "gateway-explicit-media-delivery-safety"
+    "gateway-explicit-media-delivery-safety",
+    "api-server-fallback-model-kwarg"
   ]
 }

@@ -1,6 +1,7 @@
 {
   "name": "v2026.6.5-provider-proxy",
   "patches": [
-    "api-server-provider-proxy"
+    "api-server-provider-proxy",
+    "api-server-fallback-model-kwarg"
   ]
 }

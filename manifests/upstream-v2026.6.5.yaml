@@ -404,6 +404,35 @@
         "Operators can restore legacy bare-path extraction with gateway.auto_upload_local_paths: true; gateway.strict remains a separate validation layer."
       ],
       "exported_from": "reanchor-v2026.6.5-temp-worktree"
+    },
+    {
+      "id": "api-server-fallback-model-kwarg",
+      "file": "patches/v2026.6.5/098-api-server-fallback-model-kwarg.patch",
+      "title_en": "API Server fallback model kwarg fix",
+      "title_ru": "Fix duplicate model kwarg в fallback API Server",
+      "description_en": "Prevents the OpenAI-compatible API Server from passing model twice to AIAgent when runtime provider fallback supplies its own model override, preserving the fallback model and avoiding a 500 TypeError.",
+      "description_ru": "Не даёт OpenAI-compatible API Server дважды передавать model в AIAgent, когда provider fallback возвращает собственный model override; fallback model сохраняется, а 500 TypeError исчезает.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_api_server.py::TestAdapterInit::test_create_agent_uses_runtime_model_override_without_duplicate_kwarg",
+          "tests/gateway/test_api_server.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "API Server fallback no longer crashes with AIAgent() got multiple values for keyword argument model.",
+        "When fallback runtime kwargs include a model, that model overrides the configured primary model before AIAgent construction.",
+        "Non-model runtime kwargs still pass through unchanged."
+      ],
+      "exported_from": "runtime-upstream-v2026.6.5"
     }
   ],
   "retired_patches": [

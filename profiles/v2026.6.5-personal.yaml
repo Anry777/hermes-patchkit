@@ -14,6 +14,7 @@
     "neurogate-provider-plugin",
     "gateway-busy-text-compat",
     "provider-plugin-model-switch",
-    "gateway-explicit-media-delivery-safety"
+    "gateway-explicit-media-delivery-safety",
+    "api-server-fallback-model-kwarg"
   ]
 }
