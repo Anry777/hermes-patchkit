@@ -38,8 +38,8 @@
       "file": "patches/v2026.6.5/030-credential-pool-recovery.patch",
       "title_en": "Improve credential pool recovery",
       "title_ru": "Улучшить recovery credential pool",
-      "description_en": "Carries PatchKit credential-pool recovery semantics on top of upstream 0.16 pool status changes: active credential IDs, stale exhausted recovery, fail-closed unknown/invalid entries, and lease-aware rotation.",
-      "description_ru": "Переносит PatchKit credential-pool recovery поверх upstream 0.16 pool status changes: active credential IDs, recovery stale exhausted entries, fail-closed unknown/invalid entries и lease-aware rotation.",
+      "description_en": "Carries PatchKit credential-pool recovery semantics on top of upstream 0.16 pool status changes: active credential IDs, stale exhausted recovery, fail-closed unknown/invalid entries, lease-aware rotation, and additive Codex OAuth account login.",
+      "description_ru": "Переносит PatchKit credential-pool recovery поверх upstream 0.16 pool status changes: active credential IDs, recovery stale exhausted entries, fail-closed unknown/invalid entries, lease-aware rotation и additive Codex OAuth account login.",
       "category": "auth",
       "track": "upstream-fix",
       "optional": true,
@@ -53,6 +53,7 @@
       "verification": {
         "focused_tests": [
           "tests/hermes_cli/test_auth_commands.py::test_auth_add_openai_codex_oauth_persists_independent_pool_entry",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_login_openai_codex_force_new_adds_pool_entry_without_clobbering_existing_accounts",
           "tests/hermes_cli/test_auth_codex_provider.py::test_save_codex_tokens_syncs_only_singleton_alias_manual_device_code_entries",
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
           "tests/agent/test_credential_pool.py::test_invalid_entry_is_never_reenabled_by_age",
