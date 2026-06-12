@@ -53,6 +53,7 @@
       "verification": {
         "focused_tests": [
           "tests/hermes_cli/test_auth_commands.py::test_auth_add_openai_codex_oauth_persists_independent_pool_entry",
+          "tests/hermes_cli/test_auth_commands.py::test_auth_add_openai_codex_refuses_when_stale_auth_writer_is_running",
           "tests/hermes_cli/test_auth_codex_provider.py::test_login_openai_codex_force_new_adds_pool_entry_without_clobbering_existing_accounts",
           "tests/hermes_cli/test_auth_codex_provider.py::test_save_codex_tokens_syncs_only_singleton_alias_manual_device_code_entries",
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_persists_status",
@@ -60,6 +61,7 @@
           "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
           "tests/agent/test_credential_pool.py::test_stale_pool_persist_preserves_concurrently_added_codex_entries",
+          "tests/agent/test_credential_pool.py::test_save_codex_pool_entry_fails_if_post_write_verification_loses_entry",
           "tests/run_agent/test_run_agent.py::TestRunConversation::test_successful_response_records_credential_pool_success",
           "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
         ]
