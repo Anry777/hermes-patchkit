@@ -1,9 +1,9 @@
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 000000000..a11be7f0c
+index 000000000..978a835d6
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1378 @@
+@@ -0,0 +1,1475 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -85,6 +85,8 @@ index 000000000..a11be7f0c
 +    base_url: str
 +    api_key: str
 +    runtime: Dict[str, Any]
++    credential_pool: Any = None
++    credential_id: Optional[str] = None
 +
 +
 +def _openai_error(
@@ -693,6 +695,87 @@ index 000000000..a11be7f0c
 +            )
 +        return web.json_response(data)
 +
++    @staticmethod
++    def _runtime_pool_context(runtime: Dict[str, Any]) -> tuple[Any, Optional[str]]:
++        pool = runtime.get("credential_pool") if isinstance(runtime, dict) else None
++        credential_id = None
++        if pool is not None:
++            current_fn = getattr(pool, "current", None)
++            if callable(current_fn):
++                try:
++                    current = current_fn()
++                except Exception:
++                    current = None
++                credential_id = getattr(current, "id", None) if current is not None else None
++        return pool, str(credential_id) if credential_id else None
++
++    @staticmethod
++    def _exception_status_code(exc: Exception) -> Optional[int]:
++        for attr in ("status_code", "status"):
++            value = getattr(exc, attr, None)
++            if isinstance(value, int):
++                return value
++            if isinstance(value, str) and value.isdigit():
++                return int(value)
++        response = getattr(exc, "response", None)
++        value = getattr(response, "status_code", None)
++        if isinstance(value, int):
++            return value
++        if isinstance(value, str) and value.isdigit():
++            return int(value)
++        return None
++
++    @staticmethod
++    def _exception_error_context(exc: Exception) -> Dict[str, Any]:
++        body = getattr(exc, "body", None)
++        if isinstance(body, dict):
++            error = body.get("error")
++            if isinstance(error, dict):
++                result = {
++                    key: error.get(key)
++                    for key in ("message", "code", "reason")
++                    if error.get(key) is not None
++                }
++                if result:
++                    return result
++            detail = body.get("detail")
++            if isinstance(detail, str) and detail.strip():
++                return {"message": detail.strip()}
++        message = str(exc).strip()
++        return {"message": message} if message else {}
++
++    def _record_target_success(self, target: ResolvedProxyTarget) -> None:
++        pool = target.credential_pool
++        if pool is None:
++            return
++        record_success = getattr(pool, "record_success", None)
++        if not callable(record_success):
++            return
++        try:
++            record_success(target.credential_id)
++        except Exception as exc:
++            logger.debug("Codex Responses proxy failed to record credential success: %s", exc)
++
++    def _mark_target_failure(self, target: ResolvedProxyTarget, exc: Exception) -> None:
++        status_code = self._exception_status_code(exc)
++        if status_code not in {401, 402, 429}:
++            return
++        pool = target.credential_pool
++        if pool is None:
++            return
++        mark = getattr(pool, "mark_exhausted_and_rotate", None)
++        if not callable(mark):
++            return
++        try:
++            mark(
++                status_code=status_code,
++                error_context=self._exception_error_context(exc),
++                credential_id=target.credential_id,
++                api_key_hint=target.api_key,
++            )
++        except Exception as mark_exc:
++            logger.debug("Codex Responses proxy failed to mark credential failure: %s", mark_exc)
++
 +    def _resolve_codex_target(self, model_id: str) -> ResolvedProxyTarget:
 +        runtime = resolve_runtime_provider(
 +            requested=self._codex_provider,
@@ -700,6 +783,7 @@ index 000000000..a11be7f0c
 +            explicit_api_key=None,
 +            target_model=model_id,
 +        )
++        pool, credential_id = self._runtime_pool_context(runtime)
 +        api_mode = str(runtime.get("api_mode") or "codex_responses")
 +        return ResolvedProxyTarget(
 +            public_id=model_id,
@@ -709,6 +793,8 @@ index 000000000..a11be7f0c
 +            base_url=str(runtime.get("base_url") or ""),
 +            api_key=str(runtime.get("api_key") or ""),
 +            runtime=runtime,
++            credential_pool=pool,
++            credential_id=credential_id,
 +        )
 +
 +    def _codex_responses_payload(self, body: Dict[str, Any], target: ResolvedProxyTarget, *, stream: bool) -> Dict[str, Any]:
@@ -725,7 +811,7 @@ index 000000000..a11be7f0c
 +        for key in _CODEX_RESPONSES_UNSUPPORTED_SDK_PARAMS:
 +            payload.pop(key, None)
 +        if is_chatgpt_codex_backend:
-+            payload.setdefault("store", False)
++            payload["store"] = False
 +            if not str(payload.get("instructions") or "").strip():
 +                payload["instructions"] = "You are a helpful assistant."
 +            if isinstance(payload.get("input"), str):
@@ -759,7 +845,13 @@ index 000000000..a11be7f0c
 +                    except Exception:
 +                        pass
 +
-+        return await asyncio.get_running_loop().run_in_executor(None, _call)
++        try:
++            data = await asyncio.get_running_loop().run_in_executor(None, _call)
++        except Exception as exc:
++            self._mark_target_failure(target, exc)
++            raise
++        self._record_target_success(target)
++        return data
 +
 +    @staticmethod
 +    async def _write_sse_event(response: "web.StreamResponse", event: str, data: Any) -> None:
@@ -774,8 +866,6 @@ index 000000000..a11be7f0c
 +        target: ResolvedProxyTarget,
 +    ) -> "web.StreamResponse":
 +        payload = self._codex_responses_payload(body, target, stream=True)
-+        response = web.StreamResponse(status=200, headers=self._sse_headers(request))
-+        await response.prepare(request)
 +        loop = asyncio.get_running_loop()
 +        sentinel = object()
 +        client = None
@@ -787,6 +877,9 @@ index 000000000..a11be7f0c
 +                return client.responses.create(**payload)
 +
 +            stream = await loop.run_in_executor(None, _open_stream)
++            assert web is not None
++            response = web.StreamResponse(status=200, headers=self._sse_headers(request))
++            await response.prepare(request)
 +            iterator = iter(stream)
 +            while True:
 +                event = await loop.run_in_executor(None, self._next_stream_item, iterator, sentinel)
@@ -799,6 +892,10 @@ index 000000000..a11be7f0c
 +                await self._write_sse_event(response, event_type, data)
 +            if self._include_done_event:
 +                await self._write_sse_done(response)
++            self._record_target_success(target)
++        except Exception as exc:
++            self._mark_target_failure(target, exc)
++            raise
 +        finally:
 +            for obj in (stream, client):
 +                close = getattr(obj, "close", None)
@@ -1464,10 +1561,10 @@ index 42ff0b581..5f5e15547 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 000000000..d7c8c34ab
+index 000000000..f778dca51
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,942 @@
+@@ -0,0 +1,1091 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -1560,6 +1657,13 @@ index 000000000..d7c8c34ab
 +
 +    def model_dump(self):
 +        return dict(self._payload)
++
++
++class _UpstreamStatusError(Exception):
++    def __init__(self, status_code, message="upstream failed"):
++        super().__init__(message)
++        self.status_code = status_code
++        self.response = SimpleNamespace(status_code=status_code)
 +
 +
 +def _read_file_tool():
@@ -1715,6 +1819,147 @@ index 000000000..d7c8c34ab
 +        assert kwargs["temperature"] == 0.2
 +
 +    @pytest.mark.asyncio
++    async def test_responses_proxy_records_pool_success_for_selected_credential(self):
++        adapter = _codex_responses_proxy_adapter()
++        app = _create_app(adapter)
++
++        pool = MagicMock()
++        pool.current.return_value = SimpleNamespace(id="cred-1", label="Primary")
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = SimpleNamespace(
++            id="resp_123",
++            object="response",
++            model="gpt-5.4",
++            output=[],
++        )
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://api.openai.com/v1",
++                "api_key": "***",
++                "credential_pool": pool,
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={"model": "gpt-5.4", "input": "hello"},
++                )
++                data = await resp.json()
++
++        assert resp.status == 200
++        assert data["id"] == "resp_123"
++        pool.record_success.assert_called_once_with("cred-1")
++        pool.mark_exhausted_and_rotate.assert_not_called()
++
++    @pytest.mark.asyncio
++    async def test_responses_proxy_marks_selected_pool_credential_exhausted_on_rate_limit(self):
++        adapter = _codex_responses_proxy_adapter()
++        app = _create_app(adapter)
++
++        pool = MagicMock()
++        pool.current.return_value = SimpleNamespace(id="cred-1", label="Primary")
++        mock_client = MagicMock()
++        mock_client.responses.create.side_effect = _UpstreamStatusError(429, "rate limited")
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://api.openai.com/v1",
++                "api_key": "sk-selected",
++                "credential_pool": pool,
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={"model": "gpt-5.4", "input": "hello"},
++                )
++                data = await resp.json()
++
++        assert resp.status == 502
++        assert data["error"]["code"] == "codex_responses_proxy_error"
++        pool.mark_exhausted_and_rotate.assert_called_once_with(
++            status_code=429,
++            error_context={"message": "rate limited"},
++            credential_id="cred-1",
++            api_key_hint="sk-selected",
++        )
++        pool.record_success.assert_not_called()
++
++    @pytest.mark.asyncio
++    async def test_responses_proxy_stream_records_pool_success_after_complete_stream(self):
++        adapter = _codex_responses_proxy_adapter()
++        app = _create_app(adapter)
++
++        pool = MagicMock()
++        pool.current.return_value = SimpleNamespace(id="cred-1", label="Primary")
++        stream_events = iter([
++            SimpleNamespace(type="response.created", response=SimpleNamespace(id="resp_123", model="gpt-5.4")),
++            SimpleNamespace(type="response.completed", response=SimpleNamespace(id="resp_123", model="gpt-5.4")),
++        ])
++        mock_client = MagicMock()
++        mock_client.responses.create.return_value = stream_events
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "***",
++                "credential_pool": pool,
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={"model": "gpt-5.4", "input": "hello", "stream": True},
++                )
++                raw = await resp.text()
++
++        assert resp.status == 200
++        assert raw.rstrip().endswith("data: [DONE]")
++        pool.record_success.assert_called_once_with("cred-1")
++        pool.mark_exhausted_and_rotate.assert_not_called()
++
++    @pytest.mark.asyncio
++    async def test_responses_proxy_stream_marks_pool_credential_exhausted_when_open_fails(self):
++        adapter = _codex_responses_proxy_adapter()
++        app = _create_app(adapter)
++
++        pool = MagicMock()
++        pool.current.return_value = SimpleNamespace(id="cred-1", label="Primary")
++        mock_client = MagicMock()
++        mock_client.responses.create.side_effect = _UpstreamStatusError(401, "token invalidated")
++
++        with patch("gateway.api_server_provider_proxy.resolve_runtime_provider") as mock_resolve, \
++             patch("gateway.api_server_provider_proxy.OpenAI", return_value=mock_client):
++            mock_resolve.return_value = {
++                "provider": "openai-codex",
++                "api_mode": "codex_responses",
++                "base_url": "https://chatgpt.com/backend-api/codex",
++                "api_key": "sk-selected",
++                "credential_pool": pool,
++            }
++            async with TestClient(TestServer(app)) as cli:
++                resp = await cli.post(
++                    "/v1/responses",
++                    json={"model": "gpt-5.4", "input": "hello", "stream": True},
++                )
++                await resp.text()
++
++        pool.mark_exhausted_and_rotate.assert_called_once_with(
++            status_code=401,
++            error_context={"message": "token invalidated"},
++            credential_id="cred-1",
++            api_key_hint="sk-selected",
++        )
++        pool.record_success.assert_not_called()
++
++    @pytest.mark.asyncio
 +    async def test_responses_proxy_streams_responses_sse_without_chat_conversion(self):
 +        adapter = _codex_responses_proxy_adapter()
 +        adapter._run_agent = AsyncMock()
@@ -1743,6 +1988,7 @@ index 000000000..d7c8c34ab
 +                        "model": "gpt-5.4",
 +                        "input": "hello",
 +                        "stream": True,
++                        "store": True,
 +                        "temperature": 0.2,
 +                        "model_reasoning_effort": "low",
 +                        "client_metadata": {"client": "vscode-codex"},
