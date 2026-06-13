@@ -437,6 +437,37 @@
         "Non-model runtime kwargs still pass through unchanged."
       ],
       "exported_from": "runtime-upstream-v2026.6.5"
+    },
+    {
+      "id": "gateway-auto-reset-context-continuity",
+      "file": "patches/v2026.6.5/099-gateway-auto-reset-context-continuity.patch",
+      "title_en": "Gateway auto-reset context continuity",
+      "title_ru": "Сохранение контекста после auto-reset gateway",
+      "description_en": "Keeps Telegram/Discord/etc. gateway conversations continuous after idle/daily session_reset by linking the new session to the expired parent and rehydrating reset-parent transcripts without expanding compression ancestry.",
+      "description_ru": "Сохраняет непрерывность Telegram/Discord/etc. gateway-диалогов после idle/daily session_reset: новая session связывается с expired parent и rehydrate'ит reset-parent transcript без разворачивания compression ancestry.",
+      "category": "gateway",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_session_reset_notify.py",
+          "tests/gateway/test_session.py",
+          "tests/gateway/test_fresh_reset_skill_injection.py",
+          "tests/gateway/test_restart_resume_pending.py"
+        ]
+      },
+      "base_upstream": "3c231eb3979ab9c57d5cd6d02f1d577a3b718b43",
+      "refreshed_for": "v2026.6.5",
+      "impact": [
+        "Idle/daily gateway auto-reset children persist parent_session_id and keep previous context available automatically.",
+        "Gateway transcript loading prepends only reset-parent sessions; compression parents stay collapsed so oversized pre-compression history is not replayed.",
+        "Manual /new or /reset remains a fresh conversation and does not restore parent history."
+      ],
+      "exported_from": "runtime-upstream-v2026.6.5"
     }
   ],
   "retired_patches": [

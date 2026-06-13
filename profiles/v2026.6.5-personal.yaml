@@ -15,6 +15,7 @@
     "gateway-busy-text-compat",
     "provider-plugin-model-switch",
     "gateway-explicit-media-delivery-safety",
-    "api-server-fallback-model-kwarg"
+    "api-server-fallback-model-kwarg",
+    "gateway-auto-reset-context-continuity"
   ]
 }
