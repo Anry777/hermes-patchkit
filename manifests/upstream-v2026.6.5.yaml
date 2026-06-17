@@ -64,6 +64,8 @@
           "tests/agent/test_credential_pool.py::test_save_codex_pool_entry_fails_if_post_write_verification_loses_entry",
           "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_prefers_pool_over_singleton",
           "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_pool_blocks_singleton_bypass_when_exhausted",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_pool_refreshes_expired_entry",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_dead_refresh_does_not_use_singleton",
           "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_does_not_bypass_cooldown_via_auth_store",
           "tests/run_agent/test_credential_pool_interrupt.py::test_round_robin_success_preselects_next_credential_for_live_agent",
           "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
