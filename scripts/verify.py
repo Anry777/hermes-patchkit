@@ -33,8 +33,12 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'profiles/v2026.6.5-provider-proxy.yaml',
         repo_root / 'scripts/apply.py',
         repo_root / 'scripts/migrate_profile_config.py',
+        repo_root / 'scripts/install_operator_policy.py',
         repo_root / 'scripts/pin_runtime_dependencies.py',
         repo_root / 'scripts/doctor.py',
+        repo_root / 'templates/office-operator-policy.md',
+        repo_root / 'docs/en/profile-source-of-truth.md',
+        repo_root / 'docs/ru/profile-source-of-truth.md',
     ]
     missing = [str(path.relative_to(repo_root)) for path in required if not path.exists()]
     if missing:

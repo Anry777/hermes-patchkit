@@ -65,6 +65,7 @@ After updating Hermes and applying/refreshing patches, normalize the local profi
 
 ```bash
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
+python3 scripts/install_operator_policy.py --home ~/.hermes --write --backup
 ```
 
 If you want schema migration, runtime dependency pins, and cleanup to run immediately after `scripts/apply.py`, add the post-apply flags:
@@ -108,6 +109,14 @@ The cleanup helper:
 3. Rebuilds `.env` grouped by platform/integration.
 4. Keeps only credential-shaped secrets/tokens/API keys active by default.
 5. Comments non-secret env settings with a reason: either `use config.yaml ... instead` or `env-only exception`.
+
+The operator-policy helper:
+
+1. Reads the live profile `config.yaml` and updates `agent.system_prompt`.
+2. Inserts a managed PatchKit source-of-truth block from `templates/office-operator-policy.md`.
+3. Re-running the helper updates the existing block instead of appending duplicates.
+4. Defaults to dry-run; `--write --backup` creates `config.yaml.bak_install_operator_policy_<timestamp>` before writing.
+5. Keeps the prompt-level rule aligned with [profile-source-of-truth.md](profile-source-of-truth.md), so future Hermes turns see the same config/env/auth split operators use.
 
 If a current Hermes integration still reads a non-secret setting only from env and must keep working until a code fix lands, use the temporary compatibility mode:
 

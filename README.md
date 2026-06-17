@@ -87,6 +87,7 @@ This repository is still early, but it now has a working safety loop:
 - `scripts/doctor.py` — inspect a target checkout and selected patch set;
 - `scripts/apply.py` — apply a profile or explicit patch list with backup state;
 - `scripts/migrate_profile_config.py` — post-update config schema migration through the target Hermes runtime, with dry-run, backup, diff, and secret redaction;
+- `scripts/install_operator_policy.py` — injects PatchKit's source-of-truth policy into a profile `agent.system_prompt` as an idempotent managed block;
 - `scripts/pin_runtime_dependencies.py` — opt-in post-update runtime venv pins for dependency compatibility issues, currently `setuptools<80` to silence the `lark-oapi` / `pkg_resources` warning;
 - `scripts/rollback.py` — roll back a PatchKit apply;
 - `scripts/verify.py` — repo self-checks;
@@ -178,6 +179,7 @@ hermes-patchkit/
 ## More
 
 - patch catalog and features: [docs/en/patches.md](docs/en/patches.md)
+- profile source-of-truth policy: [docs/en/profile-source-of-truth.md](docs/en/profile-source-of-truth.md)
 - Russian README: [README.ru.md](README.ru.md)
 - Grok2API sidecar bridge: [docs/en/sidecars-grok2api.md](docs/en/sidecars-grok2api.md)
 - update workflow: [docs/en/update-workflow.md](docs/en/update-workflow.md)

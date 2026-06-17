@@ -65,6 +65,7 @@ git merge origin/main
 
 ```bash
 python3 scripts/clean_profile_config.py --home ~/.hermes --write
+python3 scripts/install_operator_policy.py --home ~/.hermes --write --backup
 ```
 
 Если хочешь, чтобы schema migration, runtime dependency pins и cleanup запускались сразу после `scripts/apply.py`, добавь post-apply флаги:
@@ -108,6 +109,14 @@ python3 scripts/apply.py \
 3. Пересобирает `.env` по платформам/интеграциям.
 4. Оставляет активными только credential-shaped secrets/tokens/API keys.
 5. Non-secret env settings комментирует с причиной: либо `use config.yaml ... instead`, либо `env-only exception`.
+
+Что делает operator-policy helper:
+
+1. Читает live profile `config.yaml` и обновляет `agent.system_prompt`.
+2. Вставляет managed PatchKit source-of-truth block из `templates/office-operator-policy.md`.
+3. Повторный запуск обновляет существующий block, а не добавляет дубликаты.
+4. По умолчанию работает как dry-run; `--write --backup` создаёт `config.yaml.bak_install_operator_policy_<timestamp>` перед записью.
+5. Держит prompt-level правило синхронным с [profile-source-of-truth.md](profile-source-of-truth.md), чтобы будущие Hermes turns видели тот же split config/env/auth, что и оператор.
 
 Если конкретная интеграция пока реально читает non-secret значение только из env и должна продолжить работать до code-fix'а, используй временный режим:
 

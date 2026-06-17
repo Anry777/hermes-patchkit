@@ -237,6 +237,8 @@ class PatchCatalogTests(unittest.TestCase):
                 "gateway-busy-text-compat",
                 "provider-plugin-model-switch",
                 "gateway-explicit-media-delivery-safety",
+                "api-server-fallback-model-kwarg",
+                "gateway-auto-reset-context-continuity",
             ],
         )
         self.assertNotIn("root-home-media-delivery", ids)
@@ -258,7 +260,7 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertNotIn("root-home-media-delivery", upstream_profile["patches"])
         self.assertIn("gateway-document-media-types", upstream_profile["patches"])
         provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.5-provider-proxy.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy"])
+        self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy", "api-server-fallback-model-kwarg"])
 
         media_patch_text = (RELEASE_2026_6_5_PATCH_DIR / "092-gateway-document-media-types.patch").read_text(encoding="utf-8")
         self.assertIn('".epf"', media_patch_text)

@@ -87,6 +87,7 @@ PatchKit возвращает эту границу:
 - `scripts/doctor.py` — preflight target checkout и выбранных patch'ей;
 - `scripts/apply.py` — apply profile или списка patch'ей с backup state;
 - `scripts/migrate_profile_config.py` — post-update миграция schema профиля через target Hermes runtime, с dry-run, backup, diff и secret redaction;
+- `scripts/install_operator_policy.py` — вставляет PatchKit source-of-truth policy в `agent.system_prompt` профиля как idempotent managed block;
 - `scripts/pin_runtime_dependencies.py` — opt-in post-update pins для runtime venv при dependency compatibility issues; сейчас это `setuptools<80`, чтобы убрать warning `lark-oapi` / `pkg_resources`;
 - `scripts/rollback.py` — откат PatchKit apply;
 - `scripts/verify.py` — self-check репозитория;
@@ -178,6 +179,7 @@ hermes-patchkit/
 ## Документы
 
 - список patch'ей и фич: [docs/ru/patches.md](docs/ru/patches.md)
+- политика источников истины для profiles: [docs/ru/profile-source-of-truth.md](docs/ru/profile-source-of-truth.md)
 - English README: [README.md](README.md)
 - Grok2API sidecar bridge: [docs/ru/sidecars-grok2api.md](docs/ru/sidecars-grok2api.md)
 - update workflow: [docs/ru/update-workflow.md](docs/ru/update-workflow.md)
