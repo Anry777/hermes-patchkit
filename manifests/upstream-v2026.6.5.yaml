@@ -26,7 +26,7 @@
           "tests/hermes_cli/test_auth_commands.py::test_profile_auth_reads_shared_root_store_even_when_profile_auth_exists",
           "tests/hermes_cli/test_auth_commands.py::test_profile_auth_writes_mutate_shared_root_store_not_profile_store",
           "tests/agent/test_auxiliary_client.py::TestReadNousAuth::test_reads_shared_root_auth_from_profile",
-          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_falls_back_to_auth_store",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_does_not_bypass_cooldown_via_auth_store",
           "tests/tools/test_web_tools_config.py::TestFirecrawlClientConfig::test_nous_auth_token_reads_shared_root_auth_from_profile"
         ]
       },
@@ -62,6 +62,9 @@
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
           "tests/agent/test_credential_pool.py::test_stale_pool_persist_preserves_concurrently_added_codex_entries",
           "tests/agent/test_credential_pool.py::test_save_codex_pool_entry_fails_if_post_write_verification_loses_entry",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_prefers_pool_over_singleton",
+          "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_pool_blocks_singleton_bypass_when_exhausted",
+          "tests/agent/test_auxiliary_client.py::TestReadCodexAccessToken::test_pool_without_selected_entry_does_not_bypass_cooldown_via_auth_store",
           "tests/run_agent/test_credential_pool_interrupt.py::test_round_robin_success_preselects_next_credential_for_live_agent",
           "tests/tools/test_delegate.py::TestChildCredentialLeasing::test_run_single_child_acquires_and_releases_lease"
         ]
