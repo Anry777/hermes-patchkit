@@ -61,6 +61,7 @@
           "tests/agent/test_credential_pool.py::test_round_robin_rotates_after_successful_leased_credential_is_released",
           "tests/agent/test_credential_pool.py::test_mark_exhausted_and_rotate_unknown_credential_id_fails_closed",
           "tests/agent/test_credential_pool.py::test_stale_pool_persist_preserves_concurrently_added_codex_entries",
+          "tests/agent/test_credential_pool.py::test_stale_pool_success_does_not_restore_reset_exhaustion",
           "tests/agent/test_credential_pool.py::test_save_codex_pool_entry_fails_if_post_write_verification_loses_entry",
           "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_prefers_pool_over_singleton",
           "tests/hermes_cli/test_auth_codex_provider.py::test_resolve_codex_runtime_credentials_pool_blocks_singleton_bypass_when_exhausted",
