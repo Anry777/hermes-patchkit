@@ -1,0 +1,264 @@
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index cda3acc6e..4c536727d 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -839,6 +839,7 @@ _HERMES_ROOT = get_default_hermes_root()
+ MEDIA_DELIVERY_ALLOW_DIRS_ENV = "HERMES_MEDIA_ALLOW_DIRS"
+ MEDIA_DELIVERY_TRUST_RECENT_ENV = "HERMES_MEDIA_TRUST_RECENT_FILES"
+ MEDIA_DELIVERY_TRUST_RECENT_SECONDS_ENV = "HERMES_MEDIA_TRUST_RECENT_SECONDS"
++AUTO_UPLOAD_LOCAL_PATHS_ENV = "HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"
+ # Strict mode toggles the original allowlist+recency path-validation behavior.
+ # Off by default — symmetric with inbound (we accept any document type the
+ # user uploads), and with the denylist still blocking obvious credential /
+@@ -942,6 +943,19 @@ def _media_delivery_recency_seconds() -> float:
+     return float(_MEDIA_DELIVERY_TRUST_RECENT_DEFAULT_SECONDS)
+ 
+ 
++def _env_flag_enabled(env_var: str, default: bool = False) -> bool:
++    """Return a boolean feature flag from common env truthy/falsy strings."""
++    raw = os.environ.get(env_var)
++    if raw is None:
++        return default
++    normalized = raw.strip().lower()
++    if normalized in ("1", "true", "yes", "on"):
++        return True
++    if normalized in ("0", "false", "no", "off", ""):
++        return False
++    return default
++
++
+ def _media_delivery_strict_mode() -> bool:
+     """Return True when path validation should require allowlist/recency match.
+ 
+@@ -953,8 +967,19 @@ def _media_delivery_strict_mode() -> bool:
+     gateways where prompt injection from one user shouldn't be able to
+     exfiltrate the host's secrets to that same user.
+     """
+-    raw = os.environ.get(MEDIA_DELIVERY_STRICT_ENV, "0").strip().lower()
+-    return raw in ("1", "true", "yes", "on")
++    return _env_flag_enabled(MEDIA_DELIVERY_STRICT_ENV, default=False)
++
++
++def auto_upload_local_paths_enabled() -> bool:
++    """Return True when legacy bare local path auto-upload is enabled.
++
++    Safe default is False: ordinary absolute paths remain text and only
++    explicit ``MEDIA:/path`` directives become native attachment candidates.
++    Operators can opt back into legacy behavior with
++    ``gateway.auto_upload_local_paths: true`` (bridged to
++    ``HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS=1``) or the env var directly.
++    """
++    return _env_flag_enabled(AUTO_UPLOAD_LOCAL_PATHS_ENV, default=False)
+ 
+ 
+ def _media_delivery_denied_paths() -> List[Path]:
+@@ -1136,6 +1161,11 @@ SUPPORTED_DOCUMENT_TYPES = {
+     ".cfg": "text/plain",
+     ".zip": "application/zip",
+     ".doc": "application/msword",
++    # 1C:Enterprise external processing/extension files are binary artifacts
++    # that may contain executable BSL code. Allow upload as documents, but do
++    # not inline or execute them; agents only receive a cached file path.
++    ".epf": "application/octet-stream",
++    ".cfe": "application/octet-stream",
+     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     ".xls": "application/vnd.ms-excel",
+     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+@@ -1167,73 +1197,42 @@ SUPPORTED_IMAGE_DOCUMENT_TYPES = {
+ }
+ 
+ 
+-# ---------------------------------------------------------------------------
+-# Media-delivery extension allowlist — SINGLE SOURCE OF TRUTH
+-#
+-# Both extractors that turn response text into native attachments derive their
+-# extension set from this tuple:
+-#   * ``extract_media()``       — explicit ``MEDIA:<path>`` tags
+-#   * ``extract_local_files()`` — bare absolute/home paths the agent mentions
+-#
+-# Historically these two carried independently-maintained extension lists.
+-# ``extract_media`` had a narrow list (no .md/.json/.yaml/.xml/.html/...) while
+-# ``extract_local_files`` had a broad one. Combined with the unconditional
+-# ``MEDIA:\\s*\\S+`` cleanup at the dispatch sites, that mismatch created a
+-# silent black hole: a ``MEDIA:/report.md`` tag failed the narrow extract_media
+-# match, got stripped from the body by the loose cleanup regex, and was then
+-# invisible to extract_local_files — the file was never delivered (issue
+-# #34517). Keeping one list eliminates the drift; building the cleanup regexes
+-# from the same set means a tag is only stripped when its extension is one we
+-# can actually deliver, so an unknown-extension path survives in the body
+-# instead of vanishing.
+-#
+-# Covers images (inline), video (inline where supported), audio (voice/audio),
+-# documents/spreadsheets/presentations (send_document), archives, and rendered
+-# web output. The dispatch partition (image vs video vs document) lives in
+-# ``gateway/run.py``.
+-# ---------------------------------------------------------------------------
+ 
+-MEDIA_DELIVERY_EXTS: Tuple[str, ...] = (
+-    # Images (embed inline)
++# Keep explicit MEDIA:<path> parsing and bare local path detection in sync.
++# Do not restore the old broad ``\S+`` fallback: every accepted directive must
++# end in a known attachment extension so code snippets and prose do not get
++# accidentally stripped from responses.
++MEDIA_ATTACHMENT_EXTENSIONS = tuple(dict.fromkeys((
++    # Images (inline where supported unless [[as_document]] forces document upload)
+     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg",
+-    # Video (embed inline where supported)
+-    ".mp4", ".mov", ".avi", ".mkv", ".webm",
+-    # Audio (delivered as voice/audio where supported)
+-    ".mp3", ".wav", ".ogg", ".opus", ".m4a", ".flac",
+-    # Documents (uploaded as file attachments)
+-    ".pdf", ".docx", ".doc", ".odt", ".rtf", ".txt", ".md", ".epub",
+-    # Spreadsheets / data
+-    ".xlsx", ".xls", ".ods", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
++    # Video
++    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp",
++    # Audio / voice
++    ".ogg", ".opus", ".mp3", ".wav", ".m4a", ".flac",
++    # Documents known to Hermes' cache/upload layer
++    *SUPPORTED_DOCUMENT_TYPES.keys(),
++    ".markdown", ".doc", ".odt", ".rtf",
++    # Spreadsheets / structured data
++    ".xls", ".ods", ".tsv",
+     # Presentations
+-    ".pptx", ".ppt", ".odp", ".key",
+-    # Archives
+-    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".apk", ".ipa",
+-    # Web / rendered output
++    ".ppt", ".odp", ".key",
++    # Archives / packages
++    ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".apk", ".ipa", ".epub",
++    # Rendered output
+     ".html", ".htm",
++)))
++MEDIA_ATTACHMENT_EXTENSION_PATTERN = "|".join(
++    re.escape(ext.lstrip(".")) for ext in MEDIA_ATTACHMENT_EXTENSIONS
+ )
+-
+-# Regex alternation fragment of bare extensions (no leading dot), e.g.
+-# ``png|jpe?g|...``. ``jpe?g`` collapses jpg/jpeg into one branch. Sorted
+-# longest-first so the alternation never matches a shorter ext as a prefix of
+-# a longer one (e.g. ``.tar`` before ``.tar.gz`` components).
+-_MEDIA_EXT_ALTERNATION = "|".join(
+-    sorted((e.lstrip(".") for e in MEDIA_DELIVERY_EXTS), key=len, reverse=True)
+-)
+-
+-# Anchored ``MEDIA:<path>`` cleanup pattern. Unlike the old loose
+-# ``MEDIA:\\s*\\S+``, this only strips a tag whose path ends in a known
+-# deliverable extension (optionally quoted/backticked). A ``MEDIA:`` tag with
+-# an unknown extension is left in the text so it can still be picked up by the
+-# bare-path detector (extract_local_files) downstream rather than silently
+-# deleted. Shared by the non-streaming dispatch path and the streaming
+-# consumer so both behave identically.
+-# Path anchors: ``~/`` (Unix home-relative), ``/`` (Unix absolute),
+-# ``X:\\`` or ``X:/`` (Windows drive-letter absolute — #34632).
++# Back-compat alias for PatchKit tests/docs from the pre-upstream name.
++MEDIA_DELIVERY_EXTS = MEDIA_ATTACHMENT_EXTENSIONS
++# Shared explicit MEDIA:<path> matcher. Supports Unix absolute/home paths and
++# Windows drive-letter absolute paths while requiring a known deliverable
++# extension so prose/code examples do not get stripped accidentally.
+ MEDIA_TAG_CLEANUP_RE = re.compile(
+-    r'''[`"']?MEDIA:\s*'''
+-    r'''(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|'''
+-    r'''(?:~/|/|[A-Za-z]:[/\\])\S+(?:[^\S\n]+\S+)*?\.(?:''' + _MEDIA_EXT_ALTERNATION + r'''))'''
+-    r'''(?=[\s`"',;:)\]}]|$)[`"']?''',
++    r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/|[A-Za-z]:[/\\])\S+(?:[^\S\n]+\S+)*?\.(?:'''
++    + MEDIA_ATTACHMENT_EXTENSION_PATTERN
++    + r''')(?=[\s`"',;:)\]}]|$))[`"']?''',
+     re.IGNORECASE,
+ )
+ 
+@@ -3005,19 +3004,17 @@ class BasePlatformAdapter(ABC):
+         cleaned = cleaned.replace("[[as_document]]", "")
+         
+         # Extract MEDIA:<path> tags, allowing optional whitespace after the colon
+-        # and quoted/backticked paths for LLM-formatted outputs. The extension
+-        # set is the shared MEDIA_DELIVERY_EXTS source of truth (built once into
+-        # MEDIA_TAG_CLEANUP_RE) so it can never drift from extract_local_files.
++        # and quoted/backticked paths for LLM-formatted outputs. Keep the
++        # extension allowlist shared with bare-path attachment detection so
++        # explicit MEDIA directives do not silently drop supported documents
++        # such as Markdown, JSON, YAML, HTML, or 1C artifacts. Mask examples
++        # and stored JSON values before scanning so they are not delivered as
++        # real attachments.
+         media_pattern = MEDIA_TAG_CLEANUP_RE
+-        # Mask example/stored MEDIA: paths before scanning so they are never
+-        # delivered as real attachments:
+-        #  - code blocks / inline code / blockquotes hold prose examples (#35695)
+-        #  - serialized JSON string values hold stored tool-result text (#34375)
+-        # Both maskers are offset-preserving (chars -> spaces) so match offsets
+-        # stay valid; chaining them masks the union of both protected regions.
+         scan_content = BasePlatformAdapter._mask_protected_spans(content)
+         scan_content = BasePlatformAdapter._mask_json_string_media(scan_content)
+         for match in media_pattern.finditer(scan_content):
++
+             path = match.group("path").strip()
+             if len(path) >= 2 and path[0] == path[-1] and path[0] in "`\"'":
+                 path = path[1:-1].strip()
+@@ -3076,8 +3073,13 @@ class BasePlatformAdapter(ABC):
+             Tuple of (list of expanded file paths, cleaned text with the
+             raw path strings removed).
+         """
+-        _LOCAL_MEDIA_EXTS = MEDIA_DELIVERY_EXTS
+-        ext_part = '|'.join(e.lstrip('.') for e in _LOCAL_MEDIA_EXTS)
++
++        # Same extension allowlist used by explicit MEDIA:<path> directives.
++        # Images / video embed inline where the platform supports it; document
++        # extensions route through ``send_document``.  The dispatch partition
++        # lives in ``gateway/run.py``.
++        ext_part = MEDIA_ATTACHMENT_EXTENSION_PATTERN
++
+ 
+         # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/img.png)
+         #             and relative paths (./foo.png)
+@@ -4246,12 +4248,12 @@ class BasePlatformAdapter(ABC):
+                 if images:
+                     logger.info("[%s] extract_images found %d image(s) in response (%d chars)", self.name, len(images), len(response))
+ 
++                # Legacy bare local path auto-upload is opt-in.  In the safe
++                # default, ordinary absolute paths remain visible text and
++                # only explicit MEDIA:/path directives become attachments.
++                # Also skip ephemeral/system notices so config paths stay visible text.
+                 local_files = []
+-                if not is_ephemeral_response:
+-                    # Auto-detect bare local file paths for native media delivery
+-                    # (helps small models that don't use MEDIA: syntax). Skip
+-                    # system/command notices so config paths stay visible text
+-                    # instead of becoming native uploads.
++                if not is_ephemeral_response and auto_upload_local_paths_enabled():
+                     local_files, text_content = self.extract_local_files(text_content)
+                     local_files = self.filter_local_delivery_paths(local_files)
+                     if local_files:
+diff --git a/tests/gateway/test_document_cache.py b/tests/gateway/test_document_cache.py
+index d3c01e59e..b0bdc6f3d 100644
+--- a/tests/gateway/test_document_cache.py
++++ b/tests/gateway/test_document_cache.py
+@@ -156,6 +156,8 @@ class TestSupportedDocumentTypes:
+             ".md",
+             ".txt",
+             ".zip",
++            ".epf",
++            ".cfe",
+             ".doc",
+             ".docx",
+             ".xls",
+diff --git a/tests/gateway/test_platform_base.py b/tests/gateway/test_platform_base.py
+index 3f8ecd932..df69a7d27 100644
+--- a/tests/gateway/test_platform_base.py
++++ b/tests/gateway/test_platform_base.py
+@@ -330,6 +330,15 @@ class TestExtractMedia:
+         assert media == [("/tmp/Jane Doe/speech.flac", False)]
+         assert cleaned == ""
+ 
++    @pytest.mark.parametrize("extension", ["md", "markdown", "json", "yaml", "html"])
++    def test_media_tag_supports_document_extensions_from_local_file_allowlist(self, extension):
++        content = f"Here is the artifact:\nMEDIA:/tmp/report.{extension}"
++        media, cleaned = BasePlatformAdapter.extract_media(content)
++
++        assert media == [(f"/tmp/report.{extension}", False)]
++        assert "MEDIA:" not in cleaned
++        assert "Here is the artifact" in cleaned
++
+     def test_as_document_directive_stripped_from_cleaned_text(self):
+         """[[as_document]] is a routing directive — strip it from
+         user-visible text just like [[audio_as_voice]]. Callers detect the

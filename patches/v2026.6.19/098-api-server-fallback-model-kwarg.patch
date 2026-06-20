@@ -1,0 +1,66 @@
+diff --git a/gateway/platforms/api_server.py b/gateway/platforms/api_server.py
+index db66c3015..c16398db2 100644
+--- a/gateway/platforms/api_server.py
++++ b/gateway/platforms/api_server.py
+@@ -1067,8 +1067,16 @@ class APIServerAdapter(BasePlatformAdapter):
+         from hermes_cli.tools_config import _get_platform_tools
+ 
+         runtime_kwargs = _resolve_runtime_agent_kwargs()
++        runtime_model = runtime_kwargs.pop("model", None)
+         reasoning_config = GatewayRunner._load_reasoning_config()
+         model = _resolve_gateway_model()
++        if runtime_model:
++            logger.info(
++                "Runtime provider supplied explicit model override: %s -> %s",
++                model,
++                runtime_model,
++            )
++            model = runtime_model
+ 
+         user_config = _load_gateway_config()
+         enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
+diff --git a/tests/gateway/test_api_server.py b/tests/gateway/test_api_server.py
+index ac5e29c4d..527caf9e7 100644
+--- a/tests/gateway/test_api_server.py
++++ b/tests/gateway/test_api_server.py
+@@ -371,6 +371,40 @@ class TestAdapterInit:
+         assert isinstance(agent, FakeAgent)
+         assert captured["max_iterations"] == 200
+ 
++    def test_create_agent_uses_runtime_model_override_without_duplicate_kwarg(self, monkeypatch):
++        captured = {}
++
++        class FakeAgent:
++            def __init__(self, model=None, **kwargs):
++                captured["model"] = model
++                captured["kwargs"] = kwargs
++
++        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
++        monkeypatch.setattr(
++            "gateway.run._resolve_runtime_agent_kwargs",
++            lambda: {
++                "provider": "neurogate",
++                "base_url": "https://api.neurogate.space/v1",
++                "api_mode": "codex_responses",
++                "model": "gpt-5.5",
++            },
++        )
++        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda: "primary-model")
++        monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {})
++        monkeypatch.setattr("gateway.run.GatewayRunner._load_reasoning_config", staticmethod(lambda: None))
++        monkeypatch.setattr("gateway.run.GatewayRunner._load_fallback_model", staticmethod(lambda: None))
++        monkeypatch.setattr("hermes_cli.tools_config._get_platform_tools", lambda *_: set())
++
++        adapter = APIServerAdapter(PlatformConfig(enabled=True))
++        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
++
++        agent = adapter._create_agent(session_id="api-session")
++
++        assert isinstance(agent, FakeAgent)
++        assert captured["model"] == "gpt-5.5"
++        assert captured["kwargs"]["provider"] == "neurogate"
++        assert "model" not in captured["kwargs"]
++
+ 
+ # ---------------------------------------------------------------------------
+ # Auth checking

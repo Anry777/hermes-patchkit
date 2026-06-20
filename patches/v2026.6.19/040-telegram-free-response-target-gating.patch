@@ -1,0 +1,1173 @@
+diff --git a/gateway/config.py b/gateway/config.py
+index 13d262e79..b3ad80abb 100644
+--- a/gateway/config.py
++++ b/gateway/config.py
+@@ -992,6 +992,12 @@ def load_gateway_config() -> GatewayConfig:
+                     bridged["mention_patterns"] = platform_cfg["mention_patterns"]
+                 if "exclusive_bot_mentions" in platform_cfg:
+                     bridged["exclusive_bot_mentions"] = platform_cfg["exclusive_bot_mentions"]
++                if "allowed_users" in platform_cfg:
++                    bridged["allowed_users"] = platform_cfg["allowed_users"]
++                if "reply_triggers" in platform_cfg:
++                    bridged["reply_triggers"] = platform_cfg["reply_triggers"]
++                if "allow_reply_triggers" in platform_cfg:
++                    bridged["allow_reply_triggers"] = platform_cfg["allow_reply_triggers"]
+                 if plat == Platform.TELEGRAM and "observe_unmentioned_group_messages" in platform_cfg:
+                     bridged["observe_unmentioned_group_messages"] = platform_cfg["observe_unmentioned_group_messages"]
+                 if "dm_policy" in platform_cfg:
+@@ -1127,6 +1133,10 @@ def load_gateway_config() -> GatewayConfig:
+                     os.environ["TELEGRAM_GUEST_MODE"] = str(telegram_cfg["guest_mode"]).lower()
+                 if "observe_unmentioned_group_messages" in telegram_cfg and not os.getenv("TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES"):
+                     os.environ["TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES"] = str(telegram_cfg["observe_unmentioned_group_messages"]).lower()
++                if "reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["reply_triggers"]).lower()
++                if "allow_reply_triggers" in telegram_cfg and not os.getenv("TELEGRAM_REPLY_TRIGGERS"):
++                    os.environ["TELEGRAM_REPLY_TRIGGERS"] = str(telegram_cfg["allow_reply_triggers"]).lower()
+                 frc = telegram_cfg.get("free_response_chats")
+                 if frc is not None and not os.getenv("TELEGRAM_FREE_RESPONSE_CHATS"):
+                     if isinstance(frc, list):
+@@ -1163,6 +1173,8 @@ def load_gateway_config() -> GatewayConfig:
+                     _rtm_str = "off" if _telegram_rtm is False else str(_telegram_rtm).lower()
+                     os.environ["TELEGRAM_REPLY_TO_MODE"] = _rtm_str
+                 allowed_users = telegram_cfg.get("allow_from")
++                if allowed_users is None:
++                    allowed_users = telegram_cfg.get("allowed_users")
+                 if allowed_users is not None and not os.getenv("TELEGRAM_ALLOWED_USERS"):
+                     if isinstance(allowed_users, list):
+                         allowed_users = ",".join(str(v) for v in allowed_users)
+@@ -2046,23 +2058,12 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+             pass
+ 
+     # Registry-driven enable for plugin platforms.  Built-ins have explicit
+-    # blocks above; plugins expose check_fn() which is the single source of
+-    # truth for "are my env vars set?".  When it returns True, ensure the
+-    # platform is enabled so start() will create its adapter.  Plugins that
+-    # need to seed ``PlatformConfig.extra`` from env vars (e.g. Google Chat's
+-    # project_id / subscription_name) can supply ``env_enablement_fn`` on
+-    # their PlatformEntry — called here BEFORE adapter construction.
+-    #
+-    # Enablement gate (#31116): when a plugin registers ``is_connected``
+-    # (the "has the user actually configured credentials for this?" check),
+-    # we MUST consult it before flipping ``enabled = True``.  Otherwise
+-    # ``check_fn`` alone — which for adapter plugins typically just
+-    # verifies the SDK is importable / lazy-installs it — silently enables
+-    # platforms the user never opted into, and the gateway then tries to
+-    # connect to Discord / Teams / Google Chat with no token and emits
+-    # noisy retry-forever errors.  ``_platform_status`` was already fixed
+-    # for the same bug class in commit 7849a3d73; this is the runtime
+-    # counterpart.
++    # blocks above.  For plugins, dependency availability (check_fn) is not the
++    # same as platform configuration: a bundled adapter may be importable while
++    # its token/server setting is absent.  Only auto-enable a plugin when its
++    # configured PlatformConfig passes validate_config/is_connected.  Plugins
++    # that need to seed PlatformConfig.extra from env vars can supply
++    # env_enablement_fn on their PlatformEntry before adapter construction.
+     try:
+         from hermes_cli.plugins import discover_plugins
+         discover_plugins()  # idempotent
+@@ -2076,15 +2077,10 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+                 continue
+             platform = Platform(entry.name)
+             existing_cfg = config.platforms.get(platform)
+-            # Seed candidate extras from ``env_enablement_fn`` so plugins
+-            # whose ``is_connected`` reads ``config.extra`` (e.g. Google
+-            # Chat's ``_is_connected`` checks ``config.extra["project_id"]``)
+-            # see the same state they will after enablement. Without this,
+-            # Google-Chat-on-env-vars-only setups silently fail the gate
+-            # below even though the user is configured.  Plugins whose
+-            # ``is_connected`` reads env vars directly (Discord, IRC,
+-            # Teams, LINE, ntfy, Simplex) are unaffected; this only
+-            # restores Google Chat.
++
++            # Seed candidate extras before probing. Some plugins implement
++            # is_connected/validate_config by inspecting config.extra rather
++            # than reading os.environ directly.
+             seed_for_probe = None
+             if entry.env_enablement_fn is not None:
+                 try:
+@@ -2095,56 +2091,47 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
+                     )
+                     seed_for_probe = None
+ 
+-            # Only consult is_connected for platforms that are NOT already
+-            # explicitly configured in YAML / env (existing_cfg with
+-            # enabled=True means the user wrote it themselves or another
+-            # env-var bridge enabled it — keep that decision).
++            def _probe_platform_config(base_cfg: Optional[PlatformConfig]) -> PlatformConfig:
++                cfg = base_cfg or PlatformConfig()
++                probe_extra = dict(getattr(cfg, "extra", {}) or {})
++                if isinstance(seed_for_probe, dict) and seed_for_probe:
++                    for k, v in seed_for_probe.items():
++                        if k == "home_channel":
++                            continue
++                        probe_extra.setdefault(k, v)
++                return PlatformConfig(
++                    enabled=True,
++                    token=cfg.token,
++                    api_key=cfg.api_key,
++                    home_channel=cfg.home_channel,
++                    reply_to_mode=cfg.reply_to_mode,
++                    gateway_restart_notification=cfg.gateway_restart_notification,
++                    extra=probe_extra,
++                )
++
++            # Only consult plugin gates for platforms that are not already
++            # explicitly enabled in YAML/env. Explicit user enablement wins.
+             if existing_cfg is None or not existing_cfg.enabled:
+-                if entry.is_connected is not None:
+-                    try:
+-                        # Probe with ``enabled=True`` since we're asking
+-                        # "would this plugin BE configured if we enabled
+-                        # it?" not "is it currently enabled?". Google
+-                        # Chat's ``_is_connected`` short-circuits on
+-                        # ``config.enabled`` being False, which on the
+-                        # default ``PlatformConfig()`` would fail the
+-                        # gate even with proper env vars set.
+-                        if existing_cfg is not None:
+-                            probe_cfg = existing_cfg
+-                            if not probe_cfg.enabled:
+-                                probe_cfg = PlatformConfig(
+-                                    enabled=True,
+-                                    extra=dict(probe_cfg.extra or {}),
+-                                )
+-                        else:
+-                            probe_cfg = PlatformConfig(enabled=True)
+-                        if isinstance(seed_for_probe, dict) and seed_for_probe:
+-                            # Don't mutate ``existing_cfg``; the probe gets
+-                            # a transient view with env-seeded extras layered
+-                            # on top of whatever's already there.
+-                            probe_extra = dict(getattr(probe_cfg, "extra", {}) or {})
+-                            for k, v in seed_for_probe.items():
+-                                if k == "home_channel":
+-                                    continue
+-                                probe_extra.setdefault(k, v)
+-                            probe_cfg = PlatformConfig(
+-                                enabled=True,
+-                                extra=probe_extra,
+-                            )
++                probe_cfg = _probe_platform_config(existing_cfg)
++                try:
++                    if entry.is_connected is not None:
+                         configured = bool(entry.is_connected(probe_cfg))
+-                    except Exception as exc:
+-                        logger.debug(
+-                            "is_connected for %s raised: %s — skipping enablement",
+-                            entry.name, exc,
+-                        )
+-                        configured = False
+-                    if not configured:
+-                        logger.debug(
+-                            "Plugin platform '%s' available but not configured "
+-                            "(is_connected returned False) — skipping enable",
+-                            entry.name,
+-                        )
+-                        continue
++                    elif entry.validate_config is not None:
++                        configured = bool(entry.validate_config(probe_cfg))
++                    else:
++                        configured = True
++                except Exception as exc:
++                    logger.debug(
++                        "validate_config/is_connected for %s raised: %s — skipping enablement",
++                        entry.name, exc,
++                    )
++                    configured = False
++                if not configured:
++                    logger.debug(
++                        "Plugin platform '%s' available but not configured — skipping enable",
++                        entry.name,
++                    )
++                    continue
+             if platform not in config.platforms:
+                 config.platforms[platform] = PlatformConfig()
+             config.platforms[platform].enabled = True
+diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
+index 2a2bdb686..b4483eb9e 100644
+--- a/gateway/platforms/telegram.py
++++ b/gateway/platforms/telegram.py
+@@ -5347,6 +5347,16 @@ class TelegramAdapter(BasePlatformAdapter):
+             return {str(part).strip() for part in raw if str(part).strip()}
+         return {part.strip() for part in str(raw).split(",") if part.strip()}
+ 
++    def _telegram_reply_triggers_enabled(self) -> bool:
++        configured = self.config.extra.get("reply_triggers")
++        if configured is None:
++            configured = self.config.extra.get("allow_reply_triggers")
++        if configured is None:
++            configured = os.getenv("TELEGRAM_REPLY_TRIGGERS", "true")
++        if isinstance(configured, bool):
++            return configured
++        return str(configured).strip().lower() in ("true", "1", "yes", "on")
++
+     def _telegram_ignored_threads(self) -> set[int]:
+         raw = self.config.extra.get("ignored_threads")
+         if raw is None:
+@@ -5572,6 +5582,115 @@ class TelegramAdapter(BasePlatformAdapter):
+         """
+         return self._telegram_guest_mode() and self._message_mentions_bot(message)
+ 
++    def _message_mentions_other_target(self, message: Message) -> bool:
++        """Return True when the message explicitly addresses someone else."""
++        if not self._bot:
++            return False
++
++        bot_username = (getattr(self._bot, "username", None) or "").lstrip("@").lower()
++        bot_id = getattr(self._bot, "id", None)
++        expected = f"@{bot_username}" if bot_username else None
++
++        def _iter_sources():
++            yield getattr(message, "text", None) or "", getattr(message, "entities", None) or []
++            yield getattr(message, "caption", None) or "", getattr(message, "caption_entities", None) or []
++
++        for source_text, entities in _iter_sources():
++            for entity in entities:
++                entity_type = str(getattr(entity, "type", "")).split(".")[-1].lower()
++                if entity_type == "mention":
++                    offset = int(getattr(entity, "offset", -1))
++                    length = int(getattr(entity, "length", 0))
++                    if offset < 0 or length <= 0:
++                        continue
++                    mentioned = source_text[offset:offset + length].strip().lower()
++                    if mentioned and mentioned != expected:
++                        return True
++                elif entity_type == "text_mention":
++                    user = getattr(entity, "user", None)
++                    if user and getattr(user, "id", None) != bot_id:
++                        return True
++                elif entity_type == "bot_command" and expected:
++                    offset = int(getattr(entity, "offset", -1))
++                    length = int(getattr(entity, "length", 0))
++                    if offset < 0 or length <= 0:
++                        continue
++                    command_text = source_text[offset:offset + length]
++                    at_index = command_text.find("@")
++                    if at_index < 0:
++                        continue
++                    if command_text[at_index:].strip().lower() != expected:
++                        return True
++        return False
++
++    def _message_matches_patterns(self, message: Message, patterns: List[re.Pattern]) -> bool:
++        if not patterns:
++            return False
++        for candidate in (getattr(message, "text", None), getattr(message, "caption", None)):
++            if not candidate:
++                continue
++            for pattern in patterns:
++                if pattern.search(candidate):
++                    return True
++        return False
++
++    def _message_directly_addresses_bot(self, message: Message) -> bool:
++        return (
++            self._is_reply_to_bot(message)
++            or self._message_mentions_bot(message)
++            or self._message_matches_mention_patterns(message)
++        )
++
++    def _message_has_leading_vocative(self, message: Message) -> bool:
++        """Return True for generic ``Name, ...`` / ``Name: ...`` addressing."""
++        candidates = [getattr(message, "text", None), getattr(message, "caption", None)]
++        stopwords = {
++            "да", "нет", "ну", "ок", "окей", "ладно", "слушай", "короче",
++            "кстати", "вообще", "блин", "блять", "черт", "чёрт", "а", "и", "но",
++        }
++        for candidate in candidates:
++            if not candidate:
++                continue
++            match = re.match(r"^\s*([@A-Za-zА-Яа-яЁё][\wА-Яа-яЁё-]{1,31})\s*[,：:]\s+\S", candidate)
++            if not match:
++                continue
++            name = match.group(1).lstrip("@").lower()
++            if name and name not in stopwords:
++                return True
++        return False
++
++    def _message_looks_like_question(self, message: Message) -> bool:
++        """Heuristic for ambient group questions not addressed to this bot."""
++        question_starters = (
++            "кто", "что", "где", "когда", "почему", "зачем", "как", "какой", "какая",
++            "какое", "какие", "чей", "чья", "чьё", "чьи", "сколько", "можно ли",
++            "is", "are", "am", "do", "does", "did", "can", "could", "would", "should",
++            "what", "where", "when", "why", "how", "who", "which", "whose",
++        )
++        for candidate in (getattr(message, "text", None), getattr(message, "caption", None)):
++            if not candidate:
++                continue
++            text = candidate.strip()
++            if "?" in text:
++                return True
++            lowered = text.lower()
++            if any(lowered.startswith(prefix + " ") or lowered == prefix for prefix in question_starters):
++                return True
++        return False
++
++    def _is_reply_to_other_bot(self, message: Message) -> bool:
++        if not self._bot:
++            return False
++        reply = getattr(message, "reply_to_message", None)
++        if not reply:
++            return False
++        from_user = getattr(reply, "from_user", None)
++        if not from_user:
++            return False
++        if getattr(from_user, "id", None) == getattr(self._bot, "id", None):
++            return False
++        return bool(getattr(from_user, "is_bot", False))
++
+     def _clean_bot_trigger_text(self, text: Optional[str]) -> Optional[str]:
+         if not text or not self._bot or not getattr(self._bot, "username", None):
+             return text
+@@ -5847,83 +5966,75 @@ class TelegramAdapter(BasePlatformAdapter):
+             adapter_name = getattr(self, "name", "telegram")
+             logger.warning("[%s] Failed to observe Telegram group message: %s", adapter_name, exc)
+ 
+-    def _should_process_message(self, message: Message, *, is_command: bool = False) -> bool:
+-        """Apply Telegram group trigger rules.
+-
+-        DMs remain unrestricted. Group/supergroup messages are accepted when:
+-        - the chat passes the ``allowed_chats`` whitelist (when set), or
+-          ``guest_mode`` is enabled and the bot is explicitly mentioned
+-        - the chat is explicitly allowlisted in ``free_response_chats``
+-        - ``require_mention`` is disabled
+-        - the message replies to the bot
+-        - the bot is @mentioned
+-        - the text/caption matches a configured regex wake-word pattern
+-
+-        When ``allowed_chats`` is non-empty, it remains a hard gate except for
+-        the narrow ``guest_mode`` bypass: group/supergroup messages that
+-        explicitly @mention this bot. Replies and regex wake words do not bypass
+-        ``allowed_chats``. When ``require_mention`` is enabled, slash commands are not given
+-        special treatment — they must pass the same mention/reply checks
+-        as any other group message.  Users can still trigger commands via
+-        the Telegram bot menu (``/command@botname``) or by explicitly
+-        mentioning the bot (``@botname /command``), both of which are
+-        recognised as mentions by :meth:`_message_mentions_bot`.
+-        """
++    def _telegram_message_gate_decision(self, message: Message, *, is_command: bool = False) -> tuple[bool, str]:
++        """Apply Telegram group trigger rules and return (allowed, reason)."""
+         if not self._is_group_chat(message):
+-            return True
++            return True, "not_group_chat"
+ 
+         thread_id = getattr(message, "message_thread_id", None)
+         allowed_topics = self._telegram_allowed_topics()
++        explicit_allowed_topic = False
+         if allowed_topics:
+             topic_id = str(thread_id) if thread_id is not None else self._GENERAL_TOPIC_THREAD_ID
+             if topic_id not in allowed_topics:
+-                return False
++                return False, "topic_not_allowed"
++            explicit_allowed_topic = True
+ 
+-        # Check ignored_threads first — applies to both groups and DM topics
+         if thread_id is not None:
+             try:
+                 if int(thread_id) in self._telegram_ignored_threads():
+-                    return False
++                    return False, "thread_ignored"
+             except (TypeError, ValueError):
+                 logger.warning("[%s] Ignoring non-numeric Telegram message_thread_id: %r", self.name, thread_id)
++                return False, "thread_non_numeric"
++
++        mentions_this_bot = self._message_mentions_bot(message)
++        guest_mention = self._telegram_guest_mode() and mentions_this_bot
++        reply_triggers_enabled = self._telegram_reply_triggers_enabled()
++        is_reply_to_bot = self._is_reply_to_bot(message)
++        reply_to_this_bot = is_reply_to_bot and reply_triggers_enabled
++        wake_word_for_this_bot = self._message_matches_mention_patterns(message)
++        mentions_other_target = self._message_mentions_other_target(message)
++        reply_to_other_bot = self._is_reply_to_other_bot(message)
++        leading_vocative = self._message_has_leading_vocative(message)
++        free_response_chats = self._telegram_free_response_chats()
++        require_mention = self._telegram_require_mention()
++        chat_id = str(getattr(getattr(message, "chat", None), "id", ""))
+ 
+-        if not self._is_group_chat(message):
+-            # Root DM (non-topic): ignore if ignore_root_dm is configured
+-            if thread_id is None and self.config.extra.get("ignore_root_dm", False):
+-                chat_id = str(getattr(getattr(message, "chat", None), "id", ""))
+-                if not is_command and chat_id in self._dm_topic_chat_ids:
+-                    return False
+-            return True
+-
+-        chat_id_str = str(getattr(getattr(message, "chat", None), "id", ""))
++        allowed = self._telegram_allowed_chats()
++        if allowed and chat_id not in allowed:
++            if guest_mention:
++                return True, "direct_trigger"
++            return False, "chat_not_allowed"
+ 
+         if self._telegram_exclusive_bot_mentions() and self._explicit_bot_mentions_exclude_self(message):
+-            return False
++            return False, "explicit_bot_mentions_exclude_self"
+ 
+-        # Resolve guest-mode mention bypass once so _message_mentions_bot
+-        # is not called redundantly in the normal flow below.
+-        guest_mention = self._is_guest_mention(message)
++        if mentions_other_target and not mentions_this_bot:
++            return False, "mentions_other_target"
+ 
+-        # allowed_chats check (whitelist). When set, group messages from chats
+-        # outside the whitelist are ignored unless guest_mode permits this
+-        # exact message as an explicit direct mention. DMs are excluded above.
+-        allowed = self._telegram_allowed_chats()
+-        if allowed and chat_id_str not in allowed:
+-            return guest_mention
++        if reply_to_other_bot and not (mentions_this_bot or wake_word_for_this_bot):
++            if not (explicit_allowed_topic and not require_mention):
++                return False, "reply_to_other_bot"
++        if leading_vocative and not (mentions_this_bot or wake_word_for_this_bot):
++            return False, "leading_vocative_other_target"
+ 
+-        if guest_mention:
+-            return True
+-        if chat_id_str in self._telegram_free_response_chats():
+-            return True
+-        if not self._telegram_require_mention():
+-            return True
+-        if self._is_reply_to_bot(message):
+-            return True
+-        # When guest_mode is True, _is_guest_mention already called
+-        # _message_mentions_bot above — skip the redundant second call.
+-        if not self._telegram_guest_mode() and self._message_mentions_bot(message):
+-            return True
+-        return self._message_matches_mention_patterns(message)
++        if mentions_this_bot or reply_to_this_bot or wake_word_for_this_bot:
++            return True, "direct_trigger"
++
++        if chat_id in free_response_chats:
++            if self._message_looks_like_question(message):
++                return False, "free_response_question_without_trigger"
++            return True, "free_response_chat"
++
++        if not require_mention:
++            return True, "require_mention_disabled"
++        return False, "mention_required_but_missing"
++
++    def _should_process_message(self, message: Message, *, is_command: bool = False) -> bool:
++        """Apply Telegram group trigger rules."""
++        allowed, _reason = self._telegram_message_gate_decision(message, is_command=is_command)
++        return allowed
+ 
+     async def _ensure_forum_commands(self, message) -> None:
+         """Lazy-register bot commands for forum supergroups.
+diff --git a/gateway/run.py b/gateway/run.py
+index 2672ab43e..dfd5f2800 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -1235,6 +1235,12 @@ def _bridge_max_turns_from_config(home: "Path") -> None:
+     if isinstance(agent_cfg, dict) and "max_turns" in agent_cfg:
+         os.environ["HERMES_MAX_ITERATIONS"] = str(agent_cfg["max_turns"])
+ 
++    gateway_cfg = cfg.get("gateway", {})
++    if isinstance(gateway_cfg, dict) and "auto_upload_local_paths" in gateway_cfg:
++        os.environ["HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"] = (
++            "1" if gateway_cfg.get("auto_upload_local_paths") else "0"
++        )
++
+ 
+ def _current_max_iterations() -> int:
+     """Return the current per-turn iteration budget after runtime env refresh."""
+@@ -1495,6 +1501,11 @@ if _config_path.exists():
+             _trust_recent_seconds = _gateway_cfg.get("trust_recent_files_seconds")
+             if _trust_recent_seconds is not None:
+                 os.environ["HERMES_MEDIA_TRUST_RECENT_SECONDS"] = str(_trust_recent_seconds)
++            _auto_upload_local_paths = _gateway_cfg.get("auto_upload_local_paths")
++            if _auto_upload_local_paths is not None:
++                os.environ["HERMES_GATEWAY_AUTO_UPLOAD_LOCAL_PATHS"] = (
++                    "1" if _auto_upload_local_paths else "0"
++                )
+     except Exception as _bridge_err:
+         # Previously this was silent (`except Exception: pass`), which
+         # hid partial bridge failures and let .env defaults shadow
+@@ -1569,6 +1580,8 @@ from gateway.session import (
+     build_session_context_prompt,
+     build_session_key,
+     is_shared_multi_user_session,
++    _hash_sender_id,
++    _should_redact_source_pii,
+ )
+ from gateway.delivery import DeliveryRouter
+ from gateway.authz_mixin import GatewayAuthorizationMixin
+@@ -1580,6 +1593,7 @@ from gateway.platforms.base import (
+     MessageEvent,
+     MessageType,
+     _reply_anchor_for_event,
++    auto_upload_local_paths_enabled,
+     merge_pending_message_event,
+ )
+ from gateway.restart import (
+@@ -1606,6 +1620,29 @@ logger = logging.getLogger(__name__)
+ _AGENT_PENDING_SENTINEL = object()
+ 
+ 
++def _adapter_can_render_tool_progress(adapter: Any) -> bool:
++    """Return whether gateway should deliver tool-progress messages.
++
++    Most non-editing platforms suppress progress because every update becomes a
++    permanent chat bubble. Adapters can opt into that trade-off when the native
++    activity signal is too subtle and explicit in-chat status is desired.
++    """
++    if adapter is None:
++        return False
++    if type(adapter).edit_message is not BasePlatformAdapter.edit_message:
++        return True
++    return bool(getattr(adapter, "SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT", False))
++
++
++def _adapter_uses_permanent_tool_progress(adapter: Any) -> bool:
++    """Return True when progress should be sent as separate messages."""
++    return bool(
++        adapter is not None
++        and type(adapter).edit_message is BasePlatformAdapter.edit_message
++        and getattr(adapter, "SUPPORTS_PROGRESS_MESSAGES_WITHOUT_EDIT", False)
++    )
++
++
+ def _resolve_runtime_agent_kwargs() -> dict:
+     """Resolve provider credentials for gateway-created AIAgent instances.
+ 
+@@ -3819,27 +3856,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+ 
+     @staticmethod
+     def _load_busy_text_mode() -> str:
+-        """Resolve normal busy TEXT follow-up behavior.
+-
+-        ``busy_input_mode`` is the single source of truth (default
+-        ``interrupt``). The legacy ``busy_text_mode`` knob is honored only
+-        when a user explicitly set it, so existing queue setups keep
+-        working; new installs follow ``busy_input_mode``. Returns one of
+-        ``interrupt`` | ``queue`` (``steer`` is handled upstream by
+-        ``busy_input_mode`` and maps to non-queue text handling here).
++        """Load normal busy TEXT follow-up behavior from config/env.
++
++        Backward compatibility: pre-0.15 profiles only had
++        ``display.busy_input_mode``.  When the newer text-specific knob is
++        absent, inherit the legacy busy-input policy so TEXT follow-ups keep
++        interrupting/steering for existing configs instead of silently
++        switching to queue semantics.
+         """
+-        # Legacy explicit override wins for backward compat.
+-        legacy = os.getenv("HERMES_GATEWAY_BUSY_TEXT_MODE", "").strip().lower()
+-        if not legacy:
++        mode = os.getenv("HERMES_GATEWAY_BUSY_TEXT_MODE", "").strip().lower()
++        if not mode:
+             cfg = _load_gateway_runtime_config()
+-            legacy = str(cfg_get(cfg, "display", "busy_text_mode", default="") or "").strip().lower()
+-        if legacy == "interrupt":
+-            return "interrupt"
+-        if legacy == "queue":
+-            return "queue"
+-        # No explicit legacy knob → follow busy_input_mode.
+-        input_mode = GatewayRunner._load_busy_input_mode()
+-        return "queue" if input_mode == "queue" else "interrupt"
++            mode = str(cfg_get(cfg, "display", "busy_text_mode", default="") or "").strip().lower()
++        if mode in {"interrupt", "queue"}:
++            return mode
++        if mode:
++            logger.warning("Unknown busy_text_mode '%s', falling back to busy_input_mode", mode)
++        return GatewayRunner._load_busy_input_mode()
+ 
+     @staticmethod
+     def _load_restart_drain_timeout() -> float:
+@@ -6126,6 +6159,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+     async def _platform_reconnect_watcher(self) -> None:
+         """Background task that periodically retries connecting failed platforms.
+ 
++
+         Uses exponential backoff: 30s → 60s → 120s → 240s → 300s (cap).
+         Retryable failures (network/DNS blips) keep retrying at the backoff
+         cap indefinitely — they self-heal once connectivity returns, so a
+@@ -8419,8 +8453,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             group_sessions_per_user=_group_sessions_per_user,
+             thread_sessions_per_user=_thread_sessions_per_user,
+         )
+-        if _is_shared_multi_user and source.user_name:
+-            message_text = f"[{source.user_name}] {message_text}"
++        if _is_shared_multi_user:
++            sender_parts = []
++            if source.user_name:
++                sender_parts.append(f"[{source.user_name}]")
++            if source.user_id:
++                uid = source.user_id
++                try:
++                    _pcfg = _load_gateway_config()
++                    _redact_sender_pii = _should_redact_source_pii(
++                        source,
++                        bool((_pcfg.get("privacy") or {}).get("redact_pii", False)),
++                    )
++                except Exception:
++                    _redact_sender_pii = False
++                if _redact_sender_pii:
++                    uid = _hash_sender_id(uid)
++                sender_parts.append(f"[user:{uid}]")
++            if sender_parts:
++                message_text = f"{' '.join(sender_parts)} {message_text}"
+ 
+         # Prepend channel context from history backfill (if any).  This
+         # happens after sender-prefix so the prefix only applies to the
+@@ -10876,13 +10927,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             # Chain the cleaned text through each extractor (extract_media →
+             # extract_images → extract_local_files) so MEDIA: tags and image URLs
+             # are removed before the bare-path auto-detect runs. Previously the
+-            # cleaned text from extract_media was dropped (``_``) and
+-            # extract_local_files scanned text that still contained MEDIA: tags,
+-            # producing false-positive bare-path matches with the MEDIA: prefix
+-            # glued on. This matches the chain order in gateway/platforms/base.py.
++            # cleaned text from extract_media was dropped and extract_local_files
++            # scanned text that still contained MEDIA: tags. Bare-path auto-upload
++            # remains opt-in; explicit MEDIA: tags above are always honored.
+             _, cleaned = adapter.extract_images(cleaned)
+-            local_files, _ = adapter.extract_local_files(cleaned)
+-            local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
++            if auto_upload_local_paths_enabled():
++                local_files, _ = adapter.extract_local_files(cleaned)
++                local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
++            else:
++                local_files = []
+ 
+             _thread_meta = self._thread_metadata_for_source(event.source, self._reply_anchor_for_event(event))
+ 
+@@ -14563,7 +14616,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             if _code_block_short is not None:
+                 msg = _code_block_short
+                 last_was_terminal_block[0] = True
+-            elif preview:
++            # MAX keeps non-verbose progress intentionally preview-free: raw
++            # terminal probes such as `date` are useful in logs but read like
++            # internal implementation noise in the messenger chat. Users can
++            # still opt into details with tool_progress=verbose.
++            elif preview and platform_key != "max":
+                 from agent.display import get_tool_preview_max_len
+                 _pl = get_tool_preview_max_len()
+                 _cap = _pl if _pl > 0 else 40
+@@ -14613,8 +14670,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             if source.platform in (Platform.FEISHU, Platform.MATTERMOST) and source.thread_id and event_message_id
+             else None
+         )
++        # MAX's client makes newly-sent bot messages visually prominent; a
++        # short first-send debounce lets bursty service tools (date/context
++        # probes followed by real work) coalesce into the first editable status
++        # bubble instead of flashing as an orphan line.
++        _progress_initial_delay = 0.8 if platform_key == "max" else 0.0
+ 
+         async def send_progress_messages():
++            nonlocal _progress_initial_delay
+             if not progress_queue:
+                 return
+ 
+@@ -14623,9 +14686,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 return
+ 
+             # Skip tool progress for platforms that don't support message
+-            # editing (e.g. iMessage/BlueBubbles) — each progress update
+-            # would become a separate message bubble, which is noisy.
+-            if type(adapter).edit_message is BasePlatformAdapter.edit_message:
++            # editing unless the adapter explicitly opts into permanent,
++            # in-chat progress messages. MAX does this because its native
++            # typing indicator is visible only in the member list in common
++            # clients, so users otherwise get no obvious activity signal.
++            if not _adapter_can_render_tool_progress(adapter):
+                 while not progress_queue.empty():
+                     try:
+                         progress_queue.get_nowait()
+@@ -14633,9 +14698,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                         break
+                 return
+ 
+-            progress_lines = []      # Accumulated tool lines for the CURRENT editable bubble
++            progress_lines = []      # Accumulated tool lines for the current progress bubble
+             progress_msg_id = None   # ID of the current progress message to edit
+-            can_edit = progress_grouping != "separate"  # "separate" = one message per tool (pre-v0.9 behavior)
++            can_edit = (
++                progress_grouping != "separate"
++                and not _adapter_uses_permanent_tool_progress(adapter)
++            )  # "separate" = one message per tool (pre-v0.9 behavior)
+             _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
+             _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
+ 
+@@ -14830,6 +14898,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                     if not _run_still_current():
+                         return
+ 
++                    if can_edit and progress_msg_id is None and _progress_initial_delay > 0:
++                        # Delay only the first MAX progress bubble. If the run
++                        # finishes quickly, the final answer is enough and the
++                        # cancellation drain intentionally leaves this unsent;
++                        # otherwise, subsequent queued tools are batched into
++                        # the first editable message.
++                        await asyncio.sleep(_progress_initial_delay)
++                        _progress_initial_delay = 0.0
++                        continue
++
+                     if can_edit and progress_msg_id is not None:
+                         # Try to edit the existing progress message
+                         full_text = "\n".join(progress_lines)
+diff --git a/gateway/session.py b/gateway/session.py
+index d07c65ec2..629e4b123 100644
+--- a/gateway/session.py
++++ b/gateway/session.py
+@@ -212,6 +212,24 @@ that requires raw IDs).  Discord is excluded because mentions use ``<@user_id>``
+ and the LLM needs the real ID to tag users."""
+ 
+ 
++def _should_redact_source_pii(source: SessionSource, redact_pii: bool) -> bool:
++    """Return True when this source's stable IDs should be hidden from prompts."""
++    if not redact_pii:
++        return False
++
++    # Only apply redaction on platforms where IDs aren't needed for mentions.
++    # Check both the hardcoded set (builtins) and the plugin registry.
++    if source.platform in _PII_SAFE_PLATFORMS:
++        return True
++    try:
++        from gateway.platform_registry import platform_registry
++
++        entry = platform_registry.get(source.platform.value)
++        return bool(entry and entry.pii_safe)
++    except Exception:
++        return False
++
++
+ def _discord_tools_loaded() -> bool:
+     """True iff the agent will actually have Discord tools this session.
+ 
+@@ -256,18 +274,7 @@ def build_session_context_prompt(
+     Platforms like Discord are excluded because mentions need real IDs.
+     Routing still uses the original values (they stay in SessionSource).
+     """
+-    # Only apply redaction on platforms where IDs aren't needed for mentions.
+-    # Check both the hardcoded set (builtins) and the plugin registry.
+-    _is_pii_safe = context.source.platform in _PII_SAFE_PLATFORMS
+-    if not _is_pii_safe:
+-        try:
+-            from gateway.platform_registry import platform_registry
+-            entry = platform_registry.get(context.source.platform.value)
+-            if entry and entry.pii_safe:
+-                _is_pii_safe = True
+-        except Exception:
+-            pass
+-    redact_pii = redact_pii and _is_pii_safe
++    redact_pii = _should_redact_source_pii(context.source, redact_pii)
+     lines = [
+         "## Current Session Context",
+         "",
+@@ -329,15 +336,16 @@ def build_session_context_prompt(
+         session_label = "Multi-user thread" if context.source.thread_id else "Multi-user session"
+         lines.append(
+             f"**Session type:** {session_label} — messages are prefixed "
+-            "with [sender name]. Multiple users may participate."
++            "with [sender name] and, when available, [user:id]. Multiple users may participate."
+         )
+-    elif context.source.user_name:
+-        lines.append(f"**User:** {context.source.user_name}")
+-    elif context.source.user_id:
+-        uid = context.source.user_id
+-        if redact_pii:
+-            uid = _hash_sender_id(uid)
+-        lines.append(f"**User ID:** {uid}")
++    else:
++        if context.source.user_name:
++            lines.append(f"**User:** {context.source.user_name}")
++        if context.source.user_id:
++            uid = context.source.user_id
++            if redact_pii:
++                uid = _hash_sender_id(uid)
++            lines.append(f"**User ID:** {uid}")
+ 
+     # Platform-specific behavioral notes
+     if context.source.platform == Platform.SLACK:
+diff --git a/tests/gateway/test_pii_redaction.py b/tests/gateway/test_pii_redaction.py
+index 36aeab11c..27a8534d0 100644
+--- a/tests/gateway/test_pii_redaction.py
++++ b/tests/gateway/test_pii_redaction.py
+@@ -80,8 +80,8 @@ class TestBuildSessionContextPromptRedaction:
+         ctx = _make_context(user_id="user-123", user_name="Alice")
+         prompt = build_session_context_prompt(ctx, redact_pii=True)
+         assert "Alice" in prompt
+-        # user_id should not appear when user_name is present (name takes priority)
+         assert "user-123" not in prompt
++        assert "**User ID:** user_" in prompt
+ 
+     def test_home_channel_id_hashed(self):
+         hc = {
+diff --git a/tests/gateway/test_session.py b/tests/gateway/test_session.py
+index 239dc28c8..dbe48873f 100644
+--- a/tests/gateway/test_session.py
++++ b/tests/gateway/test_session.py
+@@ -368,7 +368,7 @@ class TestBuildSessionContextPrompt:
+         assert "**User:** Alice" not in prompt
+ 
+     def test_non_thread_group_shows_user(self):
+-        """Regular group messages (no thread) still show the user name."""
++        """Regular group messages (no thread) still show the user name and stable id."""
+         config = GatewayConfig(
+             platforms={
+                 Platform.TELEGRAM: PlatformConfig(enabled=True, token="fake"),
+@@ -379,12 +379,14 @@ class TestBuildSessionContextPrompt:
+             chat_id="-1002285219667",
+             chat_name="Test Group",
+             chat_type="group",
++            user_id="99",
+             user_name="Alice",
+         )
+         ctx = build_session_context(source, config)
+         prompt = build_session_context_prompt(ctx)
+ 
+         assert "**User:** Alice" in prompt
++        assert "**User ID:** 99" in prompt
+         assert "Multi-user thread" not in prompt
+ 
+     def test_shared_non_thread_group_prompt_hides_single_user(self):
+diff --git a/tests/gateway/test_shared_group_sender_prefix.py b/tests/gateway/test_shared_group_sender_prefix.py
+index 9f0e525f6..d6cd60c1a 100644
+--- a/tests/gateway/test_shared_group_sender_prefix.py
++++ b/tests/gateway/test_shared_group_sender_prefix.py
+@@ -43,6 +43,72 @@ async def test_preprocess_prefixes_sender_for_shared_non_thread_group_session():
+     assert result == "[Alice] hello"
+ 
+ 
++@pytest.mark.asyncio
++async def test_preprocess_prefixes_stable_sender_id_for_shared_group_session(monkeypatch):
++    monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {})
++    runner = _make_runner(
++        GatewayConfig(
++            platforms={
++                Platform.TELEGRAM: PlatformConfig(enabled=True, token="fake"),
++            },
++            group_sessions_per_user=False,
++        )
++    )
++    source = SessionSource(
++        platform=Platform.TELEGRAM,
++        chat_id="-1002285219667",
++        chat_name="Test Group",
++        chat_type="group",
++        user_id="123456789",
++        user_name="Alice",
++    )
++    event = MessageEvent(text="hello", source=source)
++
++    result = await runner._prepare_inbound_message_text(
++        event=event,
++        source=source,
++        history=[],
++    )
++
++    assert result == "[Alice] [user:123456789] hello"
++
++
++@pytest.mark.asyncio
++async def test_preprocess_redacts_stable_sender_id_for_shared_group_session(monkeypatch):
++    monkeypatch.setattr(
++        "gateway.run._load_gateway_config",
++        lambda: {"privacy": {"redact_pii": True}},
++    )
++    runner = _make_runner(
++        GatewayConfig(
++            platforms={
++                Platform.TELEGRAM: PlatformConfig(enabled=True, token="fake"),
++            },
++            group_sessions_per_user=False,
++        )
++    )
++    source = SessionSource(
++        platform=Platform.TELEGRAM,
++        chat_id="-1002285219667",
++        chat_name="Test Group",
++        chat_type="group",
++        user_id="123456789",
++        user_name="Alice",
++    )
++    event = MessageEvent(text="hello", source=source)
++
++    result = await runner._prepare_inbound_message_text(
++        event=event,
++        source=source,
++        history=[],
++    )
++
++    assert result is not None
++    assert result.startswith("[Alice] [user:user_")
++    assert result.endswith("] hello")
++    assert "123456789" not in result
++
++
+ @pytest.mark.asyncio
+ async def test_preprocess_keeps_plain_text_for_default_group_sessions():
+     runner = _make_runner(
+diff --git a/tests/gateway/test_telegram_group_gating.py b/tests/gateway/test_telegram_group_gating.py
+index d43124b56..40c024893 100644
+--- a/tests/gateway/test_telegram_group_gating.py
++++ b/tests/gateway/test_telegram_group_gating.py
+@@ -21,6 +21,7 @@ def _make_adapter(
+     group_allowed_chats=None,
+     guest_mode=None,
+     observe_unmentioned_group_messages=None,
++    reply_triggers=None,
+     bot_username="hermes_bot",
+ ):
+     from gateway.platforms.telegram import TelegramAdapter
+@@ -62,6 +63,8 @@ def _make_adapter(
+         extra["guest_mode"] = guest_mode
+     if observe_unmentioned_group_messages is not None:
+         extra["observe_unmentioned_group_messages"] = observe_unmentioned_group_messages
++    if reply_triggers is not None:
++        extra["reply_triggers"] = reply_triggers
+ 
+     adapter = object.__new__(TelegramAdapter)
+     adapter.platform = Platform.TELEGRAM
+@@ -93,13 +96,16 @@ def _group_message(
+     from_user_name="Alice Example",
+     thread_id=None,
+     reply_to_bot=False,
++    reply_to_user=None,
+     entities=None,
+     caption=None,
+     caption_entities=None,
+ ):
+     reply_to_message = None
+     if reply_to_bot:
+-        reply_to_message = SimpleNamespace(from_user=SimpleNamespace(id=999), message_id=10, text="previous bot reply", caption=None)
++        reply_to_message = SimpleNamespace(from_user=SimpleNamespace(id=999, is_bot=True), message_id=10, text="previous bot reply", caption=None)
++    elif reply_to_user is not None:
++        reply_to_message = SimpleNamespace(from_user=reply_to_user)
+     return SimpleNamespace(
+         message_id=42,
+         text=text,
+@@ -470,6 +476,26 @@ def test_group_messages_can_require_direct_trigger_via_config():
+     assert adapter_no_mention._should_process_message(_group_message("/status"), is_command=True) is True
+ 
+ 
++def test_group_reply_trigger_can_be_disabled_for_noisy_multi_bot_chats():
++    adapter = _make_adapter(require_mention=True, reply_triggers=False)
++
++    assert adapter._should_process_message(_group_message("replying", reply_to_bot=True)) is False
++    assert adapter._should_process_message(
++        _group_message("hi @hermes_bot", entities=[_mention_entity("hi @hermes_bot")])
++    ) is True
++
++
++def test_direct_only_without_reply_trigger_still_allows_wake_words():
++    adapter = _make_adapter(
++        require_mention=True,
++        mention_patterns=[r"^\s*(Цезарь|Cesair)[,!:：]?\b"],
++        reply_triggers=False,
++    )
++
++    assert adapter._should_process_message(_group_message("тебя не спрашивали", reply_to_bot=True)) is False
++    assert adapter._should_process_message(_group_message("Цезарь, ответь")) is True
++
++
+ def test_explicit_multi_bot_mentions_route_only_to_named_bots():
+     text = "@research_bot @ops_bot hi"
+     entities = _mention_entities(text, ["@research_bot", "@ops_bot"])
+@@ -540,9 +566,63 @@ def test_free_response_chats_bypass_mention_requirement():
+     adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
+ 
+     assert adapter._should_process_message(_group_message("hello everyone", chat_id=-200)) is True
++    assert adapter._should_process_message(_group_message("кто я?", chat_id=-200)) is False
+     assert adapter._should_process_message(_group_message("hello everyone", chat_id=-201)) is False
+ 
+ 
++def test_reply_context_does_not_override_fresh_addressing_to_other_bot():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    other_mention = "@other_bot посмотри"
++    assert adapter._should_process_message(
++        _group_message(
++            other_mention,
++            chat_id=-200,
++            reply_to_bot=True,
++            entities=[_mention_entity(other_mention, "@other_bot")],
++        )
++    ) is False
++
++    assert adapter._should_process_message(
++        _group_message("Борис, скажи кто я", chat_id=-200, reply_to_bot=True)
++    ) is False
++
++
++def test_free_response_chats_ignore_replies_to_other_bots():
++    adapter = _make_adapter(require_mention=True, free_response_chats=["-200"])
++
++    assert adapter._should_process_message(
++        _group_message(
++            "да, посмотри",
++            chat_id=-200,
++            reply_to_user=SimpleNamespace(id=12345, is_bot=True),
++        )
++    ) is False
++    assert adapter._should_process_message(
++        _group_message(
++            "обычный reply человеку",
++            chat_id=-200,
++            reply_to_user=SimpleNamespace(id=54321, is_bot=False),
++        )
++    ) is True
++
++
++def test_free_response_chats_ignore_generic_leading_vocative_without_name_blacklist():
++    adapter = _make_adapter(
++        require_mention=True,
++        free_response_chats=["-200"],
++        mention_patterns=[r"^\s*(Федя|Фёдор|Федор)[,:]?\b"],
++    )
++
++    assert adapter._should_process_message(_group_message("Борис, скажи кто я", chat_id=-200)) is False
++    assert adapter._should_process_message(_group_message("Маша, как дела?", chat_id=-200)) is False
++    assert adapter._should_process_message(_group_message("обычное сообщение", chat_id=-200)) is True
++    assert adapter._should_process_message(_group_message("Федя, ты тут?", chat_id=-200)) is True
++    assert adapter._should_process_message(
++        _group_message("@hermes_bot Борис тут?", chat_id=-200, entities=[_mention_entity("@hermes_bot Борис тут?")])
++    ) is True
++
++
+ def test_guest_mode_allows_only_direct_mentions_outside_allowed_chats():
+     adapter = _make_adapter(
+         require_mention=True,
+@@ -643,6 +723,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+         "telegram:\n"
+         "  require_mention: true\n"
+         "  guest_mode: true\n"
++        "  reply_triggers: false\n"
+         "  exclusive_bot_mentions: true\n"
+         "  observe_unmentioned_group_messages: true\n"
+         "  mention_patterns:\n"
+@@ -663,6 +744,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+     monkeypatch.delenv("TELEGRAM_MENTION_PATTERNS", raising=False)
+     monkeypatch.delenv("TELEGRAM_EXCLUSIVE_BOT_MENTIONS", raising=False)
+     monkeypatch.delenv("TELEGRAM_GUEST_MODE", raising=False)
++    monkeypatch.delenv("TELEGRAM_REPLY_TRIGGERS", raising=False)
+     monkeypatch.delenv("TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES", raising=False)
+     monkeypatch.delenv("TELEGRAM_FREE_RESPONSE_CHATS", raising=False)
+     monkeypatch.delenv("TELEGRAM_ALLOWED_CHATS", raising=False)
+@@ -674,6 +756,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
+     assert config is not None
+     assert __import__("os").environ["TELEGRAM_REQUIRE_MENTION"] == "true"
+     assert __import__("os").environ["TELEGRAM_GUEST_MODE"] == "true"
++    assert __import__("os").environ["TELEGRAM_REPLY_TRIGGERS"] == "false"
+     assert __import__("os").environ["TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES"] == "true"
+     assert __import__("os").environ["TELEGRAM_EXCLUSIVE_BOT_MENTIONS"] == "true"
+     assert json.loads(__import__("os").environ["TELEGRAM_MENTION_PATTERNS"]) == [r"^\s*chompy\b"]
+diff --git a/tests/tools/test_send_message_tool.py b/tests/tools/test_send_message_tool.py
+index 81cee1bb1..03b8737b3 100644
+--- a/tests/tools/test_send_message_tool.py
++++ b/tests/tools/test_send_message_tool.py
+@@ -270,6 +270,78 @@ class TestSendMessageTool:
+             force_document=False,
+         )
+ 
++    def test_bare_telegram_target_prefers_current_session_thread(self):
++        home = SimpleNamespace(chat_id="-100home", thread_id="1")
++        config, telegram_cfg = _make_config()
++        config.get_home_channel = lambda _platform: home
++
++        def _session_env(name, default=""):
++            return {
++                "HERMES_SESSION_PLATFORM": "telegram",
++                "HERMES_SESSION_CHAT_ID": "-100current",
++                "HERMES_SESSION_THREAD_ID": "7",
++                "HERMES_SESSION_USER_ID": "user-123",
++            }.get(name, default)
++
++        with patch("gateway.config.load_gateway_config", return_value=config), \
++             patch("tools.interrupt.is_interrupted", return_value=False), \
++             patch("gateway.session_context.get_session_env", side_effect=_session_env), \
++             patch("model_tools._run_async", side_effect=_run_async_immediately), \
++             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
++             patch("gateway.mirror.mirror_to_session", return_value=True):
++            result = json.loads(
++                send_message_tool(
++                    {
++                        "action": "send",
++                        "target": "telegram",
++                        "message": "hello",
++                    }
++                )
++            )
++
++        assert result["success"] is True
++        send_mock.assert_awaited_once_with(
++            Platform.TELEGRAM,
++            telegram_cfg,
++            "-100current",
++            "hello",
++            thread_id="7",
++            media_files=[],
++            force_document=False,
++        )
++
++    def test_bare_telegram_target_preserves_home_channel_thread(self):
++        home = SimpleNamespace(chat_id="-100home", thread_id="7")
++        config, telegram_cfg = _make_config()
++        config.get_home_channel = lambda _platform: home
++
++        with patch("gateway.config.load_gateway_config", return_value=config), \
++             patch("tools.interrupt.is_interrupted", return_value=False), \
++             patch("gateway.session_context.get_session_env", return_value=""), \
++             patch("model_tools._run_async", side_effect=_run_async_immediately), \
++             patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})) as send_mock, \
++             patch("gateway.mirror.mirror_to_session", return_value=True):
++            result = json.loads(
++                send_message_tool(
++                    {
++                        "action": "send",
++                        "target": "telegram",
++                        "message": "hello",
++                    }
++                )
++            )
++
++        assert result["success"] is True
++        send_mock.assert_awaited_once_with(
++            Platform.TELEGRAM,
++            telegram_cfg,
++            "-100home",
++            "hello",
++            thread_id="7",
++            media_files=[],
++            force_document=False,
++        )
++
+     def test_display_label_target_resolves_via_channel_directory(self, tmp_path):
+         config, telegram_cfg = _make_config()
+         cache_file = tmp_path / "channel_directory.json"
+diff --git a/tools/send_message_tool.py b/tools/send_message_tool.py
+index 72311f87c..1e11afd2e 100644
+--- a/tools/send_message_tool.py
++++ b/tools/send_message_tool.py
+@@ -377,6 +377,23 @@ def _handle_send(args):
+     mirror_text = cleaned_message.strip() or _describe_media_for_mirror(media_files)
+ 
+     used_home_channel = False
++    if not chat_id and not target_ref:
++        # In a gateway conversation, a bare same-platform target such as
++        # target="telegram" should send back to the current chat/thread.
++        # Falling through to the platform home channel drops Telegram forum
++        # thread_id and can make attachments appear in the wrong topic.
++        try:
++            from gateway.session_context import get_session_env
++
++            session_platform = get_session_env("HERMES_SESSION_PLATFORM", "")
++            session_chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
++            session_thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "")
++            if session_platform == platform_name and session_chat_id:
++                chat_id = session_chat_id
++                thread_id = session_thread_id or None
++        except Exception:
++            pass
++
+     if not chat_id:
+         home = config.get_home_channel(platform)
+         if not home and platform_name == "weixin":
+@@ -386,6 +403,8 @@ def _handle_send(args):
+                 home = HomeChannel(platform=platform, chat_id=wx_home, name="Weixin Home")
+         if home:
+             chat_id = home.chat_id
++            if thread_id is None:
++                thread_id = getattr(home, "thread_id", None) or None
+             used_home_channel = True
+         else:
+             home_env = _HOME_CHANNEL_ENV_OVERRIDES.get(

@@ -1,0 +1,7 @@
+{
+  "name": "v2026.6.19-provider-proxy",
+  "patches": [
+    "api-server-provider-proxy",
+    "api-server-fallback-model-kwarg"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "v2026.6.19-upstream-fixes",
+  "patches": [
+    "auth-profile-root-fallback",
+    "credential-pool-recovery",
+    "telegram-free-response-target-gating",
+    "homeassistant-tool-config-url",
+    "gateway-document-media-types",
+    "provider-plugin-model-switch",
+    "gateway-explicit-media-delivery-safety",
+    "api-server-fallback-model-kwarg",
+    "gateway-auto-reset-context-continuity"
+  ]
+}

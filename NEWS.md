@@ -1,5 +1,23 @@
 # News
 
+## 2026-06-20 — Hermes 0.17 re-anchor
+
+PatchKit is now refreshed against official Hermes Agent `v2026.6.19` / `0.17.0`. The active release manifest is `manifests/upstream-v2026.6.19.yaml`; release patch files live under `patches/v2026.6.19/`.
+
+Retirement audit: `061-codex-auxiliary-tool-role-flattening` and `095-gateway-busy-text-compat` are no longer carried as standalone units because upstream 0.17 absorbed those behaviors. The personal profile now carries 14 active units.
+
+---
+
+# Новости
+
+## 2026-06-20 — Re-anchor на Hermes 0.17
+
+PatchKit refresh'нут against official Hermes Agent `v2026.6.19` / `0.17.0`. Активный release manifest: `manifests/upstream-v2026.6.19.yaml`; release patch files лежат в `patches/v2026.6.19/`.
+
+Retirement audit: `061-codex-auxiliary-tool-role-flattening` и `095-gateway-busy-text-compat` больше не несутся как отдельные units, потому что upstream 0.17 поглотил это поведение. Personal profile теперь содержит 14 active units.
+
+---
+
 ## 2026-05-16 — Hermes 0.14 re-anchor and Grok sidecar retirement path
 
 PatchKit is now refreshed against official Hermes Agent `v2026.5.16` / `0.14.0`. The active core profile stays release-pinned and uses `manifests/upstream-v2026.5.16.yaml` with `profiles/v2026.5.16-personal.yaml`.

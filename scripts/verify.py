@@ -17,6 +17,7 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'manifests/upstream-v2026.5.16.yaml',
         repo_root / 'manifests/upstream-v2026.5.29.yaml',
         repo_root / 'manifests/upstream-v2026.6.5.yaml',
+        repo_root / 'manifests/upstream-v2026.6.19.yaml',
         repo_root / 'profiles/minimal.yaml',
         repo_root / 'profiles/v2026.4.30-upstream-fixes.yaml',
         repo_root / 'profiles/v2026.4.30-personal.yaml',
@@ -31,6 +32,9 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'profiles/v2026.6.5-upstream-fixes.yaml',
         repo_root / 'profiles/v2026.6.5-personal.yaml',
         repo_root / 'profiles/v2026.6.5-provider-proxy.yaml',
+        repo_root / 'profiles/v2026.6.19-upstream-fixes.yaml',
+        repo_root / 'profiles/v2026.6.19-personal.yaml',
+        repo_root / 'profiles/v2026.6.19-provider-proxy.yaml',
         repo_root / 'scripts/apply.py',
         repo_root / 'scripts/migrate_profile_config.py',
         repo_root / 'scripts/install_operator_policy.py',
@@ -49,6 +53,7 @@ def verify_self(repo_root: Path) -> None:
     load_manifest(repo_root / 'manifests/upstream-v2026.5.16.yaml')
     load_manifest(repo_root / 'manifests/upstream-v2026.5.29.yaml')
     load_manifest(repo_root / 'manifests/upstream-v2026.6.5.yaml')
+    load_manifest(repo_root / 'manifests/upstream-v2026.6.19.yaml')
     load_profile(repo_root / 'profiles/minimal.yaml')
     load_profile(repo_root / 'profiles/personal.yaml')
     load_profile(repo_root / 'profiles/full.yaml')
@@ -65,6 +70,9 @@ def verify_self(repo_root: Path) -> None:
     load_profile(repo_root / 'profiles/v2026.6.5-upstream-fixes.yaml')
     load_profile(repo_root / 'profiles/v2026.6.5-personal.yaml')
     load_profile(repo_root / 'profiles/v2026.6.5-provider-proxy.yaml')
+    load_profile(repo_root / 'profiles/v2026.6.19-upstream-fixes.yaml')
+    load_profile(repo_root / 'profiles/v2026.6.19-personal.yaml')
+    load_profile(repo_root / 'profiles/v2026.6.19-provider-proxy.yaml')
 
     for script in (repo_root / 'scripts').glob('*.py'):
         py_compile.compile(str(script), doraise=True)

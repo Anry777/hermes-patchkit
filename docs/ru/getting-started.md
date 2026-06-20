@@ -38,7 +38,7 @@ python3 scripts/update.py \
 python3 scripts/doctor.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening
+  --patch gateway-explicit-media-delivery-safety
 ```
 
 ## 4. Посмотри один real exported patch в dry-run
@@ -47,7 +47,7 @@ python3 scripts/doctor.py \
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
+  --patch gateway-explicit-media-delivery-safety \
   --dry-run
 ```
 
@@ -57,7 +57,7 @@ python3 scripts/apply.py \
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
+  --patch gateway-explicit-media-delivery-safety \
   --yes
 ```
 

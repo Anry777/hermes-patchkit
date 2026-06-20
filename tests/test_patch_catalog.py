@@ -14,12 +14,14 @@ RELEASE_2026_4_30_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.4.30.yaml
 RELEASE_2026_5_16_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.16.yaml"
 RELEASE_2026_5_29_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.29.yaml"
 RELEASE_2026_6_5_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.6.5.yaml"
+RELEASE_2026_6_19_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.6.19.yaml"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
 RELEASE_2026_5_16_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.16"
 RELEASE_2026_5_29_PATCH_DIR = REPO_ROOT / "patches" / "v2026.5.29"
 RELEASE_2026_6_5_PATCH_DIR = REPO_ROOT / "patches" / "v2026.6.5"
+RELEASE_2026_6_19_PATCH_DIR = REPO_ROOT / "patches" / "v2026.6.19"
 RELEASE_MAX_PLATFORM_PLUGIN_PATCH = RELEASE_2026_4_30_PATCH_DIR / "070-max-platform-plugin.patch"
 MAX_FILE_ATTACHMENTS_PATCH = REPO_ROOT / "patches" / "075-max-gateway-file-attachments.patch"
 MAX_MEDIA_DIRECTIVE_SAFETY_PATCH = REPO_ROOT / "patches" / "076-max-media-directive-safety.patch"
@@ -270,6 +272,57 @@ class PatchCatalogTests(unittest.TestCase):
         explicit_media_patch_text = (RELEASE_2026_6_5_PATCH_DIR / "097-gateway-explicit-media-delivery-safety.patch").read_text(encoding="utf-8")
         self.assertIn("auto_upload_local_paths", explicit_media_patch_text)
         self.assertIn("test_auto_upload_local_paths", explicit_media_patch_text)
+
+    def test_v2026_6_19_manifest_is_pinned_to_hermes_0_17_and_retires_absorbed_units(self):
+        manifest = json.loads(RELEASE_2026_6_19_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.6.19")
+        self.assertEqual(manifest["upstream"]["commit"], "2bd1977d8fad185c9b4be47884f7e87f1add0ce3")
+
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertEqual(
+            ids,
+            [
+                "auth-profile-root-fallback",
+                "credential-pool-recovery",
+                "telegram-free-response-target-gating",
+                "homeassistant-tool-config-url",
+                "max-platform-plugin",
+                "api-server-provider-proxy",
+                "lsp-configured-websocket-transport",
+                "email-smtp-ssl",
+                "gateway-document-media-types",
+                "neurogate-provider-plugin",
+                "provider-plugin-model-switch",
+                "gateway-explicit-media-delivery-safety",
+                "api-server-fallback-model-kwarg",
+                "gateway-auto-reset-context-continuity",
+            ],
+        )
+        retired_ids = [entry["id"] for entry in manifest.get("retired_patches", [])]
+        self.assertIn("codex-auxiliary-tool-role-flattening", retired_ids)
+        self.assertIn("gateway-busy-text-compat", retired_ids)
+
+        for entry in manifest["patches"]:
+            self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
+            self.assertEqual(entry["refreshed_for"], "v2026.6.19")
+            self.assertTrue(entry["file"].startswith("patches/v2026.6.19/"))
+            patch_text = (REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git", patch_text)
+            self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+
+        personal_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-personal.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(personal_profile["patches"], ids)
+        upstream_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-upstream-fixes.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("codex-auxiliary-tool-role-flattening", upstream_profile["patches"])
+        self.assertNotIn("gateway-busy-text-compat", upstream_profile["patches"])
+        provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-provider-proxy.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(provider_profile["patches"], ["api-server-provider-proxy", "api-server-fallback-model-kwarg"])
+
+        auxiliary_patch = RELEASE_2026_6_19_PATCH_DIR / "061-codex-auxiliary-tool-role-flattening.patch"
+        busy_patch = RELEASE_2026_6_19_PATCH_DIR / "095-gateway-busy-text-compat.patch"
+        self.assertFalse(auxiliary_patch.exists())
+        self.assertFalse(busy_patch.exists())
 
     def test_max_file_attachments_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

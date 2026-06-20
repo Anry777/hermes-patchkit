@@ -15,9 +15,10 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Changed
-- re-anchored PatchKit to Hermes Agent `v2026.6.5` / `0.16.0`, adding `manifests/upstream-v2026.6.5.yaml`, release profiles, and refreshed `patches/v2026.6.5/` exports.
-- retired `094-root-home-media-delivery` for `v2026.6.5`: upstream 0.16 absorbed the active `/root` media-delivery behavior while keeping credential paths blocked.
-- shrunk `092-gateway-document-media-types` for upstream 0.16 media allowlists while keeping `.epf`/`.cfe`, shared cleanup aliases, and Windows explicit `MEDIA:` path coverage.
+- re-anchored PatchKit to Hermes Agent `v2026.6.19` / `0.17.0`, adding `manifests/upstream-v2026.6.19.yaml`, release profiles, and refreshed `patches/v2026.6.19/` exports.
+- retired `061-codex-auxiliary-tool-role-flattening` for `v2026.6.19`: upstream 0.17 absorbed the auxiliary Codex Responses role-flattening path through the shared chat-to-Responses converter.
+- retired `095-gateway-busy-text-compat` for `v2026.6.19`: upstream 0.17 keeps the busy-text fallback semantics without a standalone PatchKit unit.
+- kept the `v2026.6.5` retirement/shrink decisions for `094-root-home-media-delivery` and `092-gateway-document-media-types` while re-exporting the surviving units for 0.17.
 
 ### Fixed
 - `030-credential-pool-recovery`: makes `credential_pool.openai-codex` the canonical runtime account list for Codex. Once pool entries exist, exhausted/dead/empty pool state is no longer bypassed via legacy `providers.openai-codex.tokens`; the singleton remains only a migration fallback when the pool slice is absent. Expired pool access tokens are refreshed in-place, terminal refresh failures mark only that pool entry dead instead of falling through to singleton credentials, and stale runtime pool writers merge only changed entries so they cannot undo a concurrent `hermes auth reset` on sibling credentials.

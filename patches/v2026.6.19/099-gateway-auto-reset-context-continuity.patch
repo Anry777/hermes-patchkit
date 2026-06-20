@@ -1,0 +1,270 @@
+diff --git a/gateway/run.py b/gateway/run.py
+index dfd5f2800..ad68fc3ef 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -8884,8 +8884,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+         # so the agent knows this is a fresh conversation (not an intentional /reset).
+         if getattr(session_entry, 'was_auto_reset', False):
+             reset_reason = getattr(session_entry, 'auto_reset_reason', None) or 'idle'
++            reset_parent_id = getattr(session_entry, 'parent_session_id', None)
+             if reset_reason == "suspended":
+                 context_note = "[System note: The user's previous session was stopped and suspended. This is a fresh conversation with no prior context.]"
++            elif reset_parent_id:
++                context_note = (
++                    "[System note: The user's session was automatically reset, "
++                    "and the previous transcript has been rehydrated into the "
++                    "conversation history. Continue from the prior context.]"
++                )
+             elif reset_reason == "daily":
+                 context_note = "[System note: The user's session was automatically reset by the daily schedule. This is a fresh conversation with no prior context.]"
+             else:
+@@ -8923,6 +8930,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                             duration = f"{hours}h" if not mins else f"{hours}h {mins}m" if hours else f"{mins}m"
+                             reason_text = f"inactive for {duration}"
+                         notice = (
++                            f"◐ Session automatically reset ({reason_text}). "
++                            f"Conversation history restored automatically.\n"
++                            f"Use /resume to browse or switch to another previous session.\n"
++                            f"Adjust reset timing in config.yaml under session_reset."
++                        ) if reset_parent_id else (
+                             f"◐ Session automatically reset ({reason_text}). "
+                             f"Conversation history cleared.\n"
+                             f"Use /resume to browse and restore a previous session.\n"
+@@ -8980,8 +8992,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             except Exception as e:
+                 logger.warning("[Gateway] Failed to auto-load skill(s) %s: %s", _skill_names, e)
+ 
+-        # Load conversation history from transcript
+-        history = self.session_store.load_transcript(session_entry.session_id)
++        # Load conversation history from transcript.  For gateway daily/idle
++        # auto-reset children, prepend reset-parent transcripts so the chat
++        # continues automatically instead of requiring a manual /resume.
++        history = self.session_store.load_transcript(
++            session_entry.session_id,
++            include_reset_parents=True,
++        )
+         
+         # -----------------------------------------------------------------
+         # Session hygiene: auto-compress pathologically large transcripts
+diff --git a/gateway/session.py b/gateway/session.py
+index 629e4b123..5fafdf2cd 100644
+--- a/gateway/session.py
++++ b/gateway/session.py
+@@ -492,6 +492,7 @@ class SessionEntry:
+     was_auto_reset: bool = False
+     auto_reset_reason: Optional[str] = None  # "idle" or "daily"
+     reset_had_activity: bool = False  # whether the expired session had any messages
++    parent_session_id: Optional[str] = None  # expired session continued by this auto-reset child
+ 
+     # Set by reset_session() when the user explicitly sends /new or /reset.
+     # Consumed once by _handle_message_with_agent to trigger topic/channel
+@@ -555,6 +556,7 @@ class SessionEntry:
+             "was_auto_reset": self.was_auto_reset,
+             "auto_reset_reason": self.auto_reset_reason,
+             "reset_had_activity": self.reset_had_activity,
++            "parent_session_id": self.parent_session_id,
+         }
+         if self.origin:
+             result["origin"] = self.origin.to_dict()
+@@ -607,6 +609,7 @@ class SessionEntry:
+             was_auto_reset=data.get("was_auto_reset", False),
+             auto_reset_reason=data.get("auto_reset_reason"),
+             reset_had_activity=data.get("reset_had_activity", False),
++            parent_session_id=data.get("parent_session_id"),
+         )
+ 
+ 
+@@ -1026,6 +1029,11 @@ class SessionStore:
+                 was_auto_reset=was_auto_reset,
+                 auto_reset_reason=auto_reset_reason,
+                 reset_had_activity=reset_had_activity,
++                parent_session_id=(
++                    db_end_session_id
++                    if was_auto_reset and auto_reset_reason in {"idle", "daily"}
++                    else None
++                ),
+             )
+ 
+             self._entries[session_key] = entry
+@@ -1035,6 +1043,8 @@ class SessionStore:
+                 "source": source.platform.value,
+                 "user_id": source.user_id,
+             }
++            if was_auto_reset and auto_reset_reason in {"idle", "daily"} and db_end_session_id:
++                db_create_kwargs["parent_session_id"] = db_end_session_id
+ 
+         # SQLite operations outside the lock
+         if self._db and db_end_session_id:
+@@ -1403,16 +1413,69 @@ class SessionStore:
+             except Exception as e:
+                 logger.debug("Failed to rewrite transcript in DB: %s", e)
+ 
+-    def load_transcript(self, session_id: str) -> List[Dict[str, Any]]:
++    def _reset_parent_session_ids(self, session_id: str) -> List[str]:
++        """Return reset-continuity session ids from oldest parent to *session_id*.
++
++        Only follows parent links created by gateway auto-reset. Compression
++        parentage is intentionally not expanded: compressed child sessions
++        already contain the summary that should be replayed, and loading their
++        full ancestors would reintroduce the oversized transcript that
++        compression split away.
++        """
++        if not self._db or not session_id:
++            return [session_id]
++
++        chain = [session_id]
++        current = session_id
++        seen = {session_id}
++        for _ in range(100):
++            try:
++                current_row = self._db.get_session(current)
++            except Exception as e:
++                logger.debug("Could not inspect session reset parent for %s: %s", current, e)
++                break
++            if not current_row:
++                break
++            parent_id = current_row.get("parent_session_id")
++            if not parent_id or parent_id in seen:
++                break
++            try:
++                parent_row = self._db.get_session(parent_id)
++            except Exception as e:
++                logger.debug("Could not inspect parent session %s: %s", parent_id, e)
++                break
++            if not parent_row or parent_row.get("end_reason") != "session_reset":
++                break
++            chain.append(parent_id)
++            seen.add(parent_id)
++            current = parent_id
++        return list(reversed(chain))
++
++    def load_transcript(
++        self,
++        session_id: str,
++        *,
++        include_reset_parents: bool = False,
++    ) -> List[Dict[str, Any]]:
+         """Load all messages from a session's transcript.
+ 
+         state.db is the canonical store. The legacy JSONL fallback was removed
+         in spec 002 — pre-DB sessions on existing disks have already been
+         migrated (their DB row holds the full message history).
++
++        When ``include_reset_parents`` is true, prepend transcripts from
++        gateway auto-reset parents (``end_reason='session_reset'``) so a
++        daily/idle reset remains conversationally continuous. Non-reset
++        parent links, especially compression splits, are not expanded.
+         """
+         if not self._db:
+             return []
+         try:
++            if include_reset_parents:
++                messages: List[Dict[str, Any]] = []
++                for sid in self._reset_parent_session_ids(session_id):
++                    messages.extend(self._db.get_messages_as_conversation(sid))
++                return messages
+             return self._db.get_messages_as_conversation(session_id)
+         except Exception as e:
+             logger.debug("Could not load messages from DB: %s", e)
+diff --git a/tests/gateway/test_session_reset_notify.py b/tests/gateway/test_session_reset_notify.py
+index c73ed640c..6bf99b8f3 100644
+--- a/tests/gateway/test_session_reset_notify.py
++++ b/tests/gateway/test_session_reset_notify.py
+@@ -8,6 +8,7 @@ Verifies that:
+ """
+ 
+ from datetime import datetime, timedelta
++from unittest.mock import patch
+ 
+ 
+ from gateway.config import (
+@@ -16,6 +17,7 @@ from gateway.config import (
+     SessionResetPolicy,
+ )
+ from gateway.session import SessionEntry, SessionSource, SessionStore
++from hermes_state import SessionDB
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -162,6 +164,81 @@ class TestSessionEntryReason:
+         assert entry2.was_auto_reset is True
+         assert entry2.reset_had_activity is True
+ 
++    def test_auto_reset_records_parent_session_id_in_entry_and_db(self, tmp_path):
++        """Auto-reset children must point back to the expired session."""
++        config = GatewayConfig(
++            default_reset_policy=SessionResetPolicy(mode="idle", idle_minutes=1)
++        )
++        with patch("gateway.session.SessionStore._ensure_loaded"):
++            store = SessionStore(sessions_dir=tmp_path / "sessions", config=config)
++        db = SessionDB(db_path=tmp_path / "state.db")
++        store._db = db
++        store._loaded = True
++        source = _make_source()
++
++        entry1 = store.get_or_create_session(source)
++        entry1.total_tokens = 5000
++        entry1.updated_at = datetime.now() - timedelta(minutes=5)
++        store._save()
++
++        entry2 = store.get_or_create_session(source)
++
++        assert entry2.was_auto_reset is True
++        assert entry2.parent_session_id == entry1.session_id
++        assert db.get_session(entry2.session_id)["parent_session_id"] == entry1.session_id
++        db.close()
++
++    def test_load_transcript_with_reset_parents_rehydrates_auto_reset_parent(self, tmp_path):
++        """Gateway turns after auto-reset should see the previous transcript."""
++        config = GatewayConfig(
++            default_reset_policy=SessionResetPolicy(mode="idle", idle_minutes=1)
++        )
++        with patch("gateway.session.SessionStore._ensure_loaded"):
++            store = SessionStore(sessions_dir=tmp_path / "sessions", config=config)
++        db = SessionDB(db_path=tmp_path / "state.db")
++        store._db = db
++        store._loaded = True
++        source = _make_source()
++
++        entry1 = store.get_or_create_session(source)
++        store.append_to_transcript(entry1.session_id, {"role": "user", "content": "remember old context"})
++        store.append_to_transcript(entry1.session_id, {"role": "assistant", "content": "old answer"})
++        entry1.total_tokens = 5000
++        entry1.updated_at = datetime.now() - timedelta(minutes=5)
++        store._save()
++
++        entry2 = store.get_or_create_session(source)
++        store.append_to_transcript(entry2.session_id, {"role": "user", "content": "morning follow-up"})
++
++        plain = store.load_transcript(entry2.session_id)
++        restored = store.load_transcript(entry2.session_id, include_reset_parents=True)
++
++        assert [m["content"] for m in plain] == ["morning follow-up"]
++        assert [m["content"] for m in restored] == [
++            "remember old context",
++            "old answer",
++            "morning follow-up",
++        ]
++        db.close()
++
++    def test_load_transcript_with_reset_parents_ignores_compression_parent(self, tmp_path):
++        """Compression ancestry must not be expanded by the reset-continuity path."""
++        with patch("gateway.session.SessionStore._ensure_loaded"):
++            store = SessionStore(sessions_dir=tmp_path / "sessions", config=GatewayConfig())
++        db = SessionDB(db_path=tmp_path / "state.db")
++        store._db = db
++        store._loaded = True
++        db.create_session("parent", source="telegram")
++        db.append_message("parent", role="user", content="huge pre-compression transcript")
++        db.end_session("parent", "compression")
++        db.create_session("child", source="telegram", parent_session_id="parent")
++        db.append_message("child", role="user", content="compressed summary session")
++
++        restored = store.load_transcript("child", include_reset_parents=True)
++
++        assert [m["content"] for m in restored] == ["compressed summary session"]
++        db.close()
++
+ 
+ # ---------------------------------------------------------------------------
+ # SessionResetPolicy notify config

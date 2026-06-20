@@ -38,7 +38,7 @@ This checks patches against a temporary upstream clone and writes a report under
 python3 scripts/doctor.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening
+  --patch gateway-explicit-media-delivery-safety
 ```
 
 ## 4. Preview one real exported patch
@@ -47,7 +47,7 @@ python3 scripts/doctor.py \
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
+  --patch gateway-explicit-media-delivery-safety \
   --dry-run
 ```
 
@@ -57,7 +57,7 @@ python3 scripts/apply.py \
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
   --manifest manifests/upstream-v2026.5.16.yaml \
-  --patch codex-auxiliary-tool-role-flattening \
+  --patch gateway-explicit-media-delivery-safety \
   --yes
 ```
 
