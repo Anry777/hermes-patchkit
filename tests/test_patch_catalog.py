@@ -283,6 +283,7 @@ class PatchCatalogTests(unittest.TestCase):
         self.assertEqual(
             ids,
             [
+                "cli-tui-idle-refresh-fix",
                 "auth-profile-root-fallback",
                 "credential-pool-recovery",
                 "telegram-free-response-target-gating",
@@ -315,6 +316,7 @@ class PatchCatalogTests(unittest.TestCase):
         personal_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-personal.yaml").read_text(encoding="utf-8"))
         self.assertEqual(personal_profile["patches"], ids)
         upstream_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-upstream-fixes.yaml").read_text(encoding="utf-8"))
+        self.assertIn("cli-tui-idle-refresh-fix", upstream_profile["patches"])
         self.assertNotIn("codex-auxiliary-tool-role-flattening", upstream_profile["patches"])
         self.assertNotIn("gateway-busy-text-compat", upstream_profile["patches"])
         provider_profile = json.loads((REPO_ROOT / "profiles" / "v2026.6.19-provider-proxy.yaml").read_text(encoding="utf-8"))
@@ -322,6 +324,10 @@ class PatchCatalogTests(unittest.TestCase):
 
         auxiliary_patch = RELEASE_2026_6_19_PATCH_DIR / "061-codex-auxiliary-tool-role-flattening.patch"
         busy_patch = RELEASE_2026_6_19_PATCH_DIR / "095-gateway-busy-text-compat.patch"
+        idle_patch = RELEASE_2026_6_19_PATCH_DIR / "010-cli-tui-idle-refresh-fix.patch"
+        idle_patch_text = idle_patch.read_text(encoding="utf-8")
+        self.assertIn('"cli_refresh_interval": 0', idle_patch_text)
+        self.assertIn("test_default_config_disables_cli_refresh_interval", idle_patch_text)
         self.assertFalse(auxiliary_patch.exists())
         self.assertFalse(busy_patch.exists())
 

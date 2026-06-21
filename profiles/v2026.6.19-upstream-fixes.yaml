@@ -1,6 +1,7 @@
 {
   "name": "v2026.6.19-upstream-fixes",
   "patches": [
+    "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
     "credential-pool-recovery",
     "telegram-free-response-target-gating",

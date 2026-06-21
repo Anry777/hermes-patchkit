@@ -1,5 +1,23 @@
 # News
 
+## 2026-06-21 — Classic CLI scrollback-safe idle refresh default restored
+
+PatchKit carries `010-cli-tui-idle-refresh-fix` again for the Hermes `v2026.6.19` / `0.17.0` release line. Upstream 0.17 kept the `display.cli_refresh_interval` config knob, but changed the default back to `1.0` so the idle status bar keeps ticking. On terminals with auto-scroll-on-output, that one-second prompt_toolkit repaint pulls mouse-wheel scrollback back to the bottom while the agent is idle.
+
+PatchKit's release profile now sets the default back to `0`. Existing profile configs can still carry an explicit `display.cli_refresh_interval: 1.0`, which overrides the patched default; normalize those profiles with `hermes --profile <profile> config set display.cli_refresh_interval 0`. Operators who prefer the ticking idle timer can still opt in by setting a positive `display.cli_refresh_interval` in their profile config.
+
+---
+
+# Новости
+
+## 2026-06-21 — Вернули scrollback-safe default для idle refresh в classic CLI
+
+PatchKit снова несёт `010-cli-tui-idle-refresh-fix` для release line Hermes `v2026.6.19` / `0.17.0`. В upstream 0.17 остался config knob `display.cli_refresh_interval`, но default вернули на `1.0`, чтобы idle status bar тикал. В терминалах с auto-scroll-on-output этот prompt_toolkit repaint раз в секунду тянет mouse-wheel scrollback обратно вниз, пока агент idle.
+
+PatchKit release profile теперь возвращает default в `0`. Но существующие profile configs могут уже явно содержать `display.cli_refresh_interval: 1.0`, и такой explicit value перекрывает patched default; нормализуй такие профили командой `hermes --profile <profile> config set display.cli_refresh_interval 0`. Если нужен ticking idle timer, operator всё ещё может явно поставить positive `display.cli_refresh_interval` в profile config.
+
+---
+
 ## 2026-06-21 — Experimental MAX userbot gateway via PyMax
 
 PatchKit now carries `078-max-userbot-platform-plugin`, a separate experimental `max_userbot` gateway plugin backed by MaxApiTeam/PyMax (`maxapi-python`). This is for deployments where official MAX Bot API bot creation is unavailable, but a user-account integration is acceptable.

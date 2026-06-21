@@ -7,6 +7,35 @@
   },
   "patches": [
     {
+      "id": "cli-tui-idle-refresh-fix",
+      "file": "patches/v2026.6.19/010-cli-tui-idle-refresh-fix.patch",
+      "title_en": "Disable idle CLI repaint by default",
+      "title_ru": "Отключить idle repaint CLI по умолчанию",
+      "description_en": "Restores PatchKit's scrollback-safe classic CLI default on Hermes 0.17 by setting display.cli_refresh_interval to 0; operators can opt back into upstream's ticking idle status bar with a positive interval.",
+      "description_ru": "Возвращает PatchKit scrollback-safe default для classic CLI на Hermes 0.17: display.cli_refresh_interval = 0; при желании upstream ticking idle status bar можно включить positive interval.",
+      "category": "cli",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "exported_from": "hermes-017-idle-refresh-fix-20260621",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_config.py::TestCliRefreshIntervalConfig::test_default_config_disables_cli_refresh_interval"
+        ]
+      },
+      "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
+      "refreshed_for": "v2026.6.19",
+      "impact": [
+        "Classic CLI no longer emits prompt_toolkit idle redraw output once per second by default.",
+        "Mouse-wheel scrollback stays at the user's viewport while the agent is idle on auto-scroll-on-output terminals.",
+        "Operators who prefer upstream's ticking idle status bar can set display.cli_refresh_interval to a positive number.",
+        "Existing profile config files with an explicit display.cli_refresh_interval value override the patched default; normalize them to 0 when activating the unit."
+      ]
+    },
+    {
       "id": "auth-profile-root-fallback",
       "file": "patches/v2026.6.19/020-auth-profile-root-fallback.patch",
       "title_en": "Shared root auth.json for profiles",

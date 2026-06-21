@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: PatchKit is re-anchored to Hermes Agent `v2026.6.19` / `0.17.0`, and now also carries `078-max-userbot-platform-plugin`: an experimental PyMax-backed MAX userbot gateway for user-account access when official Bot API bot creation is unavailable. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.6.19` / `0.17.0`, carries `010-cli-tui-idle-refresh-fix` again so classic CLI scrollback is not pulled down by idle repaint, and now also carries `078-max-userbot-platform-plugin`: an experimental PyMax-backed MAX userbot gateway for user-account access when official Bot API bot creation is unavailable. Existing profiles that explicitly set `display.cli_refresh_interval: 1.0` should be normalized to `0`. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
