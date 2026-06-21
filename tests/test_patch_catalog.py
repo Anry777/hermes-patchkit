@@ -288,6 +288,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "telegram-free-response-target-gating",
                 "homeassistant-tool-config-url",
                 "max-platform-plugin",
+                "max-userbot-platform-plugin",
                 "api-server-provider-proxy",
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",

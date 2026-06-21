@@ -156,6 +156,32 @@
       "refreshed_for": "v2026.6.19"
     },
     {
+      "id": "max-userbot-platform-plugin",
+      "file": "patches/v2026.6.19/078-max-userbot-platform-plugin.patch",
+      "title_en": "MAX userbot platform plugin",
+      "title_ru": "Platform plugin MAX userbot",
+      "description_en": "Adds an experimental MAX userbot gateway platform plugin backed by MaxApiTeam/PyMax (maxapi-python): profile-local session storage, TCP/WebClient bootstrap paths, allowlists, text/reply/edit, media mapping, PyMax file delivery, edit-friendly progress, inline approval payloads, and session locking. This is intentionally separate from the official MAX Bot API plugin.",
+      "description_ru": "Добавляет experimental MAX userbot gateway platform plugin на базе MaxApiTeam/PyMax (maxapi-python): profile-local session storage, TCP/WebClient bootstrap paths, allowlists, text/reply/edit, media mapping, PyMax file delivery, edit-friendly progress, inline approval payloads и session locking. Намеренно отдельно от официального MAX Bot API plugin.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/plugins/test_max_userbot_platform_plugin.py",
+          "tests/plugins/test_max_platform_plugin.py",
+          "tests/gateway/test_platform_registry.py"
+        ],
+        "dependency_probe": "With maxapi-python==2.3.1 installed in an isolated target, imported pymax Client/WebClient/File/Photo/Video and check_max_userbot_requirements() returned True."
+      },
+      "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
+      "refreshed_for": "v2026.6.19",
+      "exported_from": "runtime-upstream-v2026.6.19"
+    },
+    {
       "id": "api-server-provider-proxy",
       "file": "patches/v2026.6.19/080-api-server-provider-proxy.patch",
       "title_en": "API Server provider proxy mode",
