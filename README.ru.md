@@ -7,7 +7,7 @@
 Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
 Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
 
-Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.6.19` / `0.17.0`. Codex auxiliary tool-role flattening и busy-text compatibility units retired, потому что upstream поглотил их. Старый Grok2API sidecar bridge теперь legacy fallback; для Grok/SuperGrok предпочитаем upstream-native `xai` / `xai-oauth`. См. [NEWS.md](NEWS.md).
+Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.6.19` / `0.17.0`, а теперь ещё несёт `078-max-userbot-platform-plugin`: experimental MAX userbot gateway через PyMax для доступа через user account, когда official Bot API bot создать нельзя. Старый Grok2API sidecar bridge теперь legacy fallback; для Grok/SuperGrok предпочитаем upstream-native `xai` / `xai-oauth`. См. [NEWS.md](NEWS.md).
 
 ## Главный patch сейчас: Provider Proxy Gateway
 
@@ -101,6 +101,7 @@ PatchKit возвращает эту границу:
 - `v2026.5.16` / Hermes 0.14 re-anchor — активные core overlays refresh'нуты against official release tag. Grok2API sidecar оставлен в docs как legacy fallback, не как active default path.
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов. IDE path покрывает streaming, tool calls, inline images, RooCode `reasoning_effort` и фильтрацию Codex sampling parameters.
 - `070-max-platform-plugin` — release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval-кнопки и компактный edit-in-place tool progress без raw non-verbose command previews.
+- `078-max-userbot-platform-plugin` — отдельный experimental MAX userbot plugin через MaxApiTeam/PyMax (`maxapi-python`) для user-account access: profile-local sessions, session locking, allowlists, replies/edits, media mapping, file delivery и approval payloads.
 
 ## Быстрый старт
 

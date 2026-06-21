@@ -1,5 +1,23 @@
 # News
 
+## 2026-06-21 — Experimental MAX userbot gateway via PyMax
+
+PatchKit now carries `078-max-userbot-platform-plugin`, a separate experimental `max_userbot` gateway plugin backed by MaxApiTeam/PyMax (`maxapi-python`). This is for deployments where official MAX Bot API bot creation is unavailable, but a user-account integration is acceptable.
+
+The unit is intentionally separate from the official `070-max-platform-plugin`: it stores PyMax sessions profile-locally, locks the session file, supports TCP/WebClient bootstrap paths, allowlists, text/reply/edit, media mapping, PyMax file delivery, progress edits, and inline approval payloads. It uses MAX internal APIs rather than the official Bot API, so live use requires operator risk acceptance and a real account SMS/QR bootstrap.
+
+---
+
+# Новости
+
+## 2026-06-21 — Experimental MAX userbot gateway через PyMax
+
+PatchKit теперь несёт `078-max-userbot-platform-plugin`: отдельный experimental `max_userbot` gateway plugin на базе MaxApiTeam/PyMax (`maxapi-python`). Это вариант для случаев, когда official MAX Bot API bot создать нельзя, но допустима интеграция через user account.
+
+Unit намеренно отделён от official `070-max-platform-plugin`: PyMax sessions хранятся profile-local, session file блокируется lock'ом, поддержаны TCP/WebClient bootstrap paths, allowlists, text/reply/edit, media mapping, PyMax file delivery, progress edits и inline approval payloads. Это internal MAX API, а не official Bot API, поэтому live use требует operator risk acceptance и реальный SMS/QR bootstrap аккаунта.
+
+---
+
 ## 2026-06-20 — Hermes 0.17 re-anchor
 
 PatchKit is now refreshed against official Hermes Agent `v2026.6.19` / `0.17.0`. The active release manifest is `manifests/upstream-v2026.6.19.yaml`; release patch files live under `patches/v2026.6.19/`.

@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: PatchKit is re-anchored to Hermes Agent `v2026.6.19` / `0.17.0`. The Codex auxiliary tool-role flattening and busy-text compatibility units are retired because upstream absorbed them. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.6.19` / `0.17.0`, and now also carries `078-max-userbot-platform-plugin`: an experimental PyMax-backed MAX userbot gateway for user-account access when official Bot API bot creation is unavailable. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
@@ -101,6 +101,7 @@ Recent patch highlights:
 - `v2026.5.16` / Hermes 0.14 re-anchor — active core overlays are refreshed against the official release tag. Grok2API sidecar remains documented as a legacy fallback, not an active default path.
 - `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls. The IDE path covers streaming, tool calls, inline images, RooCode `reasoning_effort`, and Codex sampling-parameter filtering.
 - `070-max-platform-plugin` — the release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval buttons, and compact edit-in-place tool progress without raw non-verbose command previews.
+- `078-max-userbot-platform-plugin` — a separate experimental MAX userbot plugin through MaxApiTeam/PyMax (`maxapi-python`) for user-account access, with profile-local sessions, session locking, allowlists, replies/edits, media mapping, file delivery, and approval payloads.
 
 ## Quick start
 
