@@ -133,6 +133,31 @@
       "refreshed_for": "v2026.6.19"
     },
     {
+      "id": "telegram-rich-flood-fallback",
+      "file": "patches/v2026.6.19/041-telegram-rich-flood-fallback.patch",
+      "title_en": "Telegram rich-message flood-control fallback",
+      "title_ru": "Fallback для Telegram rich messages при flood control",
+      "description_en": "Treats Telegram RetryAfter/flood-control errors from Bot API 10.1 rich-message sends/edits as pre-delivery rejections, so Hermes falls back to the legacy MarkdownV2 path that waits for Telegram's retry window instead of surfacing a delivery-failed notice after the agent already generated the answer.",
+      "description_ru": "Считает Telegram RetryAfter/flood-control ошибки из Bot API 10.1 rich-message send/edit pre-delivery отказом, поэтому Hermes откатывается на legacy MarkdownV2 path, который ждёт retry window Telegram, вместо показа delivery-failed notice после уже сгенерированного ответа.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_rich_messages.py",
+          "tests/gateway/test_send_retry.py",
+          "tests/gateway/test_telegram_thread_fallback.py"
+        ]
+      },
+      "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
+      "refreshed_for": "v2026.6.19",
+      "exported_from": "runtime-upstream-v2026.6.19"
+    },
+    {
       "id": "homeassistant-tool-config-url",
       "file": "patches/v2026.6.19/050-homeassistant-tool-config-url.patch",
       "title_en": "Home Assistant tools use profile config URL",

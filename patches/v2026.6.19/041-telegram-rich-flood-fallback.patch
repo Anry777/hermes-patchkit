@@ -1,0 +1,99 @@
+diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
+index b4483eb9e..f6aac6556 100644
+--- a/gateway/platforms/telegram.py
++++ b/gateway/platforms/telegram.py
+@@ -1117,14 +1117,32 @@ class TelegramAdapter(BasePlatformAdapter):
+             return True
+         return "no such method" in s
+ 
+-    def _is_rich_fallback_error(self, exc: Exception) -> bool:
+-        """True ⇒ permanent/capability error ⇒ safe to fall back to legacy.
++    @staticmethod
++    def _looks_like_retry_after_error(exc: Exception) -> bool:
++        """True when Telegram explicitly rejected the request for flood control.
++
++        ``RetryAfter`` / ``Flood control exceeded`` means the Bot API did not
++        process the rich request yet, so falling back to the legacy path cannot
++        duplicate a delivered message. The legacy send/edit path already obeys
++        Telegram's retry window before re-attempting delivery.
++        """
++        if getattr(exc, "retry_after", None) is not None:
++            return True
++        s = str(exc).lower()
++        return "retry after" in s or "flood control exceeded" in s
+ 
+-        Conservative on purpose: only clearly-permanent failures (BadRequest,
+-        capability errors, unknown/unsupported endpoint) qualify. Everything
+-        else is treated as transient — the rich request may have reached
+-        Telegram, so we must NOT legacy-resend and risk a duplicate.
++    def _is_rich_fallback_error(self, exc: Exception) -> bool:
++        """True ⇒ safe to fall back to the legacy MarkdownV2 path.
++
++        Conservative on purpose: permanent/capability failures are safe because
++        nothing was delivered as rich. Telegram flood-control errors are also
++        safe: RetryAfter is a pre-delivery rejection, and the legacy path can
++        wait on the same retry window instead of bubbling a delivery failure to
++        the user. Other transient/unknown failures may have reached Telegram,
++        so those still must NOT be legacy-resent.
+         """
++        if self._looks_like_retry_after_error(exc):
++            return True
+         if self._is_bad_request_error(exc):
+             return True
+         if self._is_rich_capability_error(exc):
+diff --git a/tests/gateway/test_telegram_rich_messages.py b/tests/gateway/test_telegram_rich_messages.py
+index de635042e..e52b32d3d 100644
+--- a/tests/gateway/test_telegram_rich_messages.py
++++ b/tests/gateway/test_telegram_rich_messages.py
+@@ -18,7 +18,7 @@ import pytest
+ from gateway.config import PlatformConfig
+ from gateway.platforms.base import SendResult
+ from gateway.platforms.telegram import TelegramAdapter
+-from telegram.error import BadRequest, NetworkError, TimedOut
++from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
+ 
+ 
+ # Content exercising rich-only constructs: a heading, a real Markdown table,
+@@ -394,6 +394,42 @@ async def test_per_message_bad_request_does_not_latch_off():
+     adapter._bot.do_api_request.assert_awaited_once()
+ 
+ 
++@pytest.mark.asyncio
++async def test_rich_retry_after_falls_back_to_legacy_send_path():
++    """RetryAfter is a pre-delivery rejection, so legacy resend is safe.
++
++    The legacy path owns sleeping for Telegram's retry window. Returning a
++    retryable rich failure here would make BasePlatformAdapter retry too early
++    and eventually surface "Message delivery failed" even though the answer was
++    generated.
++    """
++    adapter = _make_adapter()
++    bot = adapter._bot
++    assert bot is not None
++    bot.do_api_request = AsyncMock(side_effect=RetryAfter(20))
++
++    result = await adapter.send("12345", RICH_CONTENT)
++
++    assert result.success is True
++    bot.do_api_request.assert_awaited_once()
++    bot.send_message.assert_awaited()
++
++
++@pytest.mark.asyncio
++async def test_rich_flood_control_text_falls_back_to_legacy_send_path():
++    adapter = _make_adapter()
++    bot = adapter._bot
++    assert bot is not None
++    bot.do_api_request = AsyncMock(
++        side_effect=RuntimeError("Flood control exceeded. Retry in 20 seconds")
++    )
++
++    result = await adapter.send("12345", RICH_CONTENT)
++
++    assert result.success is True
++    bot.send_message.assert_awaited()
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("exc", [TimedOut("timed out"), NetworkError("connection reset")])
+ async def test_transient_rich_error_does_not_legacy_resend(exc):
