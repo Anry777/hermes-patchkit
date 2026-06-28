@@ -287,6 +287,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "auth-profile-root-fallback",
                 "credential-pool-recovery",
                 "telegram-free-response-target-gating",
+                "telegram-rich-flood-fallback",
                 "homeassistant-tool-config-url",
                 "max-platform-plugin",
                 "max-userbot-platform-plugin",
@@ -299,6 +300,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "gateway-explicit-media-delivery-safety",
                 "api-server-fallback-model-kwarg",
                 "gateway-auto-reset-context-continuity",
+                "vibemode-provider-plugin",
             ],
         )
         retired_ids = [entry["id"] for entry in manifest.get("retired_patches", [])]

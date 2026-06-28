@@ -391,7 +391,7 @@
         "focused_tests": [
           "tests/hermes_cli/test_model_switch_custom_providers.py",
           "tests/hermes_cli/test_list_picker_providers.py",
-          "tests/hermes_cli/test_neurogate_auth.py",
+          "tests/hermes_cli/test_vibemode_auth.py",
           "tests/providers/test_plugin_discovery.py",
           "tests/providers/test_provider_profiles.py",
           "tests/agent/test_model_metadata.py"
@@ -401,9 +401,9 @@
       "refreshed_for": "v2026.6.19",
       "impact": [
         "resolve_provider_full() can resolve any registered ProviderProfile, not only built-in/models.dev/config providers.",
-        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as neurogate.",
+        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as vibemode.",
         "ProviderProfile can declare per-model context windows, and get_model_context_length() uses them before broad family defaults.",
-        "NeuroGate gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
+        "VibeMode gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
         "No duplicate config.yaml providers entry is required for bundled or user model-provider plugins."
       ],
       "exported_from": "hermes-017-reanchor-build-20260620T041149Z"
@@ -499,6 +499,42 @@
         "Manual /new or /reset remains a fresh conversation and does not restore parent history."
       ],
       "exported_from": "hermes-017-reanchor-build-20260620T041149Z"
+    },
+    {
+      "id": "vibemode-provider-plugin",
+      "file": "patches/v2026.6.19/100-vibemode-provider-plugin.patch",
+      "title_en": "VibeMode model provider plugin",
+      "title_ru": "Model provider plugin для VibeMode",
+      "description_en": "Renames the former NeuroGate provider overlay to VibeMode, moves the endpoint to https://api.vibemod.pro/v1, and adds provider-profile per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
+      "description_ru": "Переименовывает бывший NeuroGate provider overlay в VibeMode, переносит endpoint на https://api.vibemod.pro/v1 и добавляет per-model metadata в ProviderProfile: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
+      "category": "provider",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [
+        "neurogate-provider-plugin",
+        "provider-plugin-model-switch",
+        "api-server-fallback-model-kwarg"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_vibemode_auth.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/providers/test_provider_profiles.py",
+          "tests/agent/test_model_metadata.py",
+          "tests/gateway/test_api_server.py"
+        ]
+      },
+      "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
+      "refreshed_for": "v2026.6.19",
+      "impact": [
+        "`hermes auth add vibemode --type api-key` persists credentials with base URL https://api.vibemod.pro/v1.",
+        "The final patched runtime exposes `vibemode` as the canonical provider and removes the old `neurogate` plugin/test surface.",
+        "Known VibeMode model metadata is an overlay only: /v1/models remains authoritative for model availability, while the overlay supplies context windows, capabilities, endpoint kinds, and per-model api_mode routing."
+      ],
+      "exported_from": "hermesfix-vibemode-provider-20260628"
     }
   ],
   "retired_patches": [

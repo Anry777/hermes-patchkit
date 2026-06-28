@@ -1,0 +1,484 @@
+diff --git a/agent/model_metadata.py b/agent/model_metadata.py
+index aa40f4fb1..a4af60190 100644
+--- a/agent/model_metadata.py
++++ b/agent/model_metadata.py
+@@ -49,7 +49,7 @@ _PROVIDER_PREFIXES: frozenset[str] = frozenset({
+     "openrouter", "nous", "openai-codex", "copilot", "copilot-acp",
+     "gemini", "ollama-cloud", "zai", "kimi-coding", "kimi-coding-cn", "stepfun", "minimax", "minimax-oauth", "minimax-cn", "anthropic", "deepseek",
+     "opencode-zen", "opencode-go", "kilocode", "alibaba", "novita",
+-    "qwen-oauth",
++    "qwen-oauth", "vibemode",
+     "xiaomi",
+     "arcee",
+     "gmi",
+@@ -484,6 +484,15 @@ def _is_known_provider_base_url(base_url: str) -> bool:
+ 
+ def _lookup_profile_model_context(profile: Any, model: str) -> Optional[int]:
+     """Return provider-profile context_length for *model*, if declared."""
++    get_context = getattr(profile, "get_model_context_length", None)
++    if callable(get_context):
++        try:
++            value = get_context(model)
++            if isinstance(value, int) and value > 0:
++                return value
++        except Exception:
++            pass
++
+     context_map = getattr(profile, "model_context_lengths", None) or {}
+     if not isinstance(context_map, dict):
+         return None
+@@ -509,7 +518,7 @@ def _resolve_provider_plugin_context_length(
+     """Resolve per-model context windows declared by provider plugins.
+ 
+     Provider plugins can serve the same bare model slug with a provider-specific
+-    enforced window (for example NeuroGate gpt-5.5 is 272k while direct OpenAI
++    enforced window (for example VibeMode gpt-5.5 is 272k while direct OpenAI
+     gpt-5.5 is larger). Keep those limits in the provider profile instead of
+     leaking provider-specific overrides into broad DEFAULT_CONTEXT_LENGTHS.
+     """
+diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
+index 96661307b..c41278e9a 100644
+--- a/hermes_cli/runtime_provider.py
++++ b/hermes_cli/runtime_provider.py
+@@ -106,8 +106,6 @@ def _detect_api_mode_for_url(base_url: str) -> Optional[str]:
+     hostname = base_url_hostname(base_url)
+     if hostname == "api.x.ai":
+         return "codex_responses"
+-    if hostname == "api.neurogate.space":
+-        return "codex_responses"
+     if hostname == "api.openai.com":
+         return "codex_responses"
+     path = urlparse(normalized).path.rstrip("/")
+@@ -278,6 +276,38 @@ def _parse_api_mode(raw: Any) -> Optional[str]:
+     return None
+ 
+ 
++def _provider_profile_model_api_mode(provider: str, model: Any) -> Optional[str]:
++    """Return a provider-profile per-model api_mode override, if declared."""
++    provider_name = (provider or "").strip().lower()
++    model_name = str(model or "").strip()
++    if not provider_name or not model_name:
++        return None
++    try:
++        import importlib
++
++        provider_module = importlib.import_module("providers")
++        profile = provider_module.get_provider_profile(provider_name)
++        if profile is None:
++            return None
++        get_mode = getattr(profile, "get_model_api_mode", None)
++        if callable(get_mode):
++            return _parse_api_mode(get_mode(model_name))
++        mode_map = getattr(profile, "model_api_modes", None) or {}
++        if isinstance(mode_map, dict):
++            bare = model_name.lower().rsplit("/", 1)[-1]
++            if ":" in bare and not bare.startswith("http"):
++                bare = bare.split(":", 1)[1]
++            for key, value in mode_map.items():
++                key_norm = str(key).strip().lower().rsplit("/", 1)[-1]
++                if ":" in key_norm and not key_norm.startswith("http"):
++                    key_norm = key_norm.split(":", 1)[1]
++                if key_norm == bare:
++                    return _parse_api_mode(value)
++    except Exception:
++        return None
++    return None
++
++
+ def _maybe_apply_codex_app_server_runtime(
+     *,
+     provider: str,
+@@ -399,6 +429,7 @@ def _resolve_runtime_from_pool_entry(
+             if cfg_base_url:
+                 base_url = cfg_base_url
+         configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
++        profile_mode = _provider_profile_model_api_mode(provider, effective_model)
+         if provider in {"opencode-zen", "opencode-go"}:
+             # Re-derive api_mode from the effective model rather than the
+             # persisted api_mode: the opencode providers serve both
+@@ -407,6 +438,8 @@ def _resolve_runtime_from_pool_entry(
+             # Refs #16878.
+             from hermes_cli.models import opencode_model_api_mode
+             api_mode = opencode_model_api_mode(provider, effective_model)
++        elif profile_mode:
++            api_mode = profile_mode
+         elif configured_mode and _provider_supports_explicit_api_mode(provider, configured_provider):
+             api_mode = configured_mode
+         else:
+@@ -1242,6 +1275,7 @@ def _resolve_explicit_runtime(
+     model_cfg: Dict[str, Any],
+     explicit_api_key: Optional[str] = None,
+     explicit_base_url: Optional[str] = None,
++    target_model: Optional[str] = None,
+ ) -> Optional[Dict[str, Any]]:
+     explicit_api_key = str(explicit_api_key or "").strip()
+     explicit_base_url = str(explicit_base_url or "").strip().rstrip("/")
+@@ -1360,10 +1394,14 @@ def _resolve_explicit_runtime(
+                 base_url = creds.get("base_url", "").rstrip("/")
+ 
+         api_mode = "chat_completions"
++        effective_model = target_model or model_cfg.get("default", "")
++        profile_mode = _provider_profile_model_api_mode(provider, effective_model)
+         if provider == "copilot":
+             api_mode = _copilot_runtime_api_mode(model_cfg, api_key)
+         elif provider == "xai":
+             api_mode = "codex_responses"
++        elif profile_mode:
++            api_mode = profile_mode
+         else:
+             configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
+             if configured_mode:
+@@ -1462,6 +1500,7 @@ def resolve_runtime_provider(
+         model_cfg=model_cfg,
+         explicit_api_key=explicit_api_key,
+         explicit_base_url=explicit_base_url,
++        target_model=target_model,
+     )
+     if explicit_runtime:
+         return explicit_runtime
+@@ -1808,6 +1847,10 @@ def resolve_runtime_provider(
+             configured_provider = str(model_cfg.get("provider") or "").strip().lower()
+             # Only honor persisted api_mode when it belongs to the same provider family.
+             configured_mode = _parse_api_mode(model_cfg.get("api_mode"))
++            profile_mode = _provider_profile_model_api_mode(
++                provider,
++                target_model or model_cfg.get("default", ""),
++            )
+             if provider in {"opencode-zen", "opencode-go"}:
+                 # opencode-zen/go must always re-derive api_mode from the
+                 # target model (not the stale persisted api_mode), because
+@@ -1820,6 +1863,8 @@ def resolve_runtime_provider(
+                 from hermes_cli.models import opencode_model_api_mode
+                 _effective = target_model or model_cfg.get("default", "")
+                 api_mode = opencode_model_api_mode(provider, _effective)
++            elif profile_mode:
++                api_mode = profile_mode
+             elif configured_mode and _provider_supports_explicit_api_mode(provider, configured_provider):
+                 api_mode = configured_mode
+             else:
+diff --git a/plugins/model-providers/neurogate/__init__.py b/plugins/model-providers/neurogate/__init__.py
+deleted file mode 100644
+index 6764399e6..000000000
+--- a/plugins/model-providers/neurogate/__init__.py
++++ /dev/null
+@@ -1,28 +0,0 @@
+-"""NeuroGate provider profile."""
+-
+-from providers import register_provider
+-from providers.base import ProviderProfile
+-
+-
+-neurogate = ProviderProfile(
+-    name="neurogate",
+-    display_name="NeuroGate",
+-    description="OpenAI Responses-compatible proxy for GPT-5.x models",
+-    signup_url="https://neurogate.space/",
+-    api_mode="codex_responses",
+-    env_vars=("NEUROGATE_API_KEY", "NEUROGATE_BASE_URL"),
+-    base_url="https://api.neurogate.space/v1",
+-    auth_type="api_key",
+-    default_aux_model="gpt-5.4-mini",
+-    model_context_lengths={
+-        "gpt-5.5": 272_000,
+-    },
+-    fallback_models=(
+-        "gpt-5.5",
+-        "gpt-5.4",
+-        "gpt-5.4-mini",
+-        "gpt-5.3-codex",
+-    ),
+-)
+-
+-register_provider(neurogate)
+diff --git a/plugins/model-providers/neurogate/plugin.yaml b/plugins/model-providers/neurogate/plugin.yaml
+deleted file mode 100644
+index 4de5048e0..000000000
+--- a/plugins/model-providers/neurogate/plugin.yaml
++++ /dev/null
+@@ -1,5 +0,0 @@
+-name: neurogate-provider
+-kind: model-provider
+-version: 1.0.0
+-description: NeuroGate — OpenAI Responses API proxy for GPT-5.x models
+-author: Hermes PatchKit
+diff --git a/providers/base.py b/providers/base.py
+index 5377a0d19..379106a49 100644
+--- a/providers/base.py
++++ b/providers/base.py
+@@ -82,6 +82,14 @@ class ProviderProfile:
+     # this provider than on the direct upstream API or other providers.
+     model_context_lengths: dict[str, int] = field(default_factory=dict)
+ 
++    # Optional per-model metadata overlays.  These are deliberately not model
++    # catalogs: live /models discovery remains authoritative for availability.
++    # They describe how to call known slugs when a provider serves multiple API
++    # surfaces from one base URL.
++    model_api_modes: dict[str, str] = field(default_factory=dict)
++    model_capabilities: dict[str, tuple[str, ...]] = field(default_factory=dict)
++    model_endpoint_kinds: dict[str, tuple[str, ...]] = field(default_factory=dict)
++
+     # hostname: base hostname for URL→provider reverse-mapping in model_metadata.py
+     # e.g. "api.gmi-serving.com". Derived from base_url when empty.
+     hostname: str = ""
+@@ -113,6 +121,68 @@ class ProviderProfile:
+             return urlparse(self.base_url).hostname or ""
+         return ""
+ 
++    @staticmethod
++    def _normalize_model_key(model: str | None) -> str:
++        """Normalize a model id for metadata map lookups.
++
++        Provider prefixes such as ``openrouter/foo`` or ``vibemode:foo`` are
++        display/routing hints, not part of the bare model slug stored in
++        provider-profile metadata.
++        """
++        value = (model or "").strip().lower()
++        if "/" in value:
++            value = value.rsplit("/", 1)[-1]
++        if ":" in value and not value.startswith("http"):
++            prefix, suffix = value.split(":", 1)
++            if prefix and suffix:
++                value = suffix
++        return value
++
++    def _lookup_model_map(self, mapping: dict[str, Any], model: str | None) -> Any:
++        key = self._normalize_model_key(model)
++        if not key or not isinstance(mapping, dict):
++            return None
++        if key in mapping:
++            return mapping[key]
++        for raw_key, value in mapping.items():
++            if self._normalize_model_key(str(raw_key)) == key:
++                return value
++        return None
++
++    def get_model_context_length(self, model: str | None) -> int | None:
++        """Return provider-specific context length for a known model slug."""
++        value = self._lookup_model_map(self.model_context_lengths, model)
++        return value if isinstance(value, int) and value > 0 else None
++
++    def get_model_api_mode(self, model: str | None) -> str | None:
++        """Return the preferred Hermes api_mode for a known model slug."""
++        value = self._lookup_model_map(self.model_api_modes, model)
++        if isinstance(value, str):
++            normalized = value.strip().lower()
++            if normalized in {
++                "chat_completions",
++                "codex_responses",
++                "anthropic_messages",
++                "bedrock_converse",
++                "codex_app_server",
++            }:
++                return normalized
++        return None
++
++    def get_model_capabilities(self, model: str | None) -> tuple[str, ...]:
++        """Return known capability tags for a model, or an empty tuple."""
++        value = self._lookup_model_map(self.model_capabilities, model)
++        if isinstance(value, (tuple, list, set)):
++            return tuple(str(v) for v in value if str(v).strip())
++        return ()
++
++    def get_model_endpoint_kinds(self, model: str | None) -> tuple[str, ...]:
++        """Return known endpoint kinds for a model, or an empty tuple."""
++        value = self._lookup_model_map(self.model_endpoint_kinds, model)
++        if isinstance(value, (tuple, list, set)):
++            return tuple(str(v) for v in value if str(v).strip())
++        return ()
++
+     def prepare_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+         """Provider-specific message preprocessing.
+ 
+diff --git a/tests/agent/test_model_metadata.py b/tests/agent/test_model_metadata.py
+index e2a756037..67475d9d0 100644
+--- a/tests/agent/test_model_metadata.py
++++ b/tests/agent/test_model_metadata.py
+@@ -305,8 +305,8 @@ class TestDefaultContextLengths:
+ # =========================================================================
+ 
+ class TestProviderPluginContextLength:
+-    def test_neurogate_gpt55_uses_provider_plugin_context_window(self):
+-        """NeuroGate serves gpt-5.5 with a provider-enforced 272k window.
++    def test_vibemode_gpt55_uses_provider_plugin_context_window(self):
++        """VibeMode serves gpt-5.5 with a provider-enforced 272k window.
+ 
+         The direct OpenAI fallback for the same bare slug is 1.05M, so this
+         must resolve through provider-plugin metadata rather than generic
+@@ -318,12 +318,12 @@ class TestProviderPluginContextLength:
+              patch("agent.model_metadata.fetch_model_metadata", return_value={}):
+             assert get_model_context_length(
+                 model="gpt-5.5",
+-                base_url="https://api.neurogate.space/v1",
++                base_url="https://api.vibemod.pro/v1",
+                 api_key="",
+-                provider="neurogate",
++                provider="vibemode",
+             ) == 272_000
+ 
+-    def test_neurogate_context_window_can_resolve_from_plugin_base_url(self):
++    def test_vibemode_context_window_can_resolve_from_plugin_base_url(self):
+         """URL-inferred provider plugins should get the same per-model window."""
+         with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
+              patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
+@@ -331,11 +331,29 @@ class TestProviderPluginContextLength:
+              patch("agent.model_metadata.fetch_model_metadata", return_value={}):
+             assert get_model_context_length(
+                 model="gpt-5.5",
+-                base_url="https://api.neurogate.space/v1",
++                base_url="https://api.vibemod.pro/v1",
+                 api_key="",
+                 provider="",
+             ) == 272_000
+ 
++    def test_vibemode_known_model_context_metadata_overlay(self):
++        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
++             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
++             patch("agent.models_dev.lookup_models_dev_context", return_value=None), \
++             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
++            assert get_model_context_length(
++                model="deepseek-v4-pro",
++                base_url="https://api.vibemod.pro/v1",
++                api_key="",
++                provider="vibemode",
++            ) == 1_000_000
++            assert get_model_context_length(
++                model="qwen3.7-plus",
++                base_url="https://api.vibemod.pro/v1",
++                api_key="",
++                provider="vibemode",
++            ) == 1_000_000
++
+ 
+ # =========================================================================
+ # Codex OAuth context-window resolution (provider="openai-codex")
+diff --git a/tests/gateway/test_api_server.py b/tests/gateway/test_api_server.py
+index 527caf9e7..422851a68 100644
+--- a/tests/gateway/test_api_server.py
++++ b/tests/gateway/test_api_server.py
+@@ -383,8 +383,8 @@ class TestAdapterInit:
+         monkeypatch.setattr(
+             "gateway.run._resolve_runtime_agent_kwargs",
+             lambda: {
+-                "provider": "neurogate",
+-                "base_url": "https://api.neurogate.space/v1",
++                "provider": "vibemode",
++                "base_url": "https://api.vibemod.pro/v1",
+                 "api_mode": "codex_responses",
+                 "model": "gpt-5.5",
+             },
+@@ -402,7 +402,7 @@ class TestAdapterInit:
+ 
+         assert isinstance(agent, FakeAgent)
+         assert captured["model"] == "gpt-5.5"
+-        assert captured["kwargs"]["provider"] == "neurogate"
++        assert captured["kwargs"]["provider"] == "vibemode"
+         assert "model" not in captured["kwargs"]
+ 
+ 
+diff --git a/tests/hermes_cli/test_neurogate_auth.py b/tests/hermes_cli/test_neurogate_auth.py
+deleted file mode 100644
+index 434ad4666..000000000
+--- a/tests/hermes_cli/test_neurogate_auth.py
++++ /dev/null
+@@ -1,43 +0,0 @@
+-"""Tests for NeuroGate auth and runtime provider wiring."""
+-
+-from __future__ import annotations
+-
+-import json
+-
+-
+-def test_auth_add_neurogate_api_key_resolves_responses_runtime(tmp_path, monkeypatch):
+-    hermes_home = tmp_path / "hermes"
+-    hermes_home.mkdir(parents=True, exist_ok=True)
+-    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
+-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+-    monkeypatch.delenv("NEUROGATE_API_KEY", raising=False)
+-    monkeypatch.delenv("NEUROGATE_BASE_URL", raising=False)
+-
+-    from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider
+-    from hermes_cli.auth_commands import auth_add_command
+-    from hermes_cli.runtime_provider import resolve_runtime_provider
+-
+-    assert resolve_provider("neurogate") == "neurogate"
+-    assert "neurogate-space" not in PROVIDER_REGISTRY
+-    assert "neurogate-api" not in PROVIDER_REGISTRY
+-    assert "neurogate" in PROVIDER_REGISTRY
+-
+-    class _Args:
+-        provider = "neurogate"
+-        auth_type = "api-key"
+-        api_key = "ng-test-key"
+-        label = "ng"
+-
+-    auth_add_command(_Args())
+-
+-    payload = json.loads((hermes_home / "auth.json").read_text())
+-    entry = payload["credential_pool"]["neurogate"][0]
+-    assert entry["label"] == "ng"
+-    assert entry["access_token"] == "ng-test-key"
+-    assert entry["base_url"] == "https://api.neurogate.space/v1"
+-
+-    runtime = resolve_runtime_provider(requested="neurogate")
+-    assert runtime["provider"] == "neurogate"
+-    assert runtime["api_mode"] == "codex_responses"
+-    assert runtime["base_url"] == "https://api.neurogate.space/v1"
+-    assert runtime["api_key"] == "ng-test-key"
+diff --git a/tests/providers/test_plugin_discovery.py b/tests/providers/test_plugin_discovery.py
+index 0fbce4a7a..ef17620cd 100644
+--- a/tests/providers/test_plugin_discovery.py
++++ b/tests/providers/test_plugin_discovery.py
+@@ -69,7 +69,7 @@ def test_all_profiles_register():
+     for required in (
+         "openrouter", "anthropic", "custom", "bedrock", "openai-codex",
+         "minimax-oauth", "gmi", "xiaomi", "alibaba-coding-plan",
+-        "neurogate",
++        "vibemode",
+     ):
+         assert required in names, f"Missing profile: {required}"
+ 
+diff --git a/tests/providers/test_provider_profiles.py b/tests/providers/test_provider_profiles.py
+index dba87a3f7..9f6744a04 100644
+--- a/tests/providers/test_provider_profiles.py
++++ b/tests/providers/test_provider_profiles.py
+@@ -22,8 +22,9 @@ class TestRegistry:
+     def test_unknown_provider_returns_none(self):
+         assert get_provider_profile("nonexistent-provider") is None
+ 
+-    def test_neurogate_has_no_aliases(self):
+-        assert get_provider_profile("neurogate") is not None
++    def test_vibemode_has_no_legacy_aliases(self):
++        assert get_provider_profile("vibemode") is not None
++        assert get_provider_profile("neurogate") is None
+         assert get_provider_profile("neurogate-space") is None
+         assert get_provider_profile("neurogate-api") is None
+ 
+@@ -33,14 +34,21 @@ class TestRegistry:
+             assert profile.name == name
+ 
+ 
+-class TestNeuroGateProfile:
+-    def test_responses_api_profile(self):
+-        p = get_provider_profile("neurogate")
++class TestVibeModeProfile:
++    def test_dynamic_catalog_profile_with_known_model_metadata(self):
++        p = get_provider_profile("vibemode")
+         assert p is not None
+-        assert p.api_mode == "codex_responses"
+-        assert p.base_url == "https://api.neurogate.space/v1"
+-        assert p.env_vars == ("NEUROGATE_API_KEY", "NEUROGATE_BASE_URL")
+-        assert "gpt-5.4-mini" in p.fallback_models
++        assert p.api_mode == "chat_completions"
++        assert p.base_url == "https://api.vibemod.pro/v1"
++        assert p.env_vars == ("VIBEMODE_API_KEY", "VIBEMODE_BASE_URL")
++        assert p.fallback_models == ()
++        assert p.get_model_context_length("gpt-5.5") == 272_000
++        assert p.get_model_context_length("deepseek-v4-flash") == 1_000_000
++        assert p.get_model_api_mode("gpt-5.5") == "codex_responses"
++        assert p.get_model_api_mode("deepseek-v4-pro") == "chat_completions"
++        assert p.get_model_api_mode("minimax-m3") == "anthropic_messages"
++        assert p.get_model_capabilities("qwen3.7-plus") == ("chat", "reasoning", "tools")
++        assert p.get_model_endpoint_kinds("gpt-5.4") == ("responses", "chat_completions")
+ 
+ 
+ class TestNvidiaProfile:

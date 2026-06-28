@@ -17,6 +17,7 @@
     "provider-plugin-model-switch",
     "gateway-explicit-media-delivery-safety",
     "api-server-fallback-model-kwarg",
-    "gateway-auto-reset-context-continuity"
+    "gateway-auto-reset-context-continuity",
+    "vibemode-provider-plugin"
   ]
 }
