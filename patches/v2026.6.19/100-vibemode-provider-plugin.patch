@@ -201,6 +201,147 @@ index 4de5048e0..000000000
 -version: 1.0.0
 -description: NeuroGate — OpenAI Responses API proxy for GPT-5.x models
 -author: Hermes PatchKit
+diff --git a/plugins/model-providers/vibemode/__init__.py b/plugins/model-providers/vibemode/__init__.py
+new file mode 100644
+index 000000000..ac302c628
+--- /dev/null
++++ b/plugins/model-providers/vibemode/__init__.py
+@@ -0,0 +1,125 @@
++"""VibeMode provider profile."""
++
++from __future__ import annotations
++
++from providers import register_provider
++from providers.base import ProviderProfile
++
++
++VIBEMODE_MODEL_PROPERTIES = {
++    # Chat Completions-first models. VibeMode also exposes /v1/responses for
++    # these, but the provider marks their primary API as Chat.
++    "deepseek-v4-flash": {
++        "context_length": 1_000_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "deepseek-v4-pro": {
++        "context_length": 1_000_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "glm-5.1": {
++        "context_length": 203_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "glm-5.2": {
++        "context_length": 203_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "kimi-k2.6": {
++        "context_length": 262_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "mimo-v2.5": {
++        "context_length": 1_000_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "mimo-v2.5-pro": {
++        "context_length": 1_000_000,
++        "api_mode": "chat_completions",
++        "endpoint_kinds": ("chat_completions", "responses"),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    # Responses-first GPT models.
++    "gpt-5.4": {
++        "context_length": 272_000,
++        "api_mode": "codex_responses",
++        "endpoint_kinds": ("responses", "chat_completions"),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "gpt-5.4-mini": {
++        "context_length": 272_000,
++        "api_mode": "codex_responses",
++        "endpoint_kinds": ("responses", "chat_completions"),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "gpt-5.5": {
++        "context_length": 272_000,
++        "api_mode": "codex_responses",
++        "endpoint_kinds": ("responses", "chat_completions"),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    # Anthropic Messages-first models.
++    "minimax-m3": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "qwen3.7-max": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++    "qwen3.7-plus": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "reasoning", "tools"),
++    },
++}
++
++
++vibemode = ProviderProfile(
++    name="vibemode",
++    display_name="VibeMode",
++    description="Multi-model gateway with Chat, Responses, and Messages endpoints",
++    signup_url="https://vibemod.pro/",
++    api_mode="chat_completions",
++    env_vars=("VIBEMODE_API_KEY", "VIBEMODE_BASE_URL"),
++    base_url="https://api.vibemod.pro/v1",
++    auth_type="api_key",
++    # The model catalog is intentionally dynamic via /v1/models.  These maps are
++    # metadata overlays for known VibeMode slugs, not the source of truth for the
++    # list of available models.
++    model_context_lengths={
++        model: int(props["context_length"])
++        for model, props in VIBEMODE_MODEL_PROPERTIES.items()
++    },
++    model_api_modes={
++        model: str(props["api_mode"])
++        for model, props in VIBEMODE_MODEL_PROPERTIES.items()
++    },
++    model_capabilities={
++        model: tuple(props["capabilities"])
++        for model, props in VIBEMODE_MODEL_PROPERTIES.items()
++    },
++    model_endpoint_kinds={
++        model: tuple(props["endpoint_kinds"])
++        for model, props in VIBEMODE_MODEL_PROPERTIES.items()
++    },
++)
++
++register_provider(vibemode)
+diff --git a/plugins/model-providers/vibemode/plugin.yaml b/plugins/model-providers/vibemode/plugin.yaml
+new file mode 100644
+index 000000000..eb249d6d3
+--- /dev/null
++++ b/plugins/model-providers/vibemode/plugin.yaml
+@@ -0,0 +1,4 @@
++name: vibemode-provider
++kind: model-provider
++version: 1.0.0
++description: VibeMode multi-model provider for Chat, Responses, and Messages endpoints
 diff --git a/providers/base.py b/providers/base.py
 index 5377a0d19..379106a49 100644
 --- a/providers/base.py
@@ -424,6 +565,103 @@ index 434ad4666..000000000
 -    assert runtime["api_mode"] == "codex_responses"
 -    assert runtime["base_url"] == "https://api.neurogate.space/v1"
 -    assert runtime["api_key"] == "ng-test-key"
+diff --git a/tests/hermes_cli/test_vibemode_auth.py b/tests/hermes_cli/test_vibemode_auth.py
+new file mode 100644
+index 000000000..b374dd57c
+--- /dev/null
++++ b/tests/hermes_cli/test_vibemode_auth.py
+@@ -0,0 +1,91 @@
++"""Tests for VibeMode auth and runtime provider wiring."""
++
++from __future__ import annotations
++
++import json
++
++
++def test_auth_add_vibemode_api_key_resolves_dynamic_runtime(tmp_path, monkeypatch):
++    hermes_home = tmp_path / "hermes"
++    hermes_home.mkdir(parents=True, exist_ok=True)
++    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
++    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
++    monkeypatch.delenv("VIBEMODE_API_KEY", raising=False)
++    monkeypatch.delenv("VIBEMODE_BASE_URL", raising=False)
++
++    from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider
++    from hermes_cli.auth_commands import auth_add_command
++    from hermes_cli.runtime_provider import resolve_runtime_provider
++
++    assert resolve_provider("vibemode") == "vibemode"
++    assert "vibemode" in PROVIDER_REGISTRY
++    assert "neurogate" not in PROVIDER_REGISTRY
++
++    class _Args:
++        provider = "vibemode"
++        auth_type = "api-key"
++        api_key = "vm-test-key"
++        label = "vm"
++
++    auth_add_command(_Args())
++
++    payload = json.loads((hermes_home / "auth.json").read_text())
++    entry = payload["credential_pool"]["vibemode"][0]
++    assert entry["label"] == "vm"
++    assert entry["access_token"] == "vm-test-key"
++    assert entry["base_url"] == "https://api.vibemod.pro/v1"
++
++    runtime = resolve_runtime_provider(requested="vibemode", target_model="gpt-5.5")
++    assert runtime["provider"] == "vibemode"
++    assert runtime["api_mode"] == "codex_responses"
++    assert runtime["base_url"] == "https://api.vibemod.pro/v1"
++    assert runtime["api_key"] == "vm-test-key"
++
++
++def test_vibemode_routes_known_models_to_their_api_surfaces(tmp_path, monkeypatch):
++    hermes_home = tmp_path / "hermes"
++    hermes_home.mkdir(parents=True, exist_ok=True)
++    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
++    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
++
++    from hermes_cli.auth_commands import auth_add_command
++    from hermes_cli.runtime_provider import resolve_runtime_provider
++
++    class _Args:
++        provider = "vibemode"
++        auth_type = "api-key"
++        api_key = "vm-test-key"
++        label = "vm"
++
++    auth_add_command(_Args())
++
++    assert resolve_runtime_provider(
++        requested="vibemode", target_model="deepseek-v4-pro"
++    )["api_mode"] == "chat_completions"
++    assert resolve_runtime_provider(
++        requested="vibemode", target_model="gpt-5.4-mini"
++    )["api_mode"] == "codex_responses"
++    assert resolve_runtime_provider(
++        requested="vibemode", target_model="minimax-m3"
++    )["api_mode"] == "anthropic_messages"
++
++
++def test_vibemode_unknown_model_uses_provider_default_not_catalog_overlay(tmp_path, monkeypatch):
++    hermes_home = tmp_path / "hermes"
++    hermes_home.mkdir(parents=True, exist_ok=True)
++    (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
++    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
++
++    from hermes_cli.auth_commands import auth_add_command
++    from hermes_cli.runtime_provider import resolve_runtime_provider
++
++    class _Args:
++        provider = "vibemode"
++        auth_type = "api-key"
++        api_key = "vm-test-key"
++        label = "vm"
++
++    auth_add_command(_Args())
++
++    runtime = resolve_runtime_provider(requested="vibemode", target_model="new-live-model")
++    assert runtime["api_mode"] == "chat_completions"
 diff --git a/tests/providers/test_plugin_discovery.py b/tests/providers/test_plugin_discovery.py
 index 0fbce4a7a..ef17620cd 100644
 --- a/tests/providers/test_plugin_discovery.py
