@@ -1,5 +1,5 @@
 diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
-index b4483eb9e..f6aac6556 100644
+index 2a2bdb686..68776866e 100644
 --- a/gateway/platforms/telegram.py
 +++ b/gateway/platforms/telegram.py
 @@ -1117,14 +1117,32 @@ class TelegramAdapter(BasePlatformAdapter):
@@ -41,6 +41,88 @@ index b4483eb9e..f6aac6556 100644
          if self._is_bad_request_error(exc):
              return True
          if self._is_rich_capability_error(exc):
+@@ -3035,7 +3053,10 @@ class TelegramAdapter(BasePlatformAdapter):
+                     success=False,
+                     message_id=prev_id,
+                     error="overflow_continuation_failed",
+-                    retryable=True,
++                    # Do not let generic retry resend the whole overflow payload
++                    # after Telegram already accepted the visible prefix; that
++                    # duplicates chunk 1/N on flood/continuation failures.
++                    retryable=False,
+                     raw_response={
+                         "partial_overflow": True,
+                         "delivered_chunks": 1 + len(continuation_ids),
+diff --git a/gateway/stream_consumer.py b/gateway/stream_consumer.py
+index f559d7ecd..2025f7eb5 100644
+--- a/gateway/stream_consumer.py
++++ b/gateway/stream_consumer.py
+@@ -1577,6 +1577,13 @@ class GatewayStreamConsumer:
+                         # Record this (and any continuation fragments from an
+                         # oversized first send) for fresh-final cleanup.
+                         self._track_preview_ids_from_result(result)
++                        # When the first send() split content across multiple
++                        # platform messages, the final content is already on
++                        # screen. Treat it like an edit overflow so got_done
++                        # does not run a second finalize edit that re-splits
++                        # and duplicates the same Telegram payload.
++                        if getattr(result, "continuation_message_ids", None):
++                            self._last_edit_overflowed = True
+                     else:
+                         self._edit_supported = False
+                     self._already_sent = True
+diff --git a/tests/gateway/test_stream_consumer.py b/tests/gateway/test_stream_consumer.py
+index eb8673006..69bc53502 100644
+--- a/tests/gateway/test_stream_consumer.py
++++ b/tests/gateway/test_stream_consumer.py
+@@ -1155,6 +1155,34 @@ class TestEditOverflowSplitAndDeliver:
+         # the new continuation (per the openclaw #32535 lesson).
+         assert new_msg_count[0] == 1
+ 
++    @pytest.mark.asyncio
++    async def test_first_send_split_delivery_marks_overflow_to_skip_duplicate_finalize(self):
++        """If the first send() already split a final answer, got_done must not
++        run a second finalize edit that re-splits the same Telegram payload."""
++        adapter = MagicMock()
++        adapter.send = AsyncMock(
++            return_value=SimpleNamespace(
++                success=True,
++                message_id="msg_continuation_2",
++                continuation_message_ids=("msg_continuation_1", "msg_continuation_2"),
++            ),
++        )
++        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=True))
++        adapter.MAX_MESSAGE_LENGTH = 4096
++
++        config = StreamConsumerConfig(
++            edit_interval=0.01,
++            buffer_threshold=5,
++            cursor="",
++        )
++        consumer = GatewayStreamConsumer(adapter, "chat_999", config)
++
++        ok = await consumer._send_or_edit("long final text", finalize=True)
++
++        assert ok is True
++        assert consumer._last_edit_overflowed is True
++        assert consumer._message_id == "msg_continuation_2"
++
+ 
+ class TestInterimCommentaryMessages:
+     @pytest.mark.asyncio
+diff --git a/tests/gateway/test_telegram_overflow_partial.py b/tests/gateway/test_telegram_overflow_partial.py
+index 38b10299d..d97aa3a4e 100644
+--- a/tests/gateway/test_telegram_overflow_partial.py
++++ b/tests/gateway/test_telegram_overflow_partial.py
+@@ -84,7 +84,7 @@ async def test_edit_overflow_split_reports_partial_failure_when_continuation_fai
+     )
+ 
+     assert result.success is False
+-    assert result.retryable is True
++    assert result.retryable is False
+     assert result.error == "overflow_continuation_failed"
+     assert result.message_id == "201"
+     assert result.raw_response["partial_overflow"] is True
 diff --git a/tests/gateway/test_telegram_rich_messages.py b/tests/gateway/test_telegram_rich_messages.py
 index de635042e..e52b32d3d 100644
 --- a/tests/gateway/test_telegram_rich_messages.py
