@@ -1,5 +1,23 @@
 # News
 
+## 2026-06-30 — Telegram streamed final edit duplicate guard
+
+PatchKit refreshes `041-telegram-rich-flood-fallback` for the Hermes `v2026.6.19` / `0.17.0` line. The unit already covered rich-message `RetryAfter` fallback and long-response overflow duplicates; it now also covers the shorter streamed-response path where Telegram accepts a visible preview but flood-limits the final formatting/finalize edit.
+
+When the exact final text is already visible, Hermes now marks the stream content delivered and suppresses the gateway's normal final-send fallback. That prevents a second Telegram bubble about the same agent turn while preserving the existing guard that still sends a fallback when the visible preview is incomplete.
+
+---
+
+# Новости
+
+## 2026-06-30 — Защита от дубля Telegram при streamed final edit
+
+PatchKit обновляет `041-telegram-rich-flood-fallback` для release line Hermes `v2026.6.19` / `0.17.0`. Unit уже закрывал rich-message `RetryAfter` fallback и дубли при long-response overflow; теперь он закрывает и более короткий streamed-response путь, где Telegram уже показал preview, но flood-limit'ит финальный formatting/finalize edit.
+
+Если точный финальный текст уже виден, Hermes теперь помечает stream content как доставленный и подавляет обычный gateway final-send fallback. Это не даёт появиться второму Telegram bubble про тот же agent turn, при этом старый guard сохраняется: если видимый preview неполный, fallback всё ещё может отправить полный ответ.
+
+---
+
 ## 2026-06-21 — Classic CLI scrollback-safe idle refresh default restored
 
 PatchKit carries `010-cli-tui-idle-refresh-fix` again for the Hermes `v2026.6.19` / `0.17.0` release line. Upstream 0.17 kept the `display.cli_refresh_interval` config knob, but changed the default back to `1.0` so the idle status bar keeps ticking. On terminals with auto-scroll-on-output, that one-second prompt_toolkit repaint pulls mouse-wheel scrollback back to the bottom while the agent is idle.

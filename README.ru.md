@@ -7,7 +7,7 @@
 Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
 Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
 
-Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.6.19` / `0.17.0`, снова несёт `010-cli-tui-idle-refresh-fix`, чтобы classic CLI scrollback не тянуло вниз idle repaint'ом, а теперь ещё несёт `078-max-userbot-platform-plugin`: experimental MAX userbot gateway через PyMax для доступа через user account, когда official Bot API bot создать нельзя. Existing profiles, где явно стоит `display.cli_refresh_interval: 1.0`, нужно нормализовать в `0`. Старый Grok2API sidecar bridge теперь legacy fallback; для Grok/SuperGrok предпочитаем upstream-native `xai` / `xai-oauth`. См. [NEWS.md](NEWS.md).
+Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.6.19` / `0.17.0`, снова несёт `010-cli-tui-idle-refresh-fix`, чтобы classic CLI scrollback не тянуло вниз idle repaint'ом, обновляет `041-telegram-rich-flood-fallback`, чтобы Telegram flood-control на streamed finalization не создавал второй answer bubble, а теперь ещё несёт `078-max-userbot-platform-plugin`: experimental MAX userbot gateway через PyMax для доступа через user account, когда official Bot API bot создать нельзя. Existing profiles, где явно стоит `display.cli_refresh_interval: 1.0`, нужно нормализовать в `0`. Старый Grok2API sidecar bridge теперь legacy fallback; для Grok/SuperGrok предпочитаем upstream-native `xai` / `xai-oauth`. См. [NEWS.md](NEWS.md).
 
 ## Главный patch сейчас: Provider Proxy Gateway
 

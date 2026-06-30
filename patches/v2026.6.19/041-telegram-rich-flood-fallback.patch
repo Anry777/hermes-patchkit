@@ -1,5 +1,5 @@
 diff --git a/gateway/platforms/telegram.py b/gateway/platforms/telegram.py
-index 2a2bdb686..68776866e 100644
+index b4483eb9e..5b6e663c8 100644
 --- a/gateway/platforms/telegram.py
 +++ b/gateway/platforms/telegram.py
 @@ -1117,14 +1117,32 @@ class TelegramAdapter(BasePlatformAdapter):
@@ -54,10 +54,54 @@ index 2a2bdb686..68776866e 100644
                          "partial_overflow": True,
                          "delivered_chunks": 1 + len(continuation_ids),
 diff --git a/gateway/stream_consumer.py b/gateway/stream_consumer.py
-index f559d7ecd..2025f7eb5 100644
+index f559d7ecd..b41b01718 100644
 --- a/gateway/stream_consumer.py
 +++ b/gateway/stream_consumer.py
-@@ -1577,6 +1577,13 @@ class GatewayStreamConsumer:
+@@ -635,6 +635,13 @@ class GatewayStreamConsumer:
+                             # edit here would duplicate the message / re-delete,
+                             # so just record delivery and stop.
+                             self._final_content_delivered = True
++                        elif self._final_content_delivered:
++                            # A turn-final edit attempt may have failed only
++                            # at the cosmetic/finalize layer after the exact
++                            # final content was already visible.  Do not run a
++                            # second finalize/edit or let gateway.run post a
++                            # duplicate normal final message.
++                            self._final_response_sent = True
+                         elif (
+                             current_update_visible
+                             and (
+@@ -1471,18 +1478,22 @@ class GatewayStreamConsumer:
+                         if (
+                             finalize
+                             and is_turn_final
+-                            and self.cfg.cursor
+-                            and self._last_sent_text.endswith(self.cfg.cursor)
+-                            and self._visible_prefix() == text
++                            and (
++                                self._last_sent_text == text
++                                or (
++                                    self.cfg.cursor
++                                    and self._last_sent_text.endswith(self.cfg.cursor)
++                                    and self._visible_prefix() == text
++                                )
++                            )
+                         ):
+                             # The final clean-up edit failed, but the complete
+                             # answer is already visible from the last streaming
+-                            # frame (usually with only the cursor still stuck on
++                            # frame (possibly with only the cursor still stuck on
+                             # screen).  Mark the content delivered so the
+                             # gateway suppresses its normal full final send;
+-                            # otherwise users see the same long answer twice
+-                            # when Telegram/Discord rate-limit this cosmetic
+-                            # final edit (#36965, #25349).
++                            # otherwise users see the same answer twice when
++                            # Telegram rate-limits this cosmetic final edit.
+                             self._final_content_delivered = True
+                         raw_response = getattr(result, "raw_response", None)
+                         if isinstance(raw_response, dict) and raw_response.get("partial_overflow"):
+@@ -1577,6 +1588,13 @@ class GatewayStreamConsumer:
                          # Record this (and any continuation fragments from an
                          # oversized first send) for fresh-final cleanup.
                          self._track_preview_ids_from_result(result)
@@ -72,10 +116,46 @@ index f559d7ecd..2025f7eb5 100644
                          self._edit_supported = False
                      self._already_sent = True
 diff --git a/tests/gateway/test_stream_consumer.py b/tests/gateway/test_stream_consumer.py
-index eb8673006..69bc53502 100644
+index eb8673006..96878862b 100644
 --- a/tests/gateway/test_stream_consumer.py
 +++ b/tests/gateway/test_stream_consumer.py
-@@ -1155,6 +1155,34 @@ class TestEditOverflowSplitAndDeliver:
+@@ -1062,6 +1062,35 @@ class TestFinalContentDeliveredGuard:
+         )
+         assert consumer._final_response_sent is True
+ 
++    @pytest.mark.asyncio
++    async def test_final_edit_flood_after_exact_visible_content_marks_delivered(self):
++        """If the final Telegram formatting edit is flood-limited after the
++        exact final text is already visible, suppress the gateway's normal
++        final send instead of posting a duplicate bubble."""
++        adapter = MagicMock()
++        adapter.REQUIRES_EDIT_FINALIZE = True
++        adapter.edit_message = AsyncMock(
++            return_value=SimpleNamespace(success=False, error="flood_control:12.0"),
++        )
++        adapter.send = AsyncMock(
++            return_value=SimpleNamespace(success=True, message_id="msg_1"),
++        )
++        adapter.MAX_MESSAGE_LENGTH = 4096
++
++        config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5, cursor="")
++        consumer = GatewayStreamConsumer(adapter, "chat_123", config)
++
++        consumer.on_delta("The complete response.\n")
++        task = asyncio.create_task(consumer.run())
++        await asyncio.sleep(0.05)
++
++        consumer.finish()
++        await task
++
++        assert consumer._final_content_delivered is True
++        assert consumer._final_response_sent is True
++        assert adapter.send.await_count == 1
++
+     @pytest.mark.asyncio
+     async def test_fallback_partial_send_does_not_mark_final_sent(self):
+         """When fallback final send delivers only some chunks before failing,
+@@ -1155,6 +1184,34 @@ class TestEditOverflowSplitAndDeliver:
          # the new continuation (per the openclaw #32535 lesson).
          assert new_msg_count[0] == 1
  

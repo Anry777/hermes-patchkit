@@ -160,6 +160,7 @@
       "impact": [
         "Telegram RetryAfter/flood-control from rich sends/edits falls back to the legacy MarkdownV2 path that waits for Telegram retry windows.",
         "A first send() that already split a long final response marks the stream consumer overflow state so got_done does not duplicate the same chunks with a second finalize edit.",
+        "If a turn-final Telegram formatting/finalize edit is flood-limited after the exact final content is already visible, the stream consumer now suppresses the normal gateway final-send path instead of posting a second answer bubble.",
         "Partial Telegram overflow delivery is non-retryable at the generic send-retry layer, avoiding full-payload resend after visible chunks already landed."
       ]
     },
