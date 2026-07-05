@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: PatchKit is re-anchored to Hermes Agent `v2026.6.19` / `0.17.0`, carries `010-cli-tui-idle-refresh-fix` again so classic CLI scrollback is not pulled down by idle repaint, refreshes `041-telegram-rich-flood-fallback` so Telegram flood-control during streamed finalization does not create a second answer bubble, and now also carries `078-max-userbot-platform-plugin`: an experimental PyMax-backed MAX userbot gateway for user-account access when official Bot API bot creation is unavailable. Existing profiles that explicitly set `display.cli_refresh_interval: 1.0` should be normalized to `0`. The old Grok2API sidecar bridge is now a legacy fallback; prefer upstream Hermes native `xai` / `xai-oauth` for Grok/SuperGrok. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.7.1` / `0.18.0`. The current personal profile carries the active v0.18 overlay only: shared root auth, credential-pool recovery, MAX Bot API and MAX userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity, and the VibeMode provider plugin with the Hermes User-Agent required by VibeMode's Responses endpoint. Telegram rich/gating, SMTP_SSL, document media types, API-server fallback-model kwargs, and the old Home Assistant config URL overlay are retired where upstream v0.18 now covers them. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
@@ -22,8 +22,8 @@ If you want a local Hermes-hosted endpoint that can front multiple provider mode
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-provider-proxy.yaml \
   --yes
 ```
 
@@ -32,8 +32,8 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 Headless mode for CI/scripts:
@@ -41,8 +41,8 @@ Headless mode for CI/scripts:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 The default update check is safe: it fetches upstream metadata, clones the upstream candidate into `/tmp`, checks the selected patch set there, and writes a report under `reports/`. It does not apply patches or merge upstream into your live checkout.
@@ -113,8 +113,8 @@ python3 scripts/verify.py --self-check
 
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 If you prefer non-interactive output:
@@ -122,8 +122,8 @@ If you prefer non-interactive output:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 For a single patch:
@@ -131,7 +131,7 @@ For a single patch:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
+  --manifest manifests/upstream-v2026.7.1.yaml \
   --patch gateway-explicit-media-delivery-safety
 ```
 

@@ -352,35 +352,6 @@
       "exported_from": "hermes-017-reanchor-build-20260620T041149Z"
     },
     {
-      "id": "neurogate-provider-plugin",
-      "file": "patches/v2026.6.19/093-neurogate-provider-plugin.patch",
-      "title_en": "NeuroGate model provider plugin",
-      "title_ru": "Model provider plugin для NeuroGate",
-      "description_en": "Adds NeuroGate as a bundled model-provider plugin with one canonical provider id (`neurogate`), hermes auth API-key support, default Responses API routing for api.neurogate.space, fallback GPT-5.x catalog entries, and focused auth/runtime regression tests.",
-      "description_ru": "Добавляет NeuroGate как bundled model-provider plugin с одним canonical provider id (`neurogate`), поддержкой API-key через hermes auth, default routing на Responses API для api.neurogate.space, fallback catalog GPT-5.x моделей и focused auth/runtime regression tests.",
-      "category": "provider",
-      "track": "local-overlay",
-      "optional": true,
-      "default": false,
-      "depends_on": [],
-      "conflicts_with": [],
-      "status": "exported",
-      "verification": {
-        "focused_tests": [
-          "tests/hermes_cli/test_neurogate_auth.py",
-          "tests/providers/test_plugin_discovery.py",
-          "tests/providers/test_provider_profiles.py"
-        ]
-      },
-      "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
-      "refreshed_for": "v2026.6.19",
-      "impact": [
-        "`hermes auth add neurogate --type api-key` persists credentials into the shared credential pool with base URL https://api.neurogate.space/v1.",
-        "Runtime provider resolution maps NeuroGate to `codex_responses` so GPT-5.x / Responses-compatible calls do not fall back to Chat Completions."
-      ],
-      "exported_from": "hermes-017-reanchor-build-20260620T041149Z"
-    },
-    {
       "id": "provider-plugin-model-switch",
       "file": "patches/v2026.6.19/096-provider-plugin-model-switch.patch",
       "title_en": "Provider plugins in model switcher",
@@ -512,14 +483,13 @@
       "file": "patches/v2026.6.19/100-vibemode-provider-plugin.patch",
       "title_en": "VibeMode model provider plugin",
       "title_ru": "Model provider plugin для VibeMode",
-      "description_en": "Renames the former NeuroGate provider overlay to VibeMode, moves the endpoint to https://api.vibemod.pro/v1, and adds provider-profile per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
-      "description_ru": "Переименовывает бывший NeuroGate provider overlay в VibeMode, переносит endpoint на https://api.vibemod.pro/v1 и добавляет per-model metadata в ProviderProfile: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
+      "description_en": "Adds the VibeMode provider plugin with endpoint https://api.vibemod.pro/v1 and provider-profile per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
+      "description_ru": "Добавляет provider plugin VibeMode с endpoint https://api.vibemod.pro/v1 и per-model metadata в ProviderProfile: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
       "category": "provider",
       "track": "local-overlay",
       "optional": true,
       "default": false,
       "depends_on": [
-        "neurogate-provider-plugin",
         "provider-plugin-model-switch",
         "api-server-fallback-model-kwarg"
       ],
@@ -538,7 +508,7 @@
       "refreshed_for": "v2026.6.19",
       "impact": [
         "`hermes auth add vibemode --type api-key` persists credentials with base URL https://api.vibemod.pro/v1.",
-        "The final patched runtime exposes `vibemode` as the canonical provider and removes the old `neurogate` plugin/test surface.",
+        "The patched runtime exposes `vibemode` as the canonical VibeMode provider.",
         "Known VibeMode model metadata is an overlay only: /v1/models remains authoritative for model availability, while the overlay supplies context windows, capabilities, endpoint kinds, and per-model api_mode routing."
       ],
       "exported_from": "hermesfix-vibemode-provider-20260628"

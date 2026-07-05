@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-05 — Hermes 0.18 re-anchor
+
+PatchKit is refreshed against official Hermes Agent `v2026.7.1` / `0.18.0`. The active release manifest is `manifests/upstream-v2026.7.1.yaml`; release patch files live under `patches/v2026.7.1/`.
+
+The v0.18 personal profile carries 11 active units: `010`, `020`, `030`, `070`, `078`, `080`, `090`, `096`, `097`, `099`, and `100`. Units now covered by upstream v0.18 are retired instead of re-exported: Telegram free-response/rich delivery fixes, gateway document media types, API-server fallback-model kwargs, SMTP_SSL, and the old Home Assistant config URL overlay. VibeMode remains active with a provider-profile `User-Agent: HermesAgent/1.0` override for Responses compatibility.
+
+---
+
+# Новости
+
+## 2026-07-05 — Re-anchor на Hermes 0.18
+
+PatchKit refresh'нут against official Hermes Agent `v2026.7.1` / `0.18.0`. Активный release manifest: `manifests/upstream-v2026.7.1.yaml`; release patch files лежат в `patches/v2026.7.1/`.
+
+Personal profile для v0.18 несёт 11 active units: `010`, `020`, `030`, `070`, `078`, `080`, `090`, `096`, `097`, `099` и `100`. Всё, что upstream v0.18 уже закрыл, retired вместо повторного экспорта: Telegram free-response/rich delivery fixes, gateway document media types, API-server fallback-model kwargs, SMTP_SSL и старый Home Assistant config URL overlay. VibeMode остаётся active с provider-profile `User-Agent: HermesAgent/1.0` override для Responses compatibility.
+
+---
+
 ## 2026-06-30 — Telegram streamed final edit duplicate guard
 
 PatchKit refreshes `041-telegram-rich-flood-fallback` for the Hermes `v2026.6.19` / `0.17.0` line. The unit already covered rich-message `RetryAfter` fallback and long-response overflow duplicates; it now also covers the shorter streamed-response path where Telegram accepts a visible preview but flood-limits the final formatting/finalize edit.

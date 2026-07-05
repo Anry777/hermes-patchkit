@@ -278,36 +278,6 @@
       "exported_from": "577c5a9bd4de1f7b4b5c2cb112fae45fd69d9511"
     },
     {
-      "id": "neurogate-provider-plugin",
-      "file": "patches/v2026.5.29/093-neurogate-provider-plugin.patch",
-      "title_en": "NeuroGate model provider plugin",
-      "title_ru": "Model provider plugin для NeuroGate",
-      "description_en": "Adds NeuroGate as a bundled model-provider plugin with one canonical provider id (`neurogate`), hermes auth API-key support, default Responses API routing for api.neurogate.space, fallback GPT-5.x catalog entries, and focused auth/runtime regression tests.",
-      "description_ru": "Добавляет NeuroGate как bundled model-provider plugin с одним canonical provider id (`neurogate`), поддержкой API-key через hermes auth, default routing на Responses API для api.neurogate.space, fallback catalog GPT-5.x моделей и focused auth/runtime regression tests.",
-      "category": "provider",
-      "track": "local-overlay",
-      "optional": true,
-      "default": false,
-      "depends_on": [],
-      "conflicts_with": [],
-      "status": "exported",
-      "verification": {
-        "focused_tests": [
-          "tests/hermes_cli/test_neurogate_auth.py",
-          "tests/providers/test_plugin_discovery.py",
-          "tests/providers/test_provider_profiles.py"
-        ]
-      },
-      "base_upstream": "e71a2bd11b733f3be7cf99deafde0066c343d462",
-      "refreshed_for": "v2026.5.29",
-      "rollback": "patches/v2026.5.29/093-neurogate-provider-plugin.rollback.patch",
-      "impact": [
-        "`hermes auth add neurogate --type api-key` persists credentials into the shared credential pool with base URL https://api.neurogate.space/v1.",
-        "Runtime provider resolution maps NeuroGate to `codex_responses` so GPT-5.x / Responses-compatible calls do not fall back to Chat Completions."
-      ],
-      "exported_from": "f458ae9e4"
-    },
-    {
       "id": "provider-plugin-model-switch",
       "file": "patches/v2026.5.29/096-provider-plugin-model-switch.patch",
       "title_en": "Provider plugins in model switcher",
@@ -325,7 +295,7 @@
         "focused_tests": [
           "tests/hermes_cli/test_model_switch_custom_providers.py",
           "tests/hermes_cli/test_list_picker_providers.py",
-          "tests/hermes_cli/test_neurogate_auth.py",
+          "tests/hermes_cli/test_vibemode_auth.py",
           "tests/providers/test_plugin_discovery.py",
           "tests/providers/test_provider_profiles.py",
           "tests/agent/test_model_metadata.py"
@@ -336,9 +306,9 @@
       "rollback": "patches/v2026.5.29/096-provider-plugin-model-switch.rollback.patch",
       "impact": [
         "resolve_provider_full() can resolve any registered ProviderProfile, not only built-in/models.dev/config providers.",
-        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as neurogate.",
+        "/model --provider <plugin> and /mode no longer report Unknown provider for credentialed provider plugins such as vibemode.",
         "ProviderProfile can declare per-model context windows, and get_model_context_length() uses them before broad family defaults.",
-        "NeuroGate gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
+        "VibeMode gpt-5.5 resolves to its provider-enforced 272,000-token window instead of the direct OpenAI fallback of 1,050,000.",
         "No duplicate config.yaml providers entry is required for bundled or user model-provider plugins."
       ],
       "exported_from": "afbf16cff47db3e43a08e4359e2e90a518edab50"

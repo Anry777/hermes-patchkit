@@ -7,7 +7,7 @@
 Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
 Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
 
-Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.6.19` / `0.17.0`, снова несёт `010-cli-tui-idle-refresh-fix`, чтобы classic CLI scrollback не тянуло вниз idle repaint'ом, обновляет `041-telegram-rich-flood-fallback`, чтобы Telegram flood-control на streamed finalization не создавал второй answer bubble, а теперь ещё несёт `078-max-userbot-platform-plugin`: experimental MAX userbot gateway через PyMax для доступа через user account, когда official Bot API bot создать нельзя. Existing profiles, где явно стоит `display.cli_refresh_interval: 1.0`, нужно нормализовать в `0`. Старый Grok2API sidecar bridge теперь legacy fallback; для Grok/SuperGrok предпочитаем upstream-native `xai` / `xai-oauth`. См. [NEWS.md](NEWS.md).
+Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.7.1` / `0.18.0`. Текущий personal profile несёт только актуальный v0.18 overlay: shared root auth, credential-pool recovery, MAX Bot API и MAX userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity и VibeMode provider plugin с Hermes User-Agent для VibeMode Responses endpoint. Telegram rich/gating, SMTP_SSL, document media types, API-server fallback-model kwargs и старый Home Assistant config URL overlay retired там, где upstream v0.18 уже закрывает поведение. См. [NEWS.md](NEWS.md).
 
 ## Главный patch сейчас: Provider Proxy Gateway
 
@@ -22,8 +22,8 @@ Hermes PatchKit проверяет твои локальные фиксы на �
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-provider-proxy.yaml \
   --yes
 ```
 
@@ -32,8 +32,8 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 Для headless/CI режима:
@@ -41,8 +41,8 @@ python3 scripts/tui.py \
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 Обычная проверка безопасна: PatchKit подтягивает upstream metadata, клонирует candidate в `/tmp`, проверяет выбранные patch'и там и пишет отчёт в `reports/`. Он не применяет patch'и и не merge'ит upstream в live checkout.
@@ -98,7 +98,7 @@ PatchKit возвращает эту границу:
 
 Свежие заметные patch'и:
 
-- `v2026.5.16` / Hermes 0.14 re-anchor — активные core overlays refresh'нуты against official release tag. Grok2API sidecar оставлен в docs как legacy fallback, не как active default path.
+- `v2026.7.1` / Hermes 0.18 re-anchor — active overlays refresh'нуты against official release tag; absorbed Telegram/email/API/media/Home Assistant units retired вместо переноса вперёд.
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов. IDE path покрывает streaming, tool calls, inline images, RooCode `reasoning_effort` и фильтрацию Codex sampling parameters.
 - `070-max-platform-plugin` — release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval-кнопки и компактный edit-in-place tool progress без raw non-verbose command previews.
 - `078-max-userbot-platform-plugin` — отдельный experimental MAX userbot plugin через MaxApiTeam/PyMax (`maxapi-python`) для user-account access: profile-local sessions, session locking, allowlists, replies/edits, media mapping, file delivery и approval payloads.
@@ -113,8 +113,8 @@ python3 scripts/verify.py --self-check
 
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 Если нужен неинтерактивный вывод:
@@ -122,8 +122,8 @@ python3 scripts/tui.py \
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
-  --profile profiles/v2026.6.19-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.7.1.yaml \
+  --profile profiles/v2026.7.1-upstream-fixes.yaml
 ```
 
 Для одного patch'а:
@@ -131,7 +131,7 @@ python3 scripts/update.py \
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.6.19.yaml \
+  --manifest manifests/upstream-v2026.7.1.yaml \
   --patch gateway-explicit-media-delivery-safety
 ```
 

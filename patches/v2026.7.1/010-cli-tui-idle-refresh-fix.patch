@@ -1,0 +1,50 @@
+diff --git a/hermes_cli/config.py b/hermes_cli/config.py
+index d36f7e8a9..db1231a08 100644
+--- a/hermes_cli/config.py
++++ b/hermes_cli/config.py
+@@ -1600,13 +1600,11 @@ DEFAULT_CONFIG = {
+         # spinner), or ascii.  Live-swappable via `/indicator <style>`.
+         "tui_status_indicator": "kaomoji",
+         # Seconds between prompt_toolkit redraws in the classic CLI when idle.
+-        # Default 1.0 keeps the wall-clock status-bar read-outs (idle-since-
+-        # last-turn) ticking and keeps the bottom chrome alive during idle —
+-        # without it prompt_toolkit stops repainting the status bar after a
+-        # turn and it can go stale/disappear (#45592).
+-        # Set 0 to disable the background refresh if it fights terminal
+-        # auto-scroll in non-fullscreen mode on some emulators (#48309).
+-        "cli_refresh_interval": 1.0,
++        # PatchKit defaults this to 0 so idle prompt_toolkit redraws do not
++        # yank terminal scrollback to the bottom in non-fullscreen mode
++        # (#48309). Set a positive value such as 1.0 to opt back into the
++        # upstream idle clock/status-bar refresh behavior (#45592).
++        "cli_refresh_interval": 0,
+         "user_message_preview": {  # CLI: how many submitted user-message lines to echo back in scrollback
+             "first_lines": 2,
+             "last_lines": 2,
+diff --git a/tests/hermes_cli/test_config.py b/tests/hermes_cli/test_config.py
+index 5f84004ee..a68ad25fb 100644
+--- a/tests/hermes_cli/test_config.py
++++ b/tests/hermes_cli/test_config.py
+@@ -956,14 +956,14 @@ class TestInterimAssistantMessageConfig:
+ 
+ 
+ class TestCliRefreshIntervalConfig:
+-    """Test the CLI refresh_interval config default (#45592 / #48309)."""
+-
+-    def test_default_config_enables_cli_refresh_interval(self):
+-        """cli_refresh_interval defaults to 1.0 so the idle status-bar
+-        clock keeps ticking and the bottom chrome stays alive during
+-        idle (#45592). Users on emulators where the periodic redraw
+-        fights auto-scroll can set it to 0 (#48309)."""
+-        assert DEFAULT_CONFIG["display"]["cli_refresh_interval"] == 1.0
++    """Test the PatchKit CLI refresh_interval default (#45592 / #48309)."""
++
++    def test_default_config_disables_cli_refresh_interval(self):
++        """cli_refresh_interval defaults to 0 so idle prompt_toolkit
++        redraws do not fight terminal auto-scroll in non-fullscreen mode
++        (Xshell, iTerm2, Windows Terminal). Operators who prefer the
++        ticking idle status bar can opt in with a positive interval."""
++        assert DEFAULT_CONFIG["display"]["cli_refresh_interval"] == 0
+ 
+ 
+ class TestDiscordChannelPromptsConfig:

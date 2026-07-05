@@ -11,7 +11,6 @@
     "api-server-provider-proxy",
     "lsp-configured-websocket-transport",
     "email-smtp-ssl",
-    "1c-document-types",
-    "neurogate-provider-plugin"
+    "1c-document-types"
   ]
 }

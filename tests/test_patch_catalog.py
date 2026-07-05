@@ -145,7 +145,6 @@ class PatchCatalogTests(unittest.TestCase):
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",
                 "1c-document-types",
-                "neurogate-provider-plugin",
             ],
         )
         self.assertNotIn("cli-tui-idle-refresh-fix", ids)
@@ -183,7 +182,6 @@ class PatchCatalogTests(unittest.TestCase):
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",
                 "gateway-document-media-types",
-                "neurogate-provider-plugin",
                 "provider-plugin-model-switch",
                 "root-home-media-delivery",
                 "gateway-busy-text-compat",
@@ -235,7 +233,6 @@ class PatchCatalogTests(unittest.TestCase):
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",
                 "gateway-document-media-types",
-                "neurogate-provider-plugin",
                 "gateway-busy-text-compat",
                 "provider-plugin-model-switch",
                 "gateway-explicit-media-delivery-safety",
@@ -295,7 +292,6 @@ class PatchCatalogTests(unittest.TestCase):
                 "lsp-configured-websocket-transport",
                 "email-smtp-ssl",
                 "gateway-document-media-types",
-                "neurogate-provider-plugin",
                 "provider-plugin-model-switch",
                 "gateway-explicit-media-delivery-safety",
                 "api-server-fallback-model-kwarg",

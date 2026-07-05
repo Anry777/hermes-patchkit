@@ -39,8 +39,8 @@ index c042fd556..8e7f0e2e9 100644
 +        monkeypatch.setattr(
 +            "gateway.run._resolve_runtime_agent_kwargs",
 +            lambda: {
-+                "provider": "neurogate",
-+                "base_url": "https://api.neurogate.space/v1",
++                "provider": "vibemode",
++                "base_url": "https://api.vibemod.pro/v1",
 +                "api_mode": "codex_responses",
 +                "model": "gpt-5.5",
 +            },
@@ -58,7 +58,7 @@ index c042fd556..8e7f0e2e9 100644
 +
 +        assert isinstance(agent, FakeAgent)
 +        assert captured["model"] == "gpt-5.5"
-+        assert captured["kwargs"]["provider"] == "neurogate"
++        assert captured["kwargs"]["provider"] == "vibemode"
 +        assert "model" not in captured["kwargs"]
 +
  

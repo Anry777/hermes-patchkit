@@ -33,7 +33,7 @@ index 0ce9d0c63..3d31ef006 100644
 +    """Resolve per-model context windows declared by provider plugins.
 +
 +    Provider plugins can serve the same bare model slug with a provider-specific
-+    enforced window (for example NeuroGate gpt-5.5 is 272k while direct OpenAI
++    enforced window (for example VibeMode gpt-5.5 is 272k while direct OpenAI
 +    gpt-5.5 is larger). Keep those limits in the provider profile instead of
 +    leaking provider-specific overrides into broad DEFAULT_CONTEXT_LENGTHS.
 +    """
@@ -335,8 +335,8 @@ index 0eab4dcff..a66f39910 100644
 +# =========================================================================
 +
 +class TestProviderPluginContextLength:
-+    def test_neurogate_gpt55_uses_provider_plugin_context_window(self):
-+        """NeuroGate serves gpt-5.5 with a provider-enforced 272k window.
++    def test_vibemode_gpt55_uses_provider_plugin_context_window(self):
++        """VibeMode serves gpt-5.5 with a provider-enforced 272k window.
 +
 +        The direct OpenAI fallback for the same bare slug is 1.05M, so this
 +        must resolve through provider-plugin metadata rather than generic
@@ -348,12 +348,12 @@ index 0eab4dcff..a66f39910 100644
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="gpt-5.5",
-+                base_url="https://api.neurogate.space/v1",
++                base_url="https://api.vibemod.pro/v1",
 +                api_key="",
-+                provider="neurogate",
++                provider="vibemode",
 +            ) == 272_000
 +
-+    def test_neurogate_context_window_can_resolve_from_plugin_base_url(self):
++    def test_vibemode_context_window_can_resolve_from_plugin_base_url(self):
 +        """URL-inferred provider plugins should get the same per-model window."""
 +        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
 +             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
@@ -361,7 +361,7 @@ index 0eab4dcff..a66f39910 100644
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="gpt-5.5",
-+                base_url="https://api.neurogate.space/v1",
++                base_url="https://api.vibemod.pro/v1",
 +                api_key="",
 +                provider="",
 +            ) == 272_000

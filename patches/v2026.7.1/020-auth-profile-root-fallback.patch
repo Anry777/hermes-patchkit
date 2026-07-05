@@ -1,0 +1,225 @@
+diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
+index 8ed7b5aab6..cd7f40be68 100644
+--- a/agent/auxiliary_client.py
++++ b/agent/auxiliary_client.py
+@@ -103,8 +103,7 @@ OpenAI = _OpenAIProxy()  # module-level name, resolves lazily on call/isinstance
+ from agent.credential_pool import load_pool
+ from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, get_model_context_length
+ from agent.process_bootstrap import build_keepalive_http_client
+-from hermes_cli.config import get_hermes_home
+-from hermes_constants import OPENROUTER_BASE_URL
++from hermes_constants import OPENROUTER_BASE_URL, resolve_auth_store_path
+ from utils import base_url_host_matches, base_url_hostname, env_float, model_forces_max_completion_tokens, normalize_proxy_env_vars
+ 
+ logger = logging.getLogger(__name__)
+@@ -567,8 +566,6 @@ _OPENROUTER_MODEL = "google/gemini-3-flash-preview"
+ _NOUS_MODEL = "google/gemini-3-flash-preview"
+ _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
+ _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+-_AUTH_JSON_PATH = get_hermes_home() / "auth.json"
+-
+ # Codex OAuth endpoint used when a caller explicitly requests
+ # provider="openai-codex".  There is deliberately no hardcoded default
+ # model: the set of models OpenAI accepts on this endpoint for
+@@ -1407,9 +1404,10 @@ def _read_nous_auth() -> Optional[dict]:
+         }
+ 
+     try:
+-        if not _AUTH_JSON_PATH.is_file():
++        auth_path = resolve_auth_store_path()
++        if not auth_path.is_file():
+             return None
+-        data = json.loads(_AUTH_JSON_PATH.read_text())
++        data = json.loads(auth_path.read_text())
+         if data.get("active_provider") != "nous":
+             return None
+         provider = data.get("providers", {}).get("nous", {})
+diff --git a/hermes_cli/auth.py b/hermes_cli/auth.py
+index 218040e673..2154e9f191 100644
+--- a/hermes_cli/auth.py
++++ b/hermes_cli/auth.py
+@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
+ import httpx
+ 
+ from hermes_cli.config import get_hermes_home, get_config_path, read_raw_config
+-from hermes_constants import OPENROUTER_BASE_URL, secure_parent_dir
++from hermes_constants import OPENROUTER_BASE_URL, resolve_auth_store_path, secure_parent_dir
+ from agent.credential_persistence import sanitize_borrowed_credential_payload
+ from utils import atomic_replace, atomic_yaml_write, env_float, is_truthy_value
+ 
+@@ -875,14 +875,14 @@ def _oauth_trace(event: str, *, sequence_id: Optional[str] = None, **fields: Any
+ # =============================================================================
+ 
+ def _auth_file_path() -> Path:
+-    path = get_hermes_home() / "auth.json"
++    path = resolve_auth_store_path()
+     # Seat belt: if pytest is running and HERMES_HOME resolves to the real
+     # user's auth store, refuse rather than silently corrupt it. This catches
+     # tests that forgot to monkeypatch HERMES_HOME, tests invoked without the
+     # hermetic conftest, or sandbox escapes via threads/subprocesses. In
+     # production (no PYTEST_CURRENT_TEST) this is a single dict lookup.
+     if os.environ.get("PYTEST_CURRENT_TEST"):
+-        real_home_auth = (Path.home() / ".hermes" / "auth.json").resolve(strict=False)
++        real_home_auth = (Path(os.path.expanduser("~")) / ".hermes" / "auth.json").resolve(strict=False)
+         try:
+             resolved = path.resolve(strict=False)
+         except Exception:
+diff --git a/hermes_cli/main.py b/hermes_cli/main.py
+index aedcb603e5..c1c0949fae 100644
+--- a/hermes_cli/main.py
++++ b/hermes_cli/main.py
+@@ -850,7 +850,9 @@ def _has_any_provider_configured() -> bool:
+         pass
+ 
+     # Check for Nous Portal OAuth credentials
+-    auth_file = get_hermes_home() / "auth.json"
++    from hermes_constants import resolve_auth_store_path
++
++    auth_file = resolve_auth_store_path()
+     if auth_file.exists():
+         try:
+             import json
+diff --git a/hermes_constants.py b/hermes_constants.py
+index 526bb0ed47..2955504f50 100644
+--- a/hermes_constants.py
++++ b/hermes_constants.py
+@@ -150,6 +150,11 @@ def get_default_hermes_root() -> Path:
+     return env_path
+ 
+ 
++def resolve_auth_store_path() -> Path:
++    """Return the shared root Hermes auth store path."""
++    return get_default_hermes_root() / "auth.json"
++
++
+ def _get_packaged_data_dir(name: str) -> Path | None:
+     """Return an installed data-files directory if one exists.
+ 
+diff --git a/tests/patchkit/test_auth_shared_root.py b/tests/patchkit/test_auth_shared_root.py
+new file mode 100644
+index 0000000000..be3a93edc1
+--- /dev/null
++++ b/tests/patchkit/test_auth_shared_root.py
+@@ -0,0 +1,82 @@
++import json
++from pathlib import Path
++
++
++def test_profile_auth_reads_shared_root_even_when_profile_auth_exists(tmp_path, monkeypatch):
++    root = tmp_path / ".hermes"
++    profile = root / "profiles" / "coder"
++    profile.mkdir(parents=True)
++    (root / "auth.json").write_text(json.dumps({
++        "version": 1,
++        "active_provider": "nous",
++        "providers": {"nous": {"access_token": "root-token"}},
++    }))
++    (profile / "auth.json").write_text(json.dumps({
++        "version": 1,
++        "active_provider": "nous",
++        "providers": {"nous": {"access_token": "profile-token"}},
++    }))
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(profile))
++
++    from hermes_cli.auth import _auth_file_path, _auth_lock_path, _load_auth_store
++
++    assert _auth_file_path() == root / "auth.json"
++    assert _auth_lock_path() == root / "auth.lock"
++    assert _load_auth_store()["providers"]["nous"]["access_token"] == "root-token"
++
++
++def test_profile_auth_writes_shared_root_not_profile_store(tmp_path, monkeypatch):
++    root = tmp_path / ".hermes"
++    profile = root / "profiles" / "coder"
++    profile.mkdir(parents=True)
++    root_payload = {
++        "version": 1,
++        "active_provider": "anthropic",
++        "providers": {"anthropic": {"access_token": "root-token"}},
++        "credential_pool": {
++            "anthropic": [{"id": "a", "auth_type": "oauth", "source": "manual"}],
++            "openrouter": [{"id": "b", "auth_type": "api_key", "source": "manual"}],
++        },
++    }
++    profile_payload = {
++        "version": 1,
++        "active_provider": "anthropic",
++        "providers": {"anthropic": {"access_token": "profile-token"}},
++    }
++    (root / "auth.json").write_text(json.dumps(root_payload))
++    (profile / "auth.json").write_text(json.dumps(profile_payload))
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(profile))
++
++    from hermes_cli.auth import clear_provider_auth
++
++    assert clear_provider_auth("anthropic") is True
++    root_after = json.loads((root / "auth.json").read_text())
++    assert "anthropic" not in root_after.get("providers", {})
++    assert "anthropic" not in root_after.get("credential_pool", {})
++    assert "openrouter" in root_after.get("credential_pool", {})
++    assert json.loads((profile / "auth.json").read_text()) == profile_payload
++
++
++def test_auxiliary_nous_reads_shared_root_from_profile(tmp_path, monkeypatch):
++    root = tmp_path / ".hermes"
++    profile = root / "profiles" / "coder"
++    profile.mkdir(parents=True)
++    (root / "auth.json").write_text(json.dumps({
++        "active_provider": "nous",
++        "providers": {"nous": {
++            "access_token": "root-token",
++            "agent_key": "root-agent",
++            "inference_base_url": "https://inference.example/v1",
++        }},
++    }))
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
++    monkeypatch.setenv("HERMES_HOME", str(profile))
++
++    from agent.auxiliary_client import _read_nous_auth
++
++    provider = _read_nous_auth()
++    assert provider is not None
++    assert provider["access_token"] == "root-token"
++    assert provider["agent_key"] == "root-agent"
+diff --git a/tools/managed_tool_gateway.py b/tools/managed_tool_gateway.py
+index d894dcb4b2..e0ec90c0e6 100644
+--- a/tools/managed_tool_gateway.py
++++ b/tools/managed_tool_gateway.py
+@@ -11,7 +11,7 @@ from typing import Callable, Optional
+ 
+ logger = logging.getLogger(__name__)
+ 
+-from hermes_constants import get_hermes_home
++from hermes_constants import resolve_auth_store_path
+ from tools.tool_backend_helpers import managed_nous_tools_enabled
+ 
+ _DEFAULT_TOOL_GATEWAY_DOMAIN = "nousresearch.com"
+@@ -28,8 +28,8 @@ class ManagedToolGatewayConfig:
+ 
+ 
+ def auth_json_path():
+-    """Return the Hermes auth store path, respecting HERMES_HOME overrides."""
+-    return get_hermes_home() / "auth.json"
++    """Return the effective Hermes auth store path for reads."""
++    return resolve_auth_store_path()
+ 
+ 
+ def _read_nous_provider_state() -> Optional[dict]:
+diff --git a/tools/xai_http.py b/tools/xai_http.py
+index fb1f523175..39f2e3f6f3 100644
+--- a/tools/xai_http.py
++++ b/tools/xai_http.py
+@@ -36,9 +36,9 @@ def has_xai_credentials() -> bool:
+     if os.environ.get("XAI_API_KEY", "").strip():
+         return True
+     try:
+-        from hermes_constants import get_hermes_home
++        from hermes_constants import resolve_auth_store_path
+ 
+-        auth_path = get_hermes_home() / "auth.json"
++        auth_path = resolve_auth_store_path()
+         if not auth_path.exists():
+             return False
+         store = json.loads(auth_path.read_text())

@@ -1,11 +1,24 @@
 diff --git a/agent/model_metadata.py b/agent/model_metadata.py
-index 4493eae5f..aa40f4fb1 100644
+index 547fe2f579..7a3a835352 100644
 --- a/agent/model_metadata.py
 +++ b/agent/model_metadata.py
-@@ -482,6 +482,79 @@ def _is_known_provider_base_url(base_url: str) -> bool:
-     return _infer_provider_from_url(base_url) is not None
+@@ -493,7 +493,89 @@ def _lmstudio_server_root(base_url: str) -> str:
  
  
+ def _is_known_provider_base_url(base_url: str) -> bool:
+-    return _infer_provider_from_url(base_url) is not None
++    if _infer_provider_from_url(base_url) is not None:
++        return True
++    try:
++        from providers import list_providers
++        return any(
++            (host := profile.get_hostname()) and base_url_host_matches(base_url, host)
++            for profile in list_providers()
++        )
++    except Exception:
++        return False
++
++
 +def _lookup_profile_model_context(profile: Any, model: str) -> Optional[int]:
 +    """Return provider-profile context_length for *model*, if declared."""
 +    context_map = getattr(profile, "model_context_lengths", None) or {}
@@ -77,12 +90,10 @@ index 4493eae5f..aa40f4fb1 100644
 +            pass
 +
 +    return None
-+
-+
- def is_local_endpoint(base_url: str) -> bool:
-     """Return True if base_url points to a local machine.
  
-@@ -1635,9 +1708,10 @@ def get_model_context_length(
+ 
+ def is_local_endpoint(base_url: str) -> bool:
+@@ -1801,9 +1883,10 @@ def get_model_context_length(
            cache fallback with suffix/version normalisation.  Only
            portal-derived values are persisted to disk.
         c. Codex OAuth /models probe
@@ -96,7 +107,7 @@ index 4493eae5f..aa40f4fb1 100644
      6. OpenRouter live API metadata (Kimi-family 32k guard)
      7. Hardcoded defaults (broad family patterns, longest-key-first)
      8. Local server query (last resort)
-@@ -1876,6 +1950,15 @@ def get_model_context_length(
+@@ -2070,6 +2153,15 @@ def get_model_context_length(
              if base_url:
                  save_context_length(model, base_url, codex_ctx)
              return codex_ctx
@@ -113,7 +124,7 @@ index 4493eae5f..aa40f4fb1 100644
          # GMI exposes authoritative context_length via /models, but it is not
          # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
 diff --git a/hermes_cli/model_switch.py b/hermes_cli/model_switch.py
-index 7f6fe70d9..d45fa3dce 100644
+index 48bf031b75..48d1ae8905 100644
 --- a/hermes_cli/model_switch.py
 +++ b/hermes_cli/model_switch.py
 @@ -30,6 +30,7 @@ from hermes_cli.providers import (
@@ -124,7 +135,7 @@ index 7f6fe70d9..d45fa3dce 100644
      is_aggregator,
      resolve_provider_full,
  )
-@@ -1738,6 +1739,72 @@ def list_authenticated_providers(
+@@ -1913,6 +1914,72 @@ def list_authenticated_providers(
          seen_slugs.add(_cp.slug.lower())
          _record_builtin_endpoint(_cp.slug)
  
@@ -198,10 +209,10 @@ index 7f6fe70d9..d45fa3dce 100644
      # Track (name, base_url) of what section 3 emits so section 4 can skip
      # any overlapping ``custom_providers:`` entries.  Callers typically pass
 diff --git a/hermes_cli/providers.py b/hermes_cli/providers.py
-index efc3a8576..248ac29b0 100644
+index 0c2a451831..613e55dea9 100644
 --- a/hermes_cli/providers.py
 +++ b/hermes_cli/providers.py
-@@ -402,6 +402,63 @@ def normalize_provider(name: str) -> str:
+@@ -398,6 +398,63 @@ def normalize_provider(name: str) -> str:
      return ALIASES.get(key, key)
  
  
@@ -265,7 +276,7 @@ index efc3a8576..248ac29b0 100644
  def get_provider(name: str) -> Optional[ProviderDef]:
      """Look up a built-in provider by id or alias.
  
-@@ -480,11 +537,16 @@ def get_label(provider_id: str) -> str:
+@@ -476,11 +533,16 @@ def get_label(provider_id: str) -> str:
      if canonical in _LABEL_OVERRIDES:
          return _LABEL_OVERRIDES[canonical]
  
@@ -283,7 +294,7 @@ index efc3a8576..248ac29b0 100644
      return canonical
  
  
-@@ -521,6 +583,10 @@ def determine_api_mode(provider: str, base_url: str = "") -> str:
+@@ -552,6 +614,10 @@ def determine_api_mode(provider: str, base_url: str = "") -> str:
                  return "codex_responses"
          return TRANSPORT_TO_API_MODE.get(pdef.transport, "chat_completions")
  
@@ -294,7 +305,7 @@ index efc3a8576..248ac29b0 100644
      # Direct provider checks for providers not in HERMES_OVERLAYS
      if provider == "bedrock":
          return "bedrock_converse"
-@@ -715,6 +781,11 @@ def resolve_provider_full(
+@@ -751,6 +817,11 @@ def resolve_provider_full(
      if custom_pdef is not None:
          return custom_pdef
  
@@ -307,7 +318,7 @@ index efc3a8576..248ac29b0 100644
      try:
          from agent.models_dev import get_provider_info as _mdev_provider
 diff --git a/providers/base.py b/providers/base.py
-index 4a045a676..5377a0d19 100644
+index 4a045a6765..5377a0d192 100644
 --- a/providers/base.py
 +++ b/providers/base.py
 @@ -77,6 +77,11 @@ class ProviderProfile:
@@ -323,10 +334,10 @@ index 4a045a676..5377a0d19 100644
      # e.g. "api.gmi-serving.com". Derived from base_url when empty.
      hostname: str = ""
 diff --git a/tests/agent/test_model_metadata.py b/tests/agent/test_model_metadata.py
-index ecde355d0..e2a756037 100644
+index a18d9fb461..db44f00525 100644
 --- a/tests/agent/test_model_metadata.py
 +++ b/tests/agent/test_model_metadata.py
-@@ -300,6 +300,43 @@ class TestDefaultContextLengths:
+@@ -300,6 +300,51 @@ class TestDefaultContextLengths:
              assert ctx != 32768, "Kimi 32k OR underreport must not be accepted"
  
  
@@ -335,33 +346,41 @@ index ecde355d0..e2a756037 100644
 +# =========================================================================
 +
 +class TestProviderPluginContextLength:
-+    def test_vibemode_gpt55_uses_provider_plugin_context_window(self):
-+        """VibeMode serves gpt-5.5 with a provider-enforced 272k window.
++    def _register_context_plugin(self):
++        from providers import register_provider
++        from providers.base import ProviderProfile
 +
-+        The direct OpenAI fallback for the same bare slug is 1.05M, so this
-+        must resolve through provider-plugin metadata rather than generic
-+        model-family defaults.
-+        """
++        register_provider(ProviderProfile(
++            name="plugin-ctx-test",
++            display_name="Plugin Context Test",
++            base_url="https://ctx-plugin.example/v1",
++            hostname="ctx-plugin.example",
++            fallback_models=("gpt-5.5",),
++            model_context_lengths={"gpt-5.5": 272_000},
++        ))
++
++    def test_provider_plugin_context_window_wins_by_provider_id(self):
++        self._register_context_plugin()
 +        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
 +             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
 +             patch("agent.models_dev.lookup_models_dev_context", return_value=None), \
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="gpt-5.5",
-+                base_url="https://api.vibemod.pro/v1",
++                base_url="https://ctx-plugin.example/v1",
 +                api_key="",
-+                provider="vibemode",
++                provider="plugin-ctx-test",
 +            ) == 272_000
 +
-+    def test_vibemode_context_window_can_resolve_from_plugin_base_url(self):
-+        """URL-inferred provider plugins should get the same per-model window."""
++    def test_provider_plugin_context_window_can_resolve_from_base_url(self):
++        self._register_context_plugin()
 +        with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
 +             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
 +             patch("agent.models_dev.lookup_models_dev_context", return_value=None), \
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="gpt-5.5",
-+                base_url="https://api.vibemod.pro/v1",
++                base_url="https://ctx-plugin.example/v1",
 +                api_key="",
 +                provider="",
 +            ) == 272_000
@@ -371,7 +390,7 @@ index ecde355d0..e2a756037 100644
  # Codex OAuth context-window resolution (provider="openai-codex")
  # =========================================================================
 diff --git a/tests/hermes_cli/test_model_switch_custom_providers.py b/tests/hermes_cli/test_model_switch_custom_providers.py
-index 388c82bd3..cf69fff6b 100644
+index 11a7613abf..026d2e31fa 100644
 --- a/tests/hermes_cli/test_model_switch_custom_providers.py
 +++ b/tests/hermes_cli/test_model_switch_custom_providers.py
 @@ -8,6 +8,8 @@ only looked at `providers:`.
@@ -462,7 +481,7 @@ index 388c82bd3..cf69fff6b 100644
  def test_is_aggregator_recognizes_named_custom_provider():
      assert providers_mod.is_aggregator("custom:hpc-ai") is True
      assert providers_mod.is_aggregator("custom:litellm") is True
-@@ -168,6 +235,50 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
+@@ -185,6 +252,50 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
      assert result.api_key == "no-key-required"
  
  
