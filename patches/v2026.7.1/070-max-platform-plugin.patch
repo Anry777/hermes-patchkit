@@ -63,7 +63,7 @@ index 0d8b569951..3314078594 100644
      # Tier 4 — batch or non-interactive delivery
      "email":           _TIER_MINIMAL,
 diff --git a/gateway/run.py b/gateway/run.py
-index 7c217ed5e4..bb5165ee2e 100644
+index a5fe58f97a..cf35a9f26a 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
 @@ -1715,6 +1715,21 @@ _OWN_POLICY_OPEN_ENV = {
@@ -88,7 +88,31 @@ index 7c217ed5e4..bb5165ee2e 100644
  def _own_policy_open_startup_violation(config) -> Optional[str]:
      """Return a startup-abort reason when open policy lacks allow-all opt-in."""
      for platform, platform_config in getattr(config, "platforms", {}).items():
-@@ -16347,7 +16362,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -16188,6 +16203,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 _progress_adapter = self.adapters.get(source.platform)
+             except Exception:
+                 _progress_adapter = None
++            _platform_value = str(getattr(source.platform, "value", source.platform)).lower()
++            _compact_persistent_progress = _platform_value == "max"
+             if (
+                 getattr(_progress_adapter, "supports_code_blocks", False)
+                 and tool_name == "terminal"
+@@ -16245,7 +16262,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             # compact — unlike CLI spinners, these persist as permanent messages).
+             # Terminal commands on markdown platforms get a single-line capped
+             # fenced block (built above) instead of the truncated preview.
+-            if _code_block_short is not None:
++            if _compact_persistent_progress:
++                # MAX progress bubbles are persistent chat messages even when
++                # they can be rendered, so keep them compact and avoid leaking
++                # raw command/URL previews into the transcript.
++                msg = f"{emoji} {tool_name}..."
++                last_was_terminal_block[0] = False
++            elif _code_block_short is not None:
+                 msg = _code_block_short
+                 last_was_terminal_block[0] = True
+             elif preview:
+@@ -16327,7 +16350,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
              # Skip tool progress for platforms that don't support message
              # editing (e.g. iMessage/BlueBubbles) — each progress update
              # would become a separate message bubble, which is noisy.
@@ -97,6 +121,33 @@ index 7c217ed5e4..bb5165ee2e 100644
                  while not progress_queue.empty():
                      try:
                          progress_queue.get_nowait()
+@@ -16339,6 +16362,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+             progress_msg_id = None   # ID of the current progress message to edit
+             can_edit = progress_grouping != "separate"  # "separate" = one message per tool (pre-v0.9 behavior)
+             _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
++            if str(getattr(source.platform, "value", source.platform)).lower() == "max":
++                # MAX progress is persisted as chat content, so coalesce the
++                # first burst before sending the initial progress bubble.
++                _last_edit_ts = time.monotonic()
+             _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
+ 
+             _progress_len_fn = (
+@@ -16633,7 +16660,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                                 await _roll_progress_overflow_if_needed()
+                         except Exception:
+                             break
+-                    # Final edit with all remaining tools (only if editing works)
++                    # Final send/edit with all remaining tools (only if rendering works)
++                    if can_edit and progress_lines and progress_msg_id is None:
++                        try:
++                            _result = await _send_progress_text(_progress_text(progress_lines))
++                            if getattr(_result, "success", False) and getattr(_result, "message_id", None):
++                                progress_msg_id = _result.message_id
++                        except Exception:
++                            pass
+                     if can_edit and progress_lines and progress_msg_id:
+                         await _roll_progress_overflow_if_needed()
+                     if can_edit and progress_lines and progress_msg_id:
 diff --git a/plugins/platforms/max/__init__.py b/plugins/platforms/max/__init__.py
 new file mode 100644
 index 0000000000..d4f1d7bf0e
@@ -108,7 +159,7 @@ index 0000000000..d4f1d7bf0e
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 0000000000..2c8a6377d6
+index 0000000000..50dc43f361
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
 @@ -0,0 +1,1356 @@

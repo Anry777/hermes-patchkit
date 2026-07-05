@@ -16,7 +16,7 @@ No unpublished project changes after the `v2026.7.1` cleanup.
 - kept the active v0.18 personal profile focused on 12 units: `010`, `020`, `030`, `041`, `070`, `078`, `080`, `090`, `096`, `097`, `099`, and `100`.
 
 ### Fixed
-- `070-max-platform-plugin` and `078-max-userbot-platform-plugin`: accept the current gateway reconnect callback shape.
+- `070-max-platform-plugin` and `078-max-userbot-platform-plugin`: accept the current gateway reconnect callback shape; `070` also keeps MAX persistent tool-progress bubbles compact and coalesces the first burst so raw command/URL previews are not posted as chat content.
 - `041-telegram-rich-flood-fallback`: restores the PatchKit Telegram duplicate guard for v0.18 when a finalized overflow first-chunk edit hits flood control; Hermes keeps the visible streaming prefix and sends only the missing tail instead of a second full formatted answer.
 - `100-vibemode-provider-plugin`: sends `User-Agent: HermesAgent/1.0` through provider-profile metadata for both OpenAI-compatible and Anthropic Messages transports, uses Bearer auth for VibeMode Messages, and treats Cloudflare/WAF 403 blocks as transport/header failures instead of exhausting the credential pool.
 

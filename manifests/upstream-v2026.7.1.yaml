@@ -125,8 +125,8 @@
       "file": "patches/v2026.7.1/070-max-platform-plugin.patch",
       "title_en": "MAX messenger platform plugin",
       "title_ru": "Platform plugin для MAX messenger",
-      "description_en": "Adds MAX messenger as an official Hermes platform plugin instead of core gateway patches: webhook-first production inbound delivery, explicit polling fallback for local testing, native image/file/audio attachments, safe media directives, send_message media delivery, and MAX Markdown formatting.",
-      "description_ru": "Добавляет MAX messenger как официальный Hermes platform plugin вместо core gateway patches: webhook-first production inbound delivery, явный polling fallback для локального теста, native image/file/audio attachments, безопасные media directives, media delivery через send_message и MAX Markdown formatting.",
+      "description_en": "Adds MAX messenger as an official Hermes platform plugin instead of core gateway patches: webhook-first production inbound delivery, explicit polling fallback for local testing, native image/file/audio attachments, safe media directives, send_message media delivery, compact persistent tool progress, and MAX Markdown formatting.",
+      "description_ru": "Добавляет MAX messenger как официальный Hermes platform plugin вместо core gateway patches: webhook-first production inbound delivery, явный polling fallback для локального теста, native image/file/audio attachments, безопасные media directives, media delivery через send_message, compact persistent tool progress и MAX Markdown formatting.",
       "category": "messaging",
       "track": "local-overlay",
       "optional": true,
@@ -137,12 +137,16 @@
       "verification": {
         "focused_tests": [
           "tests/plugins/test_max_platform_plugin.py",
-          "tests/gateway/test_platform_registry.py"
+          "tests/gateway/test_platform_registry.py",
+          "tests/gateway/test_run_progress_topics.py"
         ]
       },
       "exported_from": "hermes-017-reanchor-build-20260620T041149Z",
       "base_upstream": "7c1a029553",
-      "refreshed_for": "v2026.7.1"
+      "refreshed_for": "v2026.7.1",
+      "impact": [
+        "MAX tool-progress bubbles stay compact and coalesce the first burst so persistent progress messages do not expose raw command or URL previews."
+      ]
     },
     {
       "id": "max-userbot-platform-plugin",
