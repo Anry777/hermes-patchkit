@@ -1,0 +1,89 @@
+diff --git a/plugins/platforms/telegram/adapter.py b/plugins/platforms/telegram/adapter.py
+index 172e0a33cc..9ab3696237 100644
+--- a/plugins/platforms/telegram/adapter.py
++++ b/plugins/platforms/telegram/adapter.py
+@@ -3832,7 +3832,40 @@ class TelegramAdapter(BasePlatformAdapter):
+                         parse_mode=ParseMode.MARKDOWN_V2,
+                     )
+                 except Exception as fmt_err:
+-                    if "not modified" not in str(fmt_err).lower():
++                    err_str = str(fmt_err).lower()
++                    if "not modified" not in err_str:
++                        retry_after = getattr(fmt_err, "retry_after", None)
++                        is_flood = (
++                            retry_after is not None
++                            or "retry after" in err_str
++                            or "flood control exceeded" in err_str
++                        )
++                        if is_flood:
++                            delivered_prefix = re.sub(
++                                r" \\(\\d+/\\d+\\)$", "", first_chunk
++                            )
++                            logger.warning(
++                                "[%s] Overflow split: first-chunk finalize edit "
++                                "flood-limited; preserving visible prefix and "
++                                "falling back to tail delivery: %s",
++                                self.name, fmt_err,
++                            )
++                            return SendResult(
++                                success=False,
++                                message_id=message_id,
++                                error="overflow_first_chunk_flood_control",
++                                retryable=False,
++                                retry_after=retry_after,
++                                raw_response={
++                                    "partial_overflow": True,
++                                    "delivered_chunks": 1,
++                                    "total_chunks": len(chunks),
++                                    "last_message_id": message_id,
++                                    "delivered_prefix": delivered_prefix,
++                                    "continuation_message_ids": (),
++                                },
++                                continuation_message_ids=(),
++                            )
+                         logger.warning(
+                             "[%s] Overflow split: MarkdownV2 first-chunk edit "
+                             "failed, falling back to plain text: %s",
+diff --git a/tests/gateway/test_telegram_overflow_partial.py b/tests/gateway/test_telegram_overflow_partial.py
+index 663d1c83af..e4592d843c 100644
+--- a/tests/gateway/test_telegram_overflow_partial.py
++++ b/tests/gateway/test_telegram_overflow_partial.py
+@@ -95,6 +95,38 @@ async def test_edit_overflow_split_reports_partial_failure_when_continuation_fai
+     assert result.continuation_message_ids == ()
+ 
+ 
++@pytest.mark.asyncio
++async def test_edit_overflow_split_reports_partial_when_final_first_chunk_edit_is_flood_limited(telegram_adapter):
++    """A flood-limited final overflow edit must not trigger a full resend.
++
++    Mid-stream Telegram previews show a truncated first chunk. If the final
++    overflow split cannot re-edit that first chunk because Telegram rate-limits
++    the cosmetic/finalize edit, the stream consumer still needs partial-overflow
++    metadata so it sends only the missing tail instead of a duplicate full reply.
++    """
++    content = "word " * 120
++    telegram_adapter._bot.edit_message_text = AsyncMock(
++        side_effect=RuntimeError("Flood control exceeded. Retry in 27 seconds")
++    )
++    telegram_adapter._bot.send_message = AsyncMock()
++
++    result = await telegram_adapter._edit_overflow_split(
++        "12345", "201", content, finalize=True, metadata={"thread_id": "77"}
++    )
++
++    assert result.success is False
++    assert result.retryable is False
++    assert result.error == "overflow_first_chunk_flood_control"
++    assert result.message_id == "201"
++    assert result.raw_response["partial_overflow"] is True
++    assert result.raw_response["delivered_chunks"] == 1
++    assert result.raw_response["total_chunks"] > 1
++    assert result.raw_response["last_message_id"] == "201"
++    assert result.raw_response["delivered_prefix"]
++    assert result.continuation_message_ids == ()
++    telegram_adapter._bot.send_message.assert_not_awaited()
++
++
+ @pytest.mark.asyncio
+ async def test_stream_consumer_fallback_sends_tail_after_partial_overflow():
+     """A partial overflow edit enters fallback instead of marking final delivered."""

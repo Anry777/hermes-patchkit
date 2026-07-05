@@ -4,6 +4,7 @@
     "cli-tui-idle-refresh-fix",
     "auth-profile-root-fallback",
     "credential-pool-recovery",
+    "telegram-rich-flood-fallback",
     "max-platform-plugin",
     "max-userbot-platform-plugin",
     "api-server-provider-proxy",

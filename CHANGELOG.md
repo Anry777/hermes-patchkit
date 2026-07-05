@@ -13,14 +13,15 @@ No unpublished project changes after the `v2026.7.1` cleanup.
 ### Changed
 - re-anchored PatchKit to Hermes Agent `v2026.7.1` / `0.18.0`, adding `manifests/upstream-v2026.7.1.yaml`, `profiles/v2026.7.1-upstream-fixes.yaml`, `profiles/v2026.7.1-provider-proxy.yaml`, `profiles/v2026.7.1-personal.yaml`, and refreshed `patches/v2026.7.1/` exports.
 - retired the stale NeuroGate provider patch line and kept VibeMode as the canonical provider plugin.
-- kept the active v0.18 personal profile focused on 11 units: `010`, `020`, `030`, `070`, `078`, `080`, `090`, `096`, `097`, `099`, and `100`.
+- kept the active v0.18 personal profile focused on 12 units: `010`, `020`, `030`, `041`, `070`, `078`, `080`, `090`, `096`, `097`, `099`, and `100`.
 
 ### Fixed
 - `070-max-platform-plugin` and `078-max-userbot-platform-plugin`: accept the current gateway reconnect callback shape.
+- `041-telegram-rich-flood-fallback`: restores the PatchKit Telegram duplicate guard for v0.18 when a finalized overflow first-chunk edit hits flood control; Hermes keeps the visible streaming prefix and sends only the missing tail instead of a second full formatted answer.
 - `100-vibemode-provider-plugin`: sends `User-Agent: HermesAgent/1.0` through provider-profile metadata for both OpenAI-compatible and Anthropic Messages transports, uses Bearer auth for VibeMode Messages, and treats Cloudflare/WAF 403 blocks as transport/header failures instead of exhausting the credential pool.
 
 ### Retired
-- `040-telegram-free-response-target-gating`, `041-telegram-rich-flood-fallback`, `091-email-smtp-ssl`, `092-gateway-document-media-types`, and `098-api-server-fallback-model-kwarg`: upstream v0.18 covers these behaviors for the release line.
+- `040-telegram-free-response-target-gating`, `091-email-smtp-ssl`, `092-gateway-document-media-types`, and `098-api-server-fallback-model-kwarg`: upstream v0.18 covers these behaviors for the release line.
 - `050-homeassistant-tool-config-url`: the old config-sourced Home Assistant tool URL overlay is no longer selected for v0.18 profiles.
 
 ## 2026-05-16 — Hermes 0.14 re-anchor

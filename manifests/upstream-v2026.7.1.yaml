@@ -92,6 +92,35 @@
       "refreshed_for": "v2026.7.1"
     },
     {
+      "id": "telegram-rich-flood-fallback",
+      "file": "patches/v2026.7.1/041-telegram-rich-flood-fallback.patch",
+      "title_en": "Telegram overflow flood-control duplicate guard",
+      "title_ru": "Защита от дубля Telegram при overflow flood-control",
+      "description_en": "Restores PatchKit Telegram duplicate-safety on Hermes v0.18 for the finalize + overflow split + first-chunk RetryAfter path: when Telegram flood-limits the cosmetic first-chunk finalize edit, Hermes preserves the visible streaming prefix and falls back to sending only the missing tail instead of re-sending the full final answer.",
+      "description_ru": "Возвращает PatchKit duplicate-safety для Telegram на Hermes v0.18 в сценарии finalize + overflow split + first-chunk RetryAfter: если Telegram flood-limit’ит косметический финальный edit первого chunk, Hermes сохраняет уже видимый streaming prefix и отправляет только недостающий tail вместо повторной отправки всего финального ответа.",
+      "category": "messaging",
+      "track": "upstream-fix",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "verification": {
+        "focused_tests": [
+          "tests/gateway/test_telegram_overflow_partial.py",
+          "tests/gateway/test_stream_consumer_fresh_final.py"
+        ]
+      },
+      "base_upstream": "7c1a029553",
+      "refreshed_for": "v2026.7.1",
+      "impact": [
+        "Telegram finalized overflow edits that hit RetryAfter/Flood control on the first chunk are treated as partial-overflow delivery, not as a blank failure.",
+        "The stream consumer receives delivered_prefix metadata and sends only the missing tail, preventing an unformatted streaming preview plus duplicate formatted full final answer.",
+        "The failed first-chunk finalize edit is non-retryable so generic send retry does not amplify Telegram flood-control duplicate delivery."
+      ],
+      "exported_from": "office-1c-telegram-overflow-flood-20260705"
+    },
+    {
       "id": "max-platform-plugin",
       "file": "patches/v2026.7.1/070-max-platform-plugin.patch",
       "title_en": "MAX messenger platform plugin",
@@ -325,12 +354,6 @@
       "retired_for": "v2026.7.1",
       "reason_en": "Upstream v0.18 moved Telegram to plugins/platforms/telegram/adapter.py and includes free-response/exclusive mention/allowed chat/thread gating; focused Telegram gating tests pass on clean v2026.7.1.",
       "reason_ru": "Upstream v0.18 перенёс Telegram в plugins/platforms/telegram/adapter.py и уже содержит free-response/exclusive mention/allowed chat/thread gating; focused Telegram gating tests проходят на чистом v2026.7.1."
-    },
-    {
-      "id": "telegram-rich-flood-fallback",
-      "retired_for": "v2026.7.1",
-      "reason_en": "Upstream v0.18 includes Telegram rich fallback, flood retry_after handling, streaming overflow limits and partial-overflow suppression; focused rich/overflow tests pass.",
-      "reason_ru": "Upstream v0.18 уже содержит Telegram rich fallback, retry_after/flood handling, streaming overflow limits и partial-overflow suppression; focused rich/overflow tests проходят."
     },
     {
       "id": "gateway-document-media-types",
