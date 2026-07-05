@@ -17,7 +17,7 @@ No unpublished project changes after the `v2026.7.1` cleanup.
 
 ### Fixed
 - `070-max-platform-plugin` and `078-max-userbot-platform-plugin`: accept the current gateway reconnect callback shape.
-- `100-vibemode-provider-plugin`: sends `User-Agent: HermesAgent/1.0` through provider-profile metadata so VibeMode Responses calls do not use the OpenAI SDK default User-Agent blocked by Cloudflare.
+- `100-vibemode-provider-plugin`: sends `User-Agent: HermesAgent/1.0` through provider-profile metadata for both OpenAI-compatible and Anthropic Messages transports, uses Bearer auth for VibeMode Messages, and treats Cloudflare/WAF 403 blocks as transport/header failures instead of exhausting the credential pool.
 
 ### Retired
 - `040-telegram-free-response-target-gating`, `041-telegram-rich-flood-fallback`, `091-email-smtp-ssl`, `092-gateway-document-media-types`, and `098-api-server-fallback-model-kwarg`: upstream v0.18 covers these behaviors for the release line.

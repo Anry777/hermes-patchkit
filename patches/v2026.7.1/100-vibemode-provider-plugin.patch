@@ -1,17 +1,165 @@
+diff --git a/agent/agent_init.py b/agent/agent_init.py
+index 251db3e152..ec56ad7d6b 100644
+--- a/agent/agent_init.py
++++ b/agent/agent_init.py
+@@ -702,7 +702,12 @@ def init_agent(
+             # the third-party identity-injection bug.
+             from agent.anthropic_adapter import _is_oauth_token as _is_oat
+             agent._is_anthropic_oauth = _is_oat(effective_key) if (_is_native_anthropic and isinstance(effective_key, str)) else False
+-            agent._anthropic_client = build_anthropic_client(effective_key, base_url, timeout=_provider_timeout)
++            agent._anthropic_client = build_anthropic_client(
++                effective_key,
++                base_url,
++                timeout=_provider_timeout,
++                default_headers=agent._provider_profile_default_headers(),
++            )
+             # No OpenAI client needed for Anthropic mode
+             agent.client = None
+             agent._client_kwargs = {}
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index 5560e4cd5c..1f4c874937 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -818,6 +818,23 @@ def recover_with_credential_pool(
+         return False, True
+ 
+     if effective_reason == FailoverReason.auth:
++        _auth_haystack = " ".join(
++            str(error_context.get(k) or "").lower()
++            for k in ("message", "reason", "code", "error")
++            if isinstance(error_context, dict)
++        )
++        if status_code == 403 and (
++            "your request was blocked" in _auth_haystack
++            or "error code: 1010" in _auth_haystack
++            or "cloudflare" in _auth_haystack
++        ):
++            _ra().logger.info(
++                "Credential %s — WAF-shaped 403 from %s; skipping pool "
++                "refresh/rotation because the credential itself is unproven.",
++                status_code if status_code is not None else "auth",
++                agent.provider or "provider",
++            )
++            return False, has_retried_429
+         # Subscription/entitlement 403s look like auth failures on the wire
+         # but refresh cannot fix them — the OAuth token is already valid,
+         # the account simply lacks the entitlement.  Without this guard,
+@@ -840,11 +857,6 @@ def recover_with_credential_pool(
+         # long-running TUI sessions stuck on stale tokens until the user
+         # exited and reopened.
+         is_entitlement = agent._is_entitlement_failure(error_context, status_code)
+-        _auth_haystack = " ".join(
+-            str(error_context.get(k) or "").lower()
+-            for k in ("message", "reason", "code", "error")
+-            if isinstance(error_context, dict)
+-        )
+         if (
+             not is_entitlement
+             and status_code == 403
+diff --git a/agent/anthropic_adapter.py b/agent/anthropic_adapter.py
+index c124205c17..dcfa28c85c 100644
+--- a/agent/anthropic_adapter.py
++++ b/agent/anthropic_adapter.py
+@@ -533,8 +533,9 @@ def _requires_bearer_auth(base_url: str | None) -> bool:
+ 
+     Some third-party /anthropic endpoints implement Anthropic's Messages API but
+     require Authorization: Bearer instead of Anthropic's native x-api-key header.
+-    MiniMax's global and China Anthropic-compatible endpoints, and Azure AI
+-    Foundry's Anthropic-style endpoint follow this pattern.
++    MiniMax's global and China Anthropic-compatible endpoints, Azure AI
++    Foundry's Anthropic-style endpoint, and VibeMode's Messages gateway follow
++    this pattern.
+     """
+     normalized = _normalize_base_url_text(base_url)
+     if not normalized:
+@@ -542,6 +543,7 @@ def _requires_bearer_auth(base_url: str | None) -> bool:
+     normalized = normalized.rstrip("/").lower()
+     return (
+         normalized.startswith(("https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic"))
++        or base_url_host_matches(normalized, "api.vibemod.pro")
+         or "azure.com" in normalized
+     )
+ 
+@@ -705,6 +707,7 @@ def build_anthropic_client(
+     base_url: str = None,
+     timeout: float = None,
+     *,
++    default_headers: Optional[Dict[str, str]] = None,
+     drop_context_1m_beta: bool = False,
+ ):
+     """Create an Anthropic client, auto-detecting setup-tokens vs API keys.
+@@ -726,6 +729,12 @@ def build_anthropic_client(
+     Anthropic-compatible providers respect the same knob as OpenAI-wire
+     providers.
+ 
++    ``default_headers`` carries provider-profile client headers for
++    Anthropic-compatible third-party endpoints.  This is intentionally a
++    client-level merge so WAF-facing headers such as VibeMode's stable
++    User-Agent reach the Messages transport just like they already reach the
++    OpenAI-compatible transports.
++
+     ``drop_context_1m_beta=True`` strips ``context-1m-2025-08-07`` from the
+     client-level ``anthropic-beta`` header. Used by the reactive OAuth retry
+     path in ``run_agent.py`` when a subscription rejects the beta; leave at
+@@ -826,6 +835,11 @@ def build_anthropic_client(
+         if common_betas:
+             kwargs["default_headers"] = {"anthropic-beta": ",".join(common_betas)}
+ 
++    if default_headers:
++        merged_headers = dict(default_headers)
++        merged_headers.update(kwargs.get("default_headers") or {})
++        kwargs["default_headers"] = merged_headers
++
+     return _anthropic_sdk.Anthropic(**kwargs)
+ 
+ 
+diff --git a/agent/chat_completion_helpers.py b/agent/chat_completion_helpers.py
+index 5eca94a322..a4fb31b579 100644
+--- a/agent/chat_completion_helpers.py
++++ b/agent/chat_completion_helpers.py
+@@ -1386,7 +1386,10 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
+             agent._anthropic_api_key = effective_key
+             agent._anthropic_base_url = fb_base_url
+             agent._anthropic_client = build_anthropic_client(
+-                effective_key, agent._anthropic_base_url, timeout=_fb_timeout,
++                effective_key,
++                agent._anthropic_base_url,
++                timeout=_fb_timeout,
++                default_headers=agent._provider_profile_default_headers(),
+             )
+             agent._is_anthropic_oauth = _is_oauth_token(effective_key) if fb_provider == "anthropic" else False
+             agent.client = None
 diff --git a/agent/model_metadata.py b/agent/model_metadata.py
-index 71ab58ef2a8aa4b3d794c33c99f56dbebe096a07..02bd4028e6a43219f4204072201fba35b14725d3 100644
-GIT binary patch
-delta 187
-zcmZ2Co9+BuwhdkETnb8MnMtX+`6;QJJJ=iD71C2n;*<09N>VFI6l_7f#FCOCje?^5
-zw9K4T9R;Q79}O8LRF!lT{POcsHMtakATv!NIWZ?EF)1fi14+B)<n?jVl4XfGrKu2;
-zVCHIoY|EJ}D5@-&nOCBzkeHXE08wVAFgY<<cydA*I~!PlYx2QVHP(W};$p657XR%m
-I{*0^a03j+sG5`Po
-
-delta 23
-fcmX><mu=l_whdkEo2RkYyEkhEY}X24TxtgZc;g8x
-
+index 71ab58ef2a..02bd4028e6 100644
+--- a/agent/model_metadata.py
++++ b/agent/model_metadata.py
+@@ -49,7 +49,7 @@ _PROVIDER_PREFIXES: frozenset[str] = frozenset({
+     "openrouter", "nous", "openai-codex", "copilot", "copilot-acp",
+     "gemini", "ollama-cloud", "zai", "kimi-coding", "kimi-coding-cn", "stepfun", "minimax", "minimax-oauth", "minimax-cn", "anthropic", "deepseek",
+     "opencode-zen", "opencode-go", "kilocode", "alibaba", "novita",
+-    "qwen-oauth",
++    "qwen-oauth", "vibemode",
+     "xiaomi",
+     "arcee",
+     "gmi",
+@@ -507,6 +507,15 @@ def _is_known_provider_base_url(base_url: str) -> bool:
+ 
+ def _lookup_profile_model_context(profile: Any, model: str) -> Optional[int]:
+     """Return provider-profile context_length for *model*, if declared."""
++    get_context = getattr(profile, "get_model_context_length", None)
++    if callable(get_context):
++        try:
++            value = get_context(model)
++            if isinstance(value, int) and value > 0:
++                return value
++        except Exception:
++            pass
++
+     context_map = getattr(profile, "model_context_lengths", None) or {}
+     if not isinstance(context_map, dict):
+         return None
 diff --git a/hermes_cli/runtime_provider.py b/hermes_cli/runtime_provider.py
-index 5e71be4..a16a691 100644
+index 5e71be4130..a16a691fe9 100644
 --- a/hermes_cli/runtime_provider.py
 +++ b/hermes_cli/runtime_provider.py
 @@ -348,6 +348,38 @@ def _parse_api_mode(raw: Any) -> Optional[str]:
@@ -123,7 +271,7 @@ index 5e71be4..a16a691 100644
              else:
 diff --git a/plugins/model-providers/vibemode/__init__.py b/plugins/model-providers/vibemode/__init__.py
 new file mode 100644
-index 0000000..ac302c6
+index 0000000000..e9844823cd
 --- /dev/null
 +++ b/plugins/model-providers/vibemode/__init__.py
 @@ -0,0 +1,129 @@
@@ -258,7 +406,7 @@ index 0000000..ac302c6
 +register_provider(vibemode)
 diff --git a/plugins/model-providers/vibemode/plugin.yaml b/plugins/model-providers/vibemode/plugin.yaml
 new file mode 100644
-index 0000000..eb249d6
+index 0000000000..eb249d6d34
 --- /dev/null
 +++ b/plugins/model-providers/vibemode/plugin.yaml
 @@ -0,0 +1,4 @@
@@ -267,7 +415,7 @@ index 0000000..eb249d6
 +version: 1.0.0
 +description: VibeMode multi-model provider for Chat, Responses, and Messages endpoints
 diff --git a/providers/base.py b/providers/base.py
-index 5377a0d..379106a 100644
+index 5377a0d192..379106a499 100644
 --- a/providers/base.py
 +++ b/providers/base.py
 @@ -82,6 +82,14 @@ class ProviderProfile:
@@ -354,8 +502,56 @@ index 5377a0d..379106a 100644
      def prepare_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
          """Provider-specific message preprocessing.
  
+diff --git a/run_agent.py b/run_agent.py
+index 497197f76e..35adb766d5 100644
+--- a/run_agent.py
++++ b/run_agent.py
+@@ -4323,6 +4323,7 @@ class AIAgent:
+                 new_token,
+                 getattr(self, "_anthropic_base_url", None),
+                 timeout=get_provider_request_timeout(self.provider, self.model),
++                default_headers=self._provider_profile_default_headers(),
+             )
+         except Exception as exc:
+             logger.warning("Failed to rebuild Anthropic client after credential refresh: %s", exc)
+@@ -4337,6 +4338,19 @@ class AIAgent:
+         self._is_anthropic_oauth = _is_oauth_token(new_token) if self.provider == "anthropic" else False
+         return True
+ 
++    def _provider_profile_default_headers(self) -> Optional[Dict[str, str]]:
++        """Return client headers declared by the active provider profile."""
++        try:
++            from providers import get_provider_profile
++
++            profile = get_provider_profile(self.provider)
++            headers = getattr(profile, "default_headers", None) if profile else None
++            if headers:
++                return dict(headers)
++        except Exception:
++            pass
++        return None
++
+     def _apply_client_headers_for_base_url(self, base_url: str) -> None:
+         from agent.auxiliary_client import (
+             build_nvidia_nim_headers,
+@@ -4429,6 +4443,7 @@ class AIAgent:
+             self._anthropic_client = build_anthropic_client(
+                 runtime_key, runtime_base,
+                 timeout=get_provider_request_timeout(self.provider, self.model),
++                default_headers=self._provider_profile_default_headers(),
+             )
+             self._is_anthropic_oauth = _is_oauth_token(runtime_key) if self.provider == "anthropic" else False
+             self.api_key = runtime_key
+@@ -4505,6 +4520,7 @@ class AIAgent:
+                 self._anthropic_api_key,
+                 getattr(self, "_anthropic_base_url", None),
+                 timeout=get_provider_request_timeout(self.provider, self.model),
++                default_headers=self._provider_profile_default_headers(),
+                 drop_context_1m_beta=_drop_1m,
+             )
+ 
 diff --git a/tests/agent/test_model_metadata.py b/tests/agent/test_model_metadata.py
-index db44f00..5e8d2b4 100644
+index db44f00525..5e8d2b4b74 100644
 --- a/tests/agent/test_model_metadata.py
 +++ b/tests/agent/test_model_metadata.py
 @@ -344,6 +344,30 @@ class TestProviderPluginContextLength:
@@ -391,7 +587,7 @@ index db44f00..5e8d2b4 100644
  # Codex OAuth context-window resolution (provider="openai-codex")
 diff --git a/tests/hermes_cli/test_vibemode_auth.py b/tests/hermes_cli/test_vibemode_auth.py
 new file mode 100644
-index 0000000..bb1e294
+index 0000000000..bb1e2946ac
 --- /dev/null
 +++ b/tests/hermes_cli/test_vibemode_auth.py
 @@ -0,0 +1,90 @@
@@ -486,7 +682,7 @@ index 0000000..bb1e294
 +    runtime = resolve_runtime_provider(requested="vibemode", target_model="new-live-model")
 +    assert runtime["api_mode"] == "chat_completions"
 diff --git a/tests/providers/test_plugin_discovery.py b/tests/providers/test_plugin_discovery.py
-index fba5a02..478b641 100644
+index fba5a02df1..478b6416e2 100644
 --- a/tests/providers/test_plugin_discovery.py
 +++ b/tests/providers/test_plugin_discovery.py
 @@ -69,6 +69,7 @@ def test_all_profiles_register():
@@ -498,7 +694,7 @@ index fba5a02..478b641 100644
          assert required in names, f"Missing profile: {required}"
  
 diff --git a/tests/providers/test_provider_profiles.py b/tests/providers/test_provider_profiles.py
-index 3eb2340..6305d46 100644
+index 3eb2340304..e27a2d8381 100644
 --- a/tests/providers/test_provider_profiles.py
 +++ b/tests/providers/test_provider_profiles.py
 @@ -22,12 +22,37 @@ class TestRegistry:
@@ -539,3 +735,147 @@ index 3eb2340..6305d46 100644
  class TestNvidiaProfile:
      def test_max_tokens(self):
          p = get_provider_profile("nvidia")
+diff --git a/tests/run_agent/test_vibemode_provider_headers.py b/tests/run_agent/test_vibemode_provider_headers.py
+new file mode 100644
+index 0000000000..080009f338
+--- /dev/null
++++ b/tests/run_agent/test_vibemode_provider_headers.py
+@@ -0,0 +1,138 @@
++"""VibeMode provider-profile headers must reach every API surface."""
++
++from __future__ import annotations
++
++from unittest.mock import MagicMock, patch
++
++
++def test_build_anthropic_client_merges_provider_default_headers(monkeypatch):
++    """Provider defaults such as VibeMode's WAF-safe UA must survive on Messages."""
++    from agent import anthropic_adapter
++
++    captured = {}
++
++    class _FakeAnthropic:
++        def __init__(self, **kwargs):
++            captured.update(kwargs)
++
++    class _FakeAnthropicSdk:
++        Anthropic = _FakeAnthropic
++
++    monkeypatch.setattr(anthropic_adapter, "_anthropic_sdk", _FakeAnthropicSdk)
++    monkeypatch.setattr(anthropic_adapter, "normalize_proxy_env_vars", lambda: None)
++
++    anthropic_adapter.build_anthropic_client(
++        "sk-vibemode",
++        "https://api.vibemod.pro/v1",
++        default_headers={"User-Agent": "HermesAgent/1.0"},
++    )
++
++    assert captured["auth_token"] == "sk-vibemode"
++    assert "api_key" not in captured
++    assert captured["default_headers"]["User-Agent"] == "HermesAgent/1.0"
++
++
++def test_build_anthropic_client_preserves_anthropic_beta_when_merging_headers(monkeypatch):
++    """Merging provider headers must not clobber Anthropic beta headers."""
++    from agent import anthropic_adapter
++
++    captured = {}
++
++    class _FakeAnthropic:
++        def __init__(self, **kwargs):
++            captured.update(kwargs)
++
++    class _FakeAnthropicSdk:
++        Anthropic = _FakeAnthropic
++
++    monkeypatch.setattr(anthropic_adapter, "_anthropic_sdk", _FakeAnthropicSdk)
++    monkeypatch.setattr(anthropic_adapter, "normalize_proxy_env_vars", lambda: None)
++    monkeypatch.setattr(
++        anthropic_adapter,
++        "_common_betas_for_base_url",
++        lambda *_args, **_kwargs: ["fine-grained-tool-streaming-2025-05-14"],
++    )
++
++    anthropic_adapter.build_anthropic_client(
++        "sk-vibemode",
++        "https://api.vibemod.pro/v1",
++        default_headers={"User-Agent": "HermesAgent/1.0"},
++    )
++
++    assert captured["default_headers"]["User-Agent"] == "HermesAgent/1.0"
++    assert captured["default_headers"]["anthropic-beta"] == "fine-grained-tool-streaming-2025-05-14"
++
++
++def test_vibemode_anthropic_mode_agent_init_passes_provider_headers():
++    """qwen3.7-max uses anthropic_messages, so init must pass VibeMode UA."""
++    captured = {}
++
++    def _fake_build_anthropic_client(*args, **kwargs):
++        captured.update(kwargs)
++        return MagicMock()
++
++    with (
++        patch("run_agent.get_tool_definitions", return_value=[]),
++        patch("run_agent.check_toolset_requirements", return_value={}),
++        patch("agent.anthropic_adapter.build_anthropic_client", side_effect=_fake_build_anthropic_client),
++    ):
++        from run_agent import AIAgent
++
++        AIAgent(
++            api_key="sk-vibemode",
++            base_url="https://api.vibemod.pro/v1",
++            provider="vibemode",
++            api_mode="anthropic_messages",
++            model="qwen3.7-max",
++            quiet_mode=True,
++            skip_context_files=True,
++            skip_memory=True,
++        )
++
++    assert captured["default_headers"] == {"User-Agent": "HermesAgent/1.0"}
++
++
++def test_vibemode_cloudflare_403_does_not_exhaust_credential_pool():
++    """WAF 403 is a transport/header problem, not evidence that the key is dead."""
++    from agent.error_classifier import FailoverReason
++    from run_agent import AIAgent
++
++    agent = AIAgent(
++        api_key="sk-vibemode",
++        base_url="https://api.vibemod.pro/v1",
++        provider="vibemode",
++        api_mode="chat_completions",
++        model="qwen3.7-max",
++        quiet_mode=True,
++        skip_context_files=True,
++        skip_memory=True,
++    )
++
++    calls = {"refresh": 0, "rotate": 0}
++
++    class _FakePool:
++        provider = "vibemode"
++
++        def try_refresh_current(self):
++            calls["refresh"] += 1
++            return None
++
++        def mark_exhausted_and_rotate(self, **_kwargs):
++            calls["rotate"] += 1
++            return None
++
++        def has_available(self):
++            return True
++
++    agent._credential_pool = _FakePool()
++
++    recovered, retried_429 = agent._recover_with_credential_pool(
++        status_code=403,
++        has_retried_429=False,
++        classified_reason=FailoverReason.auth,
++        error_context={"message": "Your request was blocked.", "reason": "error code: 1010"},
++    )
++
++    assert recovered is False
++    assert retried_429 is False
++    assert calls == {"refresh": 0, "rotate": 0}

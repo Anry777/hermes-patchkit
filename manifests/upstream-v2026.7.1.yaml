@@ -285,8 +285,8 @@
       "file": "patches/v2026.7.1/100-vibemode-provider-plugin.patch",
       "title_en": "VibeMode model provider plugin",
       "title_ru": "Model provider plugin для VibeMode",
-      "description_en": "Adds the VibeMode provider plugin with endpoint https://api.vibemod.pro/v1, a provider-profile User-Agent override for Cloudflare compatibility, and per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
-      "description_ru": "Добавляет provider plugin VibeMode с endpoint https://api.vibemod.pro/v1, provider-profile User-Agent override для совместимости с Cloudflare и per-model metadata: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
+      "description_en": "Adds the VibeMode provider plugin with endpoint https://api.vibemod.pro/v1, provider-profile User-Agent propagation and Bearer auth for Anthropic Messages compatibility, and per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
+      "description_ru": "Добавляет provider plugin VibeMode с endpoint https://api.vibemod.pro/v1, propagation provider-profile User-Agent и Bearer auth для совместимости Anthropic Messages, и per-model metadata: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
       "category": "provider",
       "track": "local-overlay",
       "optional": true,
@@ -302,6 +302,7 @@
           "tests/hermes_cli/test_vibemode_auth.py",
           "tests/providers/test_plugin_discovery.py",
           "tests/providers/test_provider_profiles.py",
+          "tests/run_agent/test_vibemode_provider_headers.py",
           "tests/agent/test_model_metadata.py::TestProviderPluginContextLength"
         ]
       },
@@ -311,7 +312,9 @@
         "`hermes auth add vibemode --type api-key` persists credentials with base URL https://api.vibemod.pro/v1.",
         "The patched runtime exposes `vibemode` as the canonical VibeMode provider.",
         "Known VibeMode model metadata is an overlay only: /v1/models remains authoritative for model availability, while the overlay supplies context windows, capabilities, endpoint kinds, and per-model api_mode routing.",
-        "VibeMode OpenAI-compatible requests send User-Agent: HermesAgent/1.0 instead of the OpenAI Python SDK default that Cloudflare blocks on /v1/responses."
+        "VibeMode requests send User-Agent: HermesAgent/1.0 on both OpenAI-compatible and Anthropic Messages transports instead of SDK defaults that Cloudflare blocks.",
+        "VibeMode Anthropic Messages calls use Authorization: Bearer instead of Anthropic SDK x-api-key auth.",
+        "Cloudflare/WAF-shaped 403 responses such as `Your request was blocked` or error code 1010 do not mark the VibeMode credential pool entry exhausted."
       ],
       "exported_from": "hermesfix-vibemode-provider-20260628"
     }
