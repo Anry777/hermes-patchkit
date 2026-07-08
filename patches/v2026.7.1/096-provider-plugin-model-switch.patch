@@ -1,5 +1,5 @@
 diff --git a/agent/model_metadata.py b/agent/model_metadata.py
-index 547fe2f579..7a3a835352 100644
+index 547fe2f579..71ab58ef2a 100644
 --- a/agent/model_metadata.py
 +++ b/agent/model_metadata.py
 @@ -493,7 +493,89 @@ def _lmstudio_server_root(base_url: str) -> str:
@@ -124,7 +124,7 @@ index 547fe2f579..7a3a835352 100644
          # GMI exposes authoritative context_length via /models, but it is not
          # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
 diff --git a/hermes_cli/model_switch.py b/hermes_cli/model_switch.py
-index 48bf031b75..48d1ae8905 100644
+index 48bf031b75..e4ec41c640 100644
 --- a/hermes_cli/model_switch.py
 +++ b/hermes_cli/model_switch.py
 @@ -30,6 +30,7 @@ from hermes_cli.providers import (
@@ -135,7 +135,39 @@ index 48bf031b75..48d1ae8905 100644
      is_aggregator,
      resolve_provider_full,
  )
-@@ -1913,6 +1914,72 @@ def list_authenticated_providers(
+@@ -1409,6 +1410,16 @@ def prewarm_picker_cache_async() -> Optional["_threading.Thread"]:
+     return t
+ 
+ 
++def _provider_profile_model_ids(profile) -> list[str]:
++    """Return picker fallback ids declared by a ProviderProfile."""
++    ids = list(getattr(profile, "fallback_models", ()) or [])
++    if not ids:
++        ids = list((getattr(profile, "model_api_modes", {}) or {}).keys())
++    if not ids:
++        ids = list((getattr(profile, "model_context_lengths", {}) or {}).keys())
++    return [str(mid) for mid in ids if str(mid).strip()]
++
++
+ def list_authenticated_providers(
+     current_provider: str = "",
+     current_base_url: str = "",
+@@ -1896,6 +1907,14 @@ def list_authenticated_providers(
+         else:
+             # Unified pathway — same as sections 1 and 2.
+             _cp_model_ids = cached_provider_model_ids(_cp.slug)
++            if not _cp_model_ids:
++                try:
++                    import importlib
++                    _profile = importlib.import_module("providers").get_provider_profile(_cp.slug)
++                except Exception:
++                    _profile = None
++                if _profile is not None:
++                    _cp_model_ids = _provider_profile_model_ids(_profile)
+             if not _cp_model_ids:
+                 _cp_model_ids = curated.get(_cp.slug, [])
+         _cp_total = len(_cp_model_ids)
+@@ -1913,6 +1932,72 @@ def list_authenticated_providers(
          seen_slugs.add(_cp.slug.lower())
          _record_builtin_endpoint(_cp.slug)
  
@@ -189,7 +221,7 @@ index 48bf031b75..48d1ae8905 100644
 +
 +        _plugin_model_ids = cached_provider_model_ids(_slug)
 +        if not _plugin_model_ids:
-+            _plugin_model_ids = list(getattr(_profile, "fallback_models", ()) or [])
++            _plugin_model_ids = _provider_profile_model_ids(_profile)
 +        if not _plugin_model_ids:
 +            _plugin_model_ids = curated.get(_slug, [])
 +
@@ -390,7 +422,7 @@ index a18d9fb461..db44f00525 100644
  # Codex OAuth context-window resolution (provider="openai-codex")
  # =========================================================================
 diff --git a/tests/hermes_cli/test_model_switch_custom_providers.py b/tests/hermes_cli/test_model_switch_custom_providers.py
-index 11a7613abf..026d2e31fa 100644
+index 11a7613abf..631b70f590 100644
 --- a/tests/hermes_cli/test_model_switch_custom_providers.py
 +++ b/tests/hermes_cli/test_model_switch_custom_providers.py
 @@ -8,6 +8,8 @@ only looked at `providers:`.
@@ -402,7 +434,7 @@ index 11a7613abf..026d2e31fa 100644
  
  
  _MOCK_VALIDATION = {
-@@ -45,6 +47,40 @@ def test_list_authenticated_providers_includes_custom_providers(monkeypatch):
+@@ -45,6 +47,96 @@ def test_list_authenticated_providers_includes_custom_providers(monkeypatch):
      )
  
  
@@ -440,10 +472,66 @@ index 11a7613abf..026d2e31fa 100644
 +    )
 +
 +
++def test_list_authenticated_providers_uses_plugin_metadata_for_canonical_plugin(monkeypatch):
++    """Canonical plugin rows should not go empty when live /models is empty."""
++    register_provider(
++        ProviderProfile(
++            name="plugin-canonical-test",
++            display_name="Plugin Canonical Test",
++            api_mode="chat_completions",
++            env_vars=("PLUGIN_CANONICAL_TEST_API_KEY",),
++            base_url="https://plugin-canonical.example/v1",
++            auth_type="api_key",
++            model_api_modes={"plugin-canonical-model": "chat_completions"},
++        )
++    )
++    monkeypatch.setenv("PLUGIN_CANONICAL_TEST_API_KEY", "test-key")
++    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
++    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
++    monkeypatch.setattr("hermes_cli.models.cached_provider_model_ids", lambda *a, **k: [])
++
++    import hermes_cli.models as models_mod
++    import hermes_cli.auth as auth_mod
++    monkeypatch.setitem(
++        auth_mod.PROVIDER_REGISTRY,
++        "plugin-canonical-test",
++        auth_mod.ProviderConfig(
++            id="plugin-canonical-test",
++            name="Plugin Canonical Test",
++            auth_type="api_key",
++            inference_base_url="https://plugin-canonical.example/v1",
++            api_key_env_vars=("PLUGIN_CANONICAL_TEST_API_KEY",),
++        ),
++    )
++    monkeypatch.setattr(
++        models_mod,
++        "CANONICAL_PROVIDERS",
++        list(models_mod.CANONICAL_PROVIDERS) + [models_mod.ProviderEntry(
++            "plugin-canonical-test",
++            "Plugin Canonical Test",
++            "Plugin Canonical Test",
++        )],
++    )
++
++    row = next(
++        p for p in list_authenticated_providers(
++            current_provider="openai-codex",
++            user_providers={},
++            custom_providers=[],
++            max_models=50,
++        )
++        if p["slug"] == "plugin-canonical-test"
++    )
++
++    assert row["source"] == "canonical"
++    assert row["models"] == ["plugin-canonical-model"]
++    assert row["total_models"] == 1
++
++
  def test_resolve_provider_full_finds_named_custom_provider():
      """Explicit /model --provider should resolve saved custom_providers entries."""
      resolved = resolve_provider_full(
-@@ -120,6 +156,37 @@ def test_switch_model_accepts_explicit_bare_custom_current_endpoint(monkeypatch)
+@@ -120,6 +212,37 @@ def test_switch_model_accepts_explicit_bare_custom_current_endpoint(monkeypatch)
      assert result.api_key == "sk-test"
  
  
@@ -481,7 +569,7 @@ index 11a7613abf..026d2e31fa 100644
  def test_is_aggregator_recognizes_named_custom_provider():
      assert providers_mod.is_aggregator("custom:hpc-ai") is True
      assert providers_mod.is_aggregator("custom:litellm") is True
-@@ -185,6 +252,50 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
+@@ -185,6 +308,50 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
      assert result.api_key == "no-key-required"
  
  
