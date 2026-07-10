@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.7.7.2",
+    "commit": "9de9c25f62"
+  },
+  "notes_en": "PatchKit personal overlay re-anchored for Hermes v0.18.2 / v2026.7.7.2. Absorbed upstream/provider-plugin/auth changes were kept as the smallest working overlay for this host.",
+  "notes_ru": "PatchKit personal overlay переякорен на Hermes v0.18.2 / v2026.7.7.2. Absorbed upstream/provider-plugin/auth изменения сведены в минимальный рабочий overlay для этого хоста.",
+  "patches": [
+    {
+      "id": "personal-overlay-v2026.7.7.2",
+      "file": "patches/v2026.7.7.2/010-personal-overlay.patch",
+      "title_en": "Personal Hermes overlay for v2026.7.7.2",
+      "title_ru": "Personal Hermes overlay для v2026.7.7.2",
+      "description_en": "Carries the still-needed local semantics on top of upstream v2026.7.7.2: root-global auth store, credential-pool safety, Telegram overflow duplicate guard, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata, explicit gateway local-file delivery safety, and gateway auto-reset context continuity.",
+      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.7.7.2: root-global auth store, credential-pool safety, Telegram overflow duplicate guard, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata, explicit gateway local-file delivery safety и gateway auto-reset context continuity.",
+      "category": "personal",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "9de9c25f62",
+      "refreshed_for": "v2026.7.7.2",
+      "absorbs": [
+        "cli-tui-idle-refresh-fix",
+        "auth-profile-root-fallback",
+        "credential-pool-recovery",
+        "telegram-rich-flood-fallback",
+        "max-platform-plugin",
+        "max-userbot-platform-plugin",
+        "api-server-provider-proxy",
+        "lsp-configured-websocket-transport",
+        "provider-plugin-model-switch",
+        "gateway-explicit-media-delivery-safety",
+        "gateway-auto-reset-context-continuity",
+        "vibemode-provider-plugin"
+      ],
+      "verification": {
+        "focused_tests": [
+          "tests/patchkit/test_auth_shared_root.py",
+          "tests/patchkit/test_credential_pool_recovery.py",
+          "tests/gateway/test_api_server_provider_proxy.py",
+          "tests/gateway/test_session_reset_notify.py",
+          "tests/hermes_cli/test_model_switch_custom_providers.py",
+          "tests/hermes_cli/test_vibemode_auth.py",
+          "tests/providers/test_provider_profiles.py",
+          "tests/run_agent/test_vibemode_provider_headers.py",
+          "tests/gateway/test_auto_upload_local_paths.py",
+          "tests/plugins/test_max_platform_plugin.py",
+          "tests/plugins/test_max_userbot_platform_plugin.py"
+        ]
+      },
+      "impact": [
+        "Auth remains root-global by design; profile-local auth.json is not authoritative on this host.",
+        "codex-responses-proxy/provider-proxy remains available for OpenAI-compatible clients.",
+        "MAX overlays remain in the personal overlay but can be split later if MAX should become optional again."
+      ]
+    }
+  ],
+  "retired_patches": [
+    {
+      "id": "telegram-free-response-target-gating",
+      "retired_for": "v2026.7.7.2",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "gateway-document-media-types",
+      "retired_for": "v2026.7.7.2",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "api-server-fallback-model-kwarg",
+      "retired_for": "v2026.7.7.2",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "email-smtp-ssl",
+      "retired_for": "v2026.7.7.2",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    }
+  ]
+}
