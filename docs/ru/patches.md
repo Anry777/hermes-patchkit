@@ -4,7 +4,7 @@
 
 Совместимость не статична. Перед применением запускай `scripts/update.py` или `scripts/tui.py` against нужного Hermes checkout.
 
-Текущий релизный якорь: `manifests/upstream-v2026.7.1.yaml`. Release-specific patch files лежат в `patches/v2026.7.1/` и проверяются против official tag `v2026.7.1` / Hermes Agent `0.18.0` из `NousResearch/hermes-agent`, а не против post-release `main`.
+Текущий релизный якорь: `manifests/upstream-v2026.7.7.2.yaml`. Release-specific patch files лежат в `patches/v2026.7.7.2/` и проверяются против official tag `v2026.7.7.2` / Hermes Agent `0.18.2` из `NousResearch/hermes-agent`, а не против post-release `main`.
 
 ## Доступные patch units
 
@@ -16,6 +16,7 @@
 | `041-telegram-rich-flood-fallback` | exported | Возвращает Telegram duplicate-safety для v0.18 сценария finalize + overflow split + first-chunk flood-control. | Если Telegram flood-limit’ит косметический финальный edit первого chunk, Hermes считает уже видимый streaming prefix partial-overflow delivery и отправляет только недостающий tail вместо duplicate full formatted final answer. |
 | `070-max-platform-plugin` | exported | Добавляет MAX messenger как official Hermes platform plugin вместо core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons и safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Добавляет отдельный experimental `max_userbot` platform plugin на базе MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use требует operator risk acceptance и SMS/QR bootstrap. |
+| `079-telegram-userbot-platform-plugin` | exported | Добавляет отдельный experimental `telegram_userbot` platform plugin на базе Telethon/MTProto. | User-account path с profile-local locked session и deny-by-default allowlist; см. [telegram-userbot.md](telegram-userbot.md). |
 | `080-api-server-provider-proxy` | exported | Добавляет opt-in raw provider proxy modes в OpenAI-compatible API Server. | Включает catalog-routed Chat Completions provider proxy и Responses-native `codex_responses_proxy` без создания `AIAgent`. |
 | `090-lsp-configured-websocket-transport` | exported | Добавляет config-driven custom LSP servers и WebSocket transport для Hermes LSP. | Позволяет подключать внешние language servers вроде BSL LS без hardcoded profile paths/endpoints. |
 | `096-provider-plugin-model-switch` | exported | Делает model-provider plugins видимыми для `/model`, `/mode`, runtime provider resolution и context-window metadata. | Plugin-backed providers вроде `vibemode` больше не требуют duplicate `config.yaml providers:` entries. |

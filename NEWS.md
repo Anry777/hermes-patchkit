@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-11 — Experimental Telegram MTProto userbot plugin
+
+PatchKit now carries `079-telegram-userbot-platform-plugin`, a separate experimental `telegram_userbot` Hermes platform backed by Telethon. It keeps the official Telegram Bot API adapter untouched while adding a user-account MTProto path with profile-local locked sessions, deny-by-default user/chat allowlists, text/reply/edit/typing support, inbound media caching, and native file delivery.
+
+Live use requires explicit operator risk acceptance, Telegram API credentials in the profile `.env`, a foreground login-code/2FA bootstrap, and a non-empty allowlist before service installation. See [docs/en/telegram-userbot.md](docs/en/telegram-userbot.md).
+
+---
+
+# Новости
+
+## 2026-07-11 — Experimental Telegram MTProto userbot plugin
+
+PatchKit теперь несёт `079-telegram-userbot-platform-plugin`: отдельную experimental Hermes platform `telegram_userbot` на базе Telethon. Official Telegram Bot API adapter остаётся без изменений, а для user account добавляется MTProto path с profile-local locked session, deny-by-default allowlist пользователей/чатов, text/reply/edit/typing, inbound media cache и native file delivery.
+
+Live use требует явного принятия operator risk, Telegram API credentials в profile `.env`, foreground bootstrap с login code/2FA и непустой allowlist до установки service. См. [docs/ru/telegram-userbot.md](docs/ru/telegram-userbot.md).
+
+---
+
 ## 2026-07-05 — Hermes 0.18 re-anchor
 
 PatchKit is refreshed against official Hermes Agent `v2026.7.1` / `0.18.0`. The active release manifest is `manifests/upstream-v2026.7.1.yaml`; release patch files live under `patches/v2026.7.1/`.

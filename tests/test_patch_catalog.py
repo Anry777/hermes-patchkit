@@ -15,6 +15,8 @@ RELEASE_2026_5_16_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.16.yaml
 RELEASE_2026_5_29_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.5.29.yaml"
 RELEASE_2026_6_5_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.6.5.yaml"
 RELEASE_2026_6_19_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.6.19.yaml"
+RELEASE_2026_7_7_2_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.7.7.2.yaml"
+RELEASE_2026_7_7_2_PATCH_DIR = REPO_ROOT / "patches" / "v2026.7.7.2"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
@@ -37,6 +39,45 @@ GROK2API_COMPOSE = REPO_ROOT / "examples" / "sidecars" / "grok2api" / "docker-co
 
 
 class PatchCatalogTests(unittest.TestCase):
+    def test_v2026_7_7_2_exports_telegram_userbot_as_separate_plugin_unit(self):
+        manifest = json.loads(RELEASE_2026_7_7_2_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.7.7.2")
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertIn("telegram-userbot-platform-plugin", ids)
+        entry = next(
+            patch
+            for patch in manifest["patches"]
+            if patch["id"] == "telegram-userbot-platform-plugin"
+        )
+        self.assertEqual(entry["status"], "exported")
+        self.assertEqual(entry["track"], "local-overlay")
+        self.assertFalse(entry["default"])
+        self.assertEqual(entry["depends_on"], [])
+        self.assertEqual(entry["refreshed_for"], "v2026.7.7.2")
+        self.assertEqual(
+            entry["file"],
+            "patches/v2026.7.7.2/079-telegram-userbot-platform-plugin.patch",
+        )
+
+        patch_text = (REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+        self.assertIn("plugins/platforms/telegram_userbot/plugin.yaml", patch_text)
+        self.assertIn("plugins/platforms/telegram_userbot/adapter.py", patch_text)
+        self.assertIn(
+            "tests/plugins/test_telegram_userbot_platform_plugin.py",
+            patch_text,
+        )
+        self.assertIn("ctx.register_platform", patch_text)
+        self.assertIn("TELEGRAM_USERBOT_API_HASH", patch_text)
+        self.assertNotIn("gateway/platforms/telegram.py", patch_text)
+
+        profile = json.loads(
+            (REPO_ROOT / "profiles" / "v2026.7.7.2-personal.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertNotIn("telegram-userbot-platform-plugin", profile["patches"])
+
     def test_credential_pool_recovery_is_exported_real_patch(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         entry = next(patch for patch in manifest["patches"] if patch["id"] == "credential-pool-recovery")

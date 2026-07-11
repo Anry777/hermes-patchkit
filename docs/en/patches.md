@@ -4,7 +4,7 @@ This file is the public catalog for supported PatchKit patch units and workflow 
 
 Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.py` against your Hermes checkout before applying anything.
 
-Current release anchor: `manifests/upstream-v2026.7.1.yaml`. The release-specific patch files live under `patches/v2026.7.1/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.7.1` / Hermes Agent `0.18.0`, not post-release `main`.
+Current release anchor: `manifests/upstream-v2026.7.7.2.yaml`. The release-specific patch files live under `patches/v2026.7.7.2/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.7.7.2` / Hermes Agent `0.18.2`, not post-release `main`.
 
 ## Available patch units
 
@@ -16,6 +16,7 @@ Current release anchor: `manifests/upstream-v2026.7.1.yaml`. The release-specifi
 | `041-telegram-rich-flood-fallback` | exported | Restores Telegram duplicate-safety for the v0.18 finalize + overflow split + first-chunk flood-control path. | If Telegram flood-limits the cosmetic first-chunk finalize edit, Hermes treats the visible streaming prefix as partial-overflow delivery and sends only the missing tail instead of posting a duplicate full formatted final answer. |
 | `070-max-platform-plugin` | exported | Adds MAX messenger as an official Hermes platform plugin rather than core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons, and safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Adds a separate experimental `max_userbot` platform plugin backed by MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use requires operator risk acceptance and SMS/QR bootstrap. |
+| `079-telegram-userbot-platform-plugin` | exported | Adds a separate experimental `telegram_userbot` platform plugin backed by Telethon/MTProto. | User-account path with profile-local locked sessions and deny-by-default allowlists; see [telegram-userbot.md](telegram-userbot.md). |
 | `080-api-server-provider-proxy` | exported | Adds opt-in raw provider proxy modes to the OpenAI-compatible API Server. | Includes catalog-routed Chat Completions provider proxy and Responses-native `codex_responses_proxy` without creating `AIAgent` instances. |
 | `090-lsp-configured-websocket-transport` | exported | Adds config-driven custom LSP servers and a WebSocket transport for Hermes LSP. | Lets external language servers such as BSL LS connect without hardcoded profile paths/endpoints. |
 | `096-provider-plugin-model-switch` | exported | Makes model-provider plugins visible to `/model`, `/mode`, runtime provider resolution, and context-window metadata. | Plugin-backed providers such as `vibemode` no longer need duplicate `config.yaml providers:` entries. |

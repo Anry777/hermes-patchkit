@@ -6,7 +6,11 @@ The format follows Keep a Changelog.
 
 ## [Unreleased]
 
-No unpublished project changes after the `v2026.7.1` cleanup.
+### Added
+- `079-telegram-userbot-platform-plugin`: experimental opt-in Telegram MTProto user-account adapter backed by Telethon, with profile-local locked sessions, deny-by-default allowlists, text/reply/edit/typing support, inbound media caching, native file delivery, focused tests, and EN/RU operator documentation.
+
+### Changed
+- refreshed public README/catalog anchors to the current `v2026.7.7.2` / Hermes `0.18.2` release line.
 
 ## 2026-07-05 — Hermes 0.18 re-anchor
 
