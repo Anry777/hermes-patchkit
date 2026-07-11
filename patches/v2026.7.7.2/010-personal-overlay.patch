@@ -1562,10 +1562,10 @@ index ba87a6dc49..4538d7635b 100644
          # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 0000000000..978a835d66
+index 0000000000..abf52f86a3
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1475 @@
+@@ -0,0 +1,1481 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -2374,6 +2374,12 @@ index 0000000000..978a835d66
 +            payload.pop(key, None)
 +        if is_chatgpt_codex_backend:
 +            payload["store"] = False
++            payload.pop("max_output_tokens", None)
++            reasoning = payload.get("reasoning")
++            if isinstance(reasoning, dict) and str(reasoning.get("summary") or "").lower() == "none":
++                reasoning = dict(reasoning)
++                reasoning.pop("summary", None)
++                payload["reasoning"] = reasoning
 +            if not str(payload.get("instructions") or "").strip():
 +                payload["instructions"] = "You are a helpful assistant."
 +            if isinstance(payload.get("input"), str):
@@ -6926,10 +6932,10 @@ index d450580cd3..37c9d41fa6 100644
  # =========================================================================
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 0000000000..f778dca51f
+index 0000000000..292037a97e
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,1091 @@
+@@ -0,0 +1,1093 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -7355,7 +7361,8 @@ index 0000000000..f778dca51f
 +                        "stream": True,
 +                        "store": True,
 +                        "temperature": 0.2,
-+                        "model_reasoning_effort": "low",
++                        "max_output_tokens": 16,
++                        "reasoning": {"effort": "low", "summary": "none"},
 +                        "client_metadata": {"client": "vscode-codex"},
 +                    },
 +                )
@@ -7378,6 +7385,7 @@ index 0000000000..f778dca51f
 +        assert kwargs["input"] == [{"role": "user", "content": "hello"}]
 +        assert kwargs["reasoning"] == {"effort": "low"}
 +        assert "model_reasoning_effort" not in kwargs
++        assert "max_output_tokens" not in kwargs
 +        assert "client_metadata" not in kwargs
 +        assert "temperature" not in kwargs
 +        adapter._run_agent.assert_not_called()
