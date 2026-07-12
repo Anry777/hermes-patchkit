@@ -11,7 +11,7 @@ index 0000000000..39785a9c46
 +__all__ = ["register"]
 diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/telegram_userbot/adapter.py
 new file mode 100644
-index 0000000000..fa53dc14ee
+index 0000000000..558b1cc1ed
 --- /dev/null
 +++ b/plugins/platforms/telegram_userbot/adapter.py
 @@ -0,0 +1,986 @@
@@ -347,7 +347,7 @@ index 0000000000..fa53dc14ee
 +            session = str(Path(self.work_dir).expanduser() / self.session_name)
 +        return TelegramClient(session, self.api_id, self.api_hash)
 +
-+    async def _await_critical_cleanup(self, cleanup_task: asyncio.Task) -> bool:
++    async def _await_critical_cleanup(self, cleanup_task: asyncio.Future) -> bool:
 +        cancelled = False
 +        while not cleanup_task.done():
 +            try:
@@ -423,7 +423,7 @@ index 0000000000..fa53dc14ee
 +    ) -> bool:
 +        if client is None:
 +            return False
-+        disconnect_task = asyncio.create_task(client.disconnect())
++        disconnect_task = asyncio.ensure_future(client.disconnect())
 +        cancelled = await self._await_critical_cleanup(disconnect_task)
 +        try:
 +            disconnect_task.result()
@@ -1042,10 +1042,10 @@ index 0000000000..703ab4671d
 +    password: true
 diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plugins/test_telegram_userbot_platform_plugin.py
 new file mode 100644
-index 0000000000..4c45983587
+index 0000000000..51d8819206
 --- /dev/null
 +++ b/tests/plugins/test_telegram_userbot_platform_plugin.py
-@@ -0,0 +1,1181 @@
+@@ -0,0 +1,1215 @@
 +"""Behavior tests for the PatchKit Telegram MTProto userbot platform plugin."""
 +
 +from __future__ import annotations
@@ -1525,6 +1525,40 @@ index 0000000000..4c45983587
 +        await self.release_disconnect.wait()
 +        self.disconnected = True
 +        self.stopped.set()
++
++
++class FutureDisconnectLifecycleClient(BlockingLifecycleClient):
++    def disconnect(self):  # type: ignore[override]
++        self.disconnected = True
++        self.stopped.set()
++        future = asyncio.get_running_loop().create_future()
++        future.set_result(None)
++        return future
++
++
++@pytest.mark.asyncio
++async def test_disconnect_accepts_future_returned_by_telethon(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    client = FutureDisconnectLifecycleClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++
++    assert await adapter.connect() is True
++    await adapter.disconnect()
++
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
 +
 +
 +@pytest.mark.asyncio
