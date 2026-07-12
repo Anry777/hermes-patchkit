@@ -12,6 +12,9 @@ The format follows Keep a Changelog.
 ### Changed
 - refreshed public README/catalog anchors to the current `v2026.7.7.2` / Hermes `0.18.2` release line.
 
+### Fixed
+- `080-api-server-provider-proxy`: Chat Completions requests routed to the ChatGPT Codex backend now reuse Hermes' canonical Codex Cloudflare headers (`originator`, Codex `User-Agent`, and JWT-derived account ID), preventing valid OAuth requests from being blocked as non-Codex traffic.
+
 ## 2026-07-05 — Hermes 0.18 re-anchor
 
 ### Changed

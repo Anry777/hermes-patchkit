@@ -1562,10 +1562,10 @@ index ba87a6dc49..4538d7635b 100644
          # in models.dev yet. Preserve that higher-fidelity endpoint lookup.
 diff --git a/gateway/api_server_provider_proxy.py b/gateway/api_server_provider_proxy.py
 new file mode 100644
-index 0000000000..abf52f86a3
+index 0000000000..b3564c479c
 --- /dev/null
 +++ b/gateway/api_server_provider_proxy.py
-@@ -0,0 +1,1481 @@
+@@ -0,0 +1,1485 @@
 +"""Provider proxy mode for the OpenAI-compatible API server.
 +
 +This module implements the raw/compat proxy path used when the API server is
@@ -2499,6 +2499,10 @@ index 0000000000..abf52f86a3
 +            kwargs["api_key"] = target.api_key
 +        if target.base_url:
 +            kwargs["base_url"] = target.base_url
++        if _is_chatgpt_codex_backend(target):
++            from agent.auxiliary_client import _codex_cloudflare_headers
++
++            kwargs["default_headers"] = _codex_cloudflare_headers(target.api_key)
 +        return OpenAI(**kwargs)
 +
 +    @staticmethod
@@ -6932,10 +6936,10 @@ index d450580cd3..37c9d41fa6 100644
  # =========================================================================
 diff --git a/tests/gateway/test_api_server_provider_proxy.py b/tests/gateway/test_api_server_provider_proxy.py
 new file mode 100644
-index 0000000000..292037a97e
+index 0000000000..0d7153b282
 --- /dev/null
 +++ b/tests/gateway/test_api_server_provider_proxy.py
-@@ -0,0 +1,1093 @@
+@@ -0,0 +1,1124 @@
 +"""Tests for API Server provider_proxy mode."""
 +
 +import json
@@ -6946,8 +6950,39 @@ index 0000000000..292037a97e
 +from aiohttp import web
 +from aiohttp.test_utils import TestClient, TestServer
 +
++from gateway.api_server_provider_proxy import APIServerProviderProxy, ResolvedProxyTarget
 +from gateway.config import PlatformConfig
 +from gateway.platforms.api_server import APIServerAdapter, cors_middleware, security_headers_middleware
++
++
++def test_codex_client_includes_cloudflare_required_headers():
++    target = ResolvedProxyTarget(
++        public_id="gpt-5.6-luna",
++        provider="openai-codex",
++        model="gpt-5.6-luna",
++        api_mode="codex_responses",
++        base_url="https://chatgpt.com/backend-api/codex",
++        api_key="test-token",
++        runtime={},
++    )
++    required_headers = {
++        "User-Agent": "codex_cli_rs/0.0.0 (Hermes Agent)",
++        "originator": "codex_cli_rs",
++    }
++
++    with patch("gateway.api_server_provider_proxy.OpenAI") as openai_cls, patch(
++        "agent.auxiliary_client._codex_cloudflare_headers",
++        return_value=required_headers,
++    ) as build_headers:
++        client = APIServerProviderProxy._create_openai_client(target)
++
++    assert client is openai_cls.return_value
++    build_headers.assert_called_once_with("test-token")
++    openai_cls.assert_called_once_with(
++        api_key="test-token",
++        base_url="https://chatgpt.com/backend-api/codex",
++        default_headers=required_headers,
++    )
 +
 +
 +def _create_app(adapter: APIServerAdapter) -> web.Application:

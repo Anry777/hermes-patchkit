@@ -17,7 +17,7 @@ Current release anchor: `manifests/upstream-v2026.7.7.2.yaml`. The release-speci
 | `070-max-platform-plugin` | exported | Adds MAX messenger as an official Hermes platform plugin rather than core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons, and safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Adds a separate experimental `max_userbot` platform plugin backed by MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use requires operator risk acceptance and SMS/QR bootstrap. |
 | `079-telegram-userbot-platform-plugin` | exported | Adds a separate experimental `telegram_userbot` platform plugin backed by Telethon/MTProto. | User-account path with profile-local locked sessions and deny-by-default allowlists; see [telegram-userbot.md](telegram-userbot.md). |
-| `080-api-server-provider-proxy` | exported | Adds opt-in raw provider proxy modes to the OpenAI-compatible API Server. | Includes catalog-routed Chat Completions provider proxy and Responses-native `codex_responses_proxy` without creating `AIAgent` instances. |
+| `080-api-server-provider-proxy` | exported | Adds opt-in raw provider proxy modes to the OpenAI-compatible API Server. | Includes catalog-routed Chat Completions provider proxy, Cloudflare-required Codex headers, and Responses-native `codex_responses_proxy` without creating `AIAgent` instances. |
 | `090-lsp-configured-websocket-transport` | exported | Adds config-driven custom LSP servers and a WebSocket transport for Hermes LSP. | Lets external language servers such as BSL LS connect without hardcoded profile paths/endpoints. |
 | `096-provider-plugin-model-switch` | exported | Makes model-provider plugins visible to `/model`, `/mode`, runtime provider resolution, and context-window metadata. | Plugin-backed providers such as `vibemode` no longer need duplicate `config.yaml providers:` entries. |
 | `097-gateway-explicit-media-delivery-safety` | exported | Makes gateway local-file delivery explicit by default. | `MEDIA:/path` and structured artifacts deliver as native attachments; bare absolute paths stay text unless `gateway.auto_upload_local_paths: true`. |
@@ -42,6 +42,7 @@ Upstream Hermes does not provide this provider-gateway split today: its API Serv
 - Hermes bypasses `AIAgent`, so there are no Hermes tools, memory, sessions, SOUL/context injection, or agent run semantics;
 - OpenAI-compatible providers use a Chat Completions passthrough;
 - `openai-codex` / Responses providers use a compatibility adapter;
+- ChatGPT Codex targets reuse Hermes' canonical Cloudflare headers (`originator`, Codex `User-Agent`, and JWT-derived account ID), so valid OAuth traffic is not mistaken for a generic server-side SDK request;
 - `stream: true` returns OpenAI-compatible `text/event-stream` chunks when `allow_streaming: true` is configured;
 - OpenAI-style `tools`, `tool_choice`, assistant `tool_calls`, `role: tool` results, `parallel_tool_calls`, and inline `image_url` / `input_image` parts are preserved for IDE clients;
 - RooCode-style `reasoning_effort` is mapped to Responses `reasoning.effort` for Codex-backed targets;

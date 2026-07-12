@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-12 — Provider proxy Codex Cloudflare headers
+
+PatchKit's provider-proxy Chat Completions adapter now reuses Hermes' canonical Codex Cloudflare headers when routing to `chatgpt.com/backend-api/codex`. Valid Codex OAuth calls now carry the required `originator`, Codex-shaped `User-Agent`, and JWT-derived account ID instead of being blocked as generic server-side OpenAI SDK traffic.
+
+The fix refreshes the existing `080-api-server-provider-proxy` behavior inside the `v2026.7.7.2` personal overlay and adds focused regression coverage; no adjacent patch unit was created.
+
+---
+
+# Новости
+
+## 2026-07-12 — Codex Cloudflare headers в provider proxy
+
+Chat Completions adapter PatchKit provider-proxy теперь переиспользует canonical Codex Cloudflare headers Hermes при routing в `chatgpt.com/backend-api/codex`. Valid Codex OAuth calls получают обязательные `originator`, Codex-shaped `User-Agent` и account ID из JWT вместо блокировки как generic server-side OpenAI SDK traffic.
+
+Fix обновляет существующее поведение `080-api-server-provider-proxy` внутри personal overlay `v2026.7.7.2` и добавляет focused regression coverage; новый соседний patch unit не создавался.
+
+---
+
 ## 2026-07-11 — Experimental Telegram MTProto userbot plugin
 
 PatchKit now carries `079-telegram-userbot-platform-plugin`, a separate experimental `telegram_userbot` Hermes platform backed by Telethon. It keeps the official Telegram Bot API adapter untouched while adding a user-account MTProto path with profile-local locked sessions, deny-by-default user/chat allowlists, text/reply/edit/typing support, inbound media caching, and native file delivery.

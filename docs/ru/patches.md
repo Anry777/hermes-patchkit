@@ -17,7 +17,7 @@
 | `070-max-platform-plugin` | exported | Добавляет MAX messenger как official Hermes platform plugin вместо core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons и safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Добавляет отдельный experimental `max_userbot` platform plugin на базе MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use требует operator risk acceptance и SMS/QR bootstrap. |
 | `079-telegram-userbot-platform-plugin` | exported | Добавляет отдельный experimental `telegram_userbot` platform plugin на базе Telethon/MTProto. | User-account path с profile-local locked session и deny-by-default allowlist; см. [telegram-userbot.md](telegram-userbot.md). |
-| `080-api-server-provider-proxy` | exported | Добавляет opt-in raw provider proxy modes в OpenAI-compatible API Server. | Включает catalog-routed Chat Completions provider proxy и Responses-native `codex_responses_proxy` без создания `AIAgent`. |
+| `080-api-server-provider-proxy` | exported | Добавляет opt-in raw provider proxy modes в OpenAI-compatible API Server. | Включает catalog-routed Chat Completions provider proxy, обязательные Codex headers для Cloudflare и Responses-native `codex_responses_proxy` без создания `AIAgent`. |
 | `090-lsp-configured-websocket-transport` | exported | Добавляет config-driven custom LSP servers и WebSocket transport для Hermes LSP. | Позволяет подключать внешние language servers вроде BSL LS без hardcoded profile paths/endpoints. |
 | `096-provider-plugin-model-switch` | exported | Делает model-provider plugins видимыми для `/model`, `/mode`, runtime provider resolution и context-window metadata. | Plugin-backed providers вроде `vibemode` больше не требуют duplicate `config.yaml providers:` entries. |
 | `097-gateway-explicit-media-delivery-safety` | exported | Делает gateway local-file delivery explicit по умолчанию. | `MEDIA:/path` и structured artifacts отправляются как native attachments; bare absolute paths остаются текстом, если не включить `gateway.auto_upload_local_paths: true`. |
@@ -42,6 +42,7 @@ Upstream Hermes сегодня не даёт такого разделения p
 - Hermes обходит `AIAgent`, поэтому нет Hermes tools, memory, sessions, SOUL/context injection и agent run semantics;
 - OpenAI-compatible provider'ы идут через Chat Completions passthrough;
 - `openai-codex` / Responses provider'ы идут через compatibility adapter;
+- ChatGPT Codex targets переиспользуют canonical Cloudflare headers Hermes (`originator`, Codex `User-Agent` и account ID из JWT), поэтому valid OAuth traffic не выглядит как generic server-side SDK request;
 - `stream: true` отдаёт OpenAI-compatible `text/event-stream` chunks, если в конфиге включён `allow_streaming: true`;
 - OpenAI-style `tools`, `tool_choice`, assistant `tool_calls`, `role: tool` results, `parallel_tool_calls` и inline `image_url` / `input_image` parts сохраняются для IDE clients;
 - RooCode-style `reasoning_effort` мапится в Responses `reasoning.effort` для Codex-backed targets;
