@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-12 — Optional human pacing for Telegram userbot
+
+PatchKit unit `079-telegram-userbot-platform-plugin` now supports opt-in human-paced replies on the Telethon/MTProto path only. With `human_pacing_enabled: true`, a reply can wait through a short silent thinking phase, then show Telegram typing while a length-aware delay accounts for time already spent generating the response. The delay is asynchronous, jittered, capped, and applies only to replies associated with an inbound sender.
+
+`human_pacing_excluded_user_ids` bypasses both artificial phases for selected Telegram sender IDs, including inside groups where sender ID and chat ID differ. Locally admitted `allowed_users`/`allowed_chats` senders are also declared authorized before gateway dispatch, so the Telegram user account no longer sends Hermes' bot-oriented pairing prompt to valid contacts; unknown senders remain denied at Telethon intake. The unsolicited first-message home-channel onboarding notice is suppressed for Telegram userbot as well, while explicit `/sethome` remains available. The feature remains disabled by default, does not modify the official Bot API adapter, and does not delay unrelated outbound service messages. The `079` export was also narrowed to its own plugin and directly required gateway capability/test hunks, removing unrelated provider/registry test changes. Validation covered PatchKit catalog/self-check, clean apply and reverse-check against official `v2026.7.7.2`, and focused userbot, home-onboarding, access-policy, and typing tests.
+
+---
+
+# Новости
+
+## 2026-07-12 — Опциональный human pacing для Telegram userbot
+
+PatchKit unit `079-telegram-userbot-platform-plugin` теперь поддерживает opt-in человекоподобный темп ответа только в Telethon/MTProto path. При `human_pacing_enabled: true` сначала выдерживается короткая тихая thinking-пауза, затем Telegram показывает typing, пока length-aware задержка учитывает уже прошедшее время генерации. Ожидание асинхронное, с jitter и верхним пределом; оно применяется только к ответам, связанным с входящим sender.
+
+`human_pacing_excluded_user_ids` полностью обходит обе искусственные фазы для выбранных Telegram sender ID, в том числе в группах, где sender ID не равен chat ID. Локально допущенные через `allowed_users`/`allowed_chats` отправители теперь также объявляются авторизованными до gateway dispatch, поэтому Telegram user account больше не посылает валидным контактам bot-style pairing prompt Hermes; неизвестные отправители по-прежнему отклоняются на входе Telethon. Для Telegram userbot также подавлен самовольный first-message home-channel onboarding notice, при этом явная команда `/sethome` остаётся доступной. По умолчанию pacing выключен, official Bot API adapter не изменяется, а несвязанные служебные исходящие сообщения не задерживаются. Export `079` сужен до собственного plugin и непосредственно необходимых gateway capability/test hunks: чужие provider/registry test changes удалены. Проверены PatchKit catalog/self-check, чистое применение и reverse-check на official `v2026.7.7.2`, а также focused tests userbot, home-onboarding, access-policy и typing.
+
+---
+
 ## 2026-07-12 — Provider proxy Codex Cloudflare headers
 
 PatchKit's provider-proxy Chat Completions adapter now reuses Hermes' canonical Codex Cloudflare headers when routing to `chatgpt.com/backend-api/codex`. Valid Codex OAuth calls now carry the required `originator`, Codex-shaped `User-Agent`, and JWT-derived account ID instead of being blocked as generic server-side OpenAI SDK traffic.

@@ -52,7 +52,19 @@ platforms:
       max_media_cache_bytes: 268435456
       max_media_cache_files: 1000
       send_typing: true
+      human_pacing_enabled: false
+      human_pacing_excluded_user_ids: []
+      thinking_delay_min_ms: 1200
+      thinking_delay_max_ms: 3200
+      typing_chars_per_second: 12
+      typing_jitter_ratio: 0.15
+      typing_delay_min_ms: 1800
+      typing_delay_max_ms: 30000
 ```
+
+`human_pacing_enabled` is disabled by default and affects only the `telegram_userbot` platform. When enabled, the plugin waits for a randomized `thinking_delay_*`, starts the typing indicator, and pads fast generations toward the length-dependent `typing_delay_*` target. `typing_jitter_ratio` controls the symmetric random variation around the calculated typing duration (`0.15` means ±15% and values must be between `0` and `1`). Time already spent generating is counted, and artificial typing is capped by `typing_delay_max_ms`. This contract requires the gateway typing indicator to remain enabled and final responses to be delivered as one non-streaming message; streaming/edit-in-place delivery does not use final-length pacing.
+
+`human_pacing_excluded_user_ids` accepts Telegram sender IDs. Both artificial pauses are bypassed for those senders. The list works in DMs and groups, where sender ID differs from chat ID. Normal model processing time is neither hidden nor padded for excluded senders.
 
 Keep credentials in `/root/.hermes/profiles/telegram-userbot/.env`:
 
@@ -68,7 +80,7 @@ TELEGRAM_USERBOT_PHONE=+...
 
 `work_dir` must resolve under the active profile's `HERMES_HOME`, and `session_name` must be a plain filename. Path traversal and absolute session names are rejected.
 
-Store non-secret allowlists and media limits in `config.yaml`, not `.env`. An `allowed_chats` entry authorizes messages from every participant in that chat; use `allowed_users` when sender-level restriction is required. Media download is disabled by default and must be enabled explicitly after accepting the storage risk. When enabled, files with an unknown metadata size or a size above `max_media_bytes` are rejected before transfer. Downloads are serialized and streamed into profile-local files; actual bytes are checked before every write, while byte and file-count quotas are rechecked before retaining the file.
+Store non-secret allowlists and media limits in `config.yaml`, not `.env`. An `allowed_chats` entry authorizes messages from every participant in that chat; use `allowed_users` when sender-level restriction is required. The adapter applies this deny-by-default admission policy before gateway dispatch and declares the result as its own local access policy, so an admitted user-account message does not enter Hermes' bot-oriented pairing flow. Unknown senders are still dropped at Telethon intake. Telegram userbot also suppresses the unsolicited first-message home-channel onboarding notice; `/sethome` remains available when an operator invokes it explicitly. Media download is disabled by default and must be enabled explicitly after accepting the storage risk. When enabled, files with an unknown metadata size or a size above `max_media_bytes` are rejected before transfer. Downloads are serialized and streamed into profile-local files; actual bytes are checked before every write, while byte and file-count quotas are rechecked before retaining the file.
 
 ## First authorization
 

@@ -1,3 +1,44 @@
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index 21ca4af6bb..c34c777e3c 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -2411,3 +2411,13 @@ class BasePlatformAdapter(ABC):
++    @property
++    def suppress_home_channel_onboarding(self) -> bool:
++        """Whether first-run home-channel setup notices should stay silent.
++
++        Most bot-oriented platforms keep the default onboarding prompt. Adapters
++        intended to behave as ordinary user accounts can override this to avoid
++        sending an unsolicited Hermes setup message into a personal chat.
++        """
++        return False
++
+     @property
+     def enforces_own_access_policy(self) -> bool:
+         """Whether this adapter gates inbound access before dispatch.
+diff --git a/gateway/run.py b/gateway/run.py
+index 11eff2fd9d..ae0814468d 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -11209,6 +11209,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+         # One-time prompt if no home channel is set for this platform
+         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
++        _home_onboarding_adapter = self._adapter_for_source(source)
++        _suppress_home_onboarding = (
++            getattr(_home_onboarding_adapter, "suppress_home_channel_onboarding", False)
++            is True
++        )
++        if (
++            not history
++            and source.platform
++            and source.platform != Platform.LOCAL
++            and source.platform != Platform.WEBHOOK
++            and not _suppress_home_onboarding
++        ):
+             platform_name = source.platform.value
+             env_key = _home_target_env_var(platform_name)
+             if not os.getenv(env_key):
 diff --git a/plugins/platforms/telegram_userbot/__init__.py b/plugins/platforms/telegram_userbot/__init__.py
 new file mode 100644
 index 0000000000..39785a9c46
@@ -11,10 +52,10 @@ index 0000000000..39785a9c46
 +__all__ = ["register"]
 diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/telegram_userbot/adapter.py
 new file mode 100644
-index 0000000000..558b1cc1ed
+index 0000000000..929213b093
 --- /dev/null
 +++ b/plugins/platforms/telegram_userbot/adapter.py
-@@ -0,0 +1,986 @@
+@@ -0,0 +1,1269 @@
 +"""Telegram MTProto userbot platform plugin backed by Telethon.
 +
 +This adapter is intentionally separate from ``plugins.platforms.telegram``.
@@ -31,7 +72,10 @@ index 0000000000..558b1cc1ed
 +import logging
 +import mimetypes
 +import os
++import random
 +import tempfile
++from contextvars import ContextVar
++from dataclasses import dataclass, field
 +from datetime import datetime, timezone
 +from pathlib import Path
 +from typing import Any, Dict, Optional
@@ -48,6 +92,31 @@ index 0000000000..558b1cc1ed
 +Platform("telegram_userbot")
 +
 +logger = logging.getLogger(__name__)
++
++
++@dataclass
++class _PacingTurn:
++    """Mutable timing state shared only by tasks spawned for one inbound turn."""
++
++    chat_id: str
++    sender_id: str
++    thinking_until: Optional[float] = None
++    typing_started_at: Optional[float] = None
++    typing_complete: bool = False
++    typing_owner: object = field(default_factory=object, repr=False)
++
++
++@dataclass(frozen=True)
++class _TypingAction:
++    """One owned Telethon typing action for a chat."""
++
++    owner: object | None
++    task: asyncio.Task
++
++
++_current_pacing_turn: ContextVar[Optional[_PacingTurn]] = ContextVar(
++    "telegram_userbot_current_pacing_turn", default=None
++)
 +
 +TELEGRAM_USERBOT_TEXT_LENGTH = 4096
 +DEFAULT_SESSION_NAME = "main"
@@ -96,6 +165,14 @@ index 0000000000..558b1cc1ed
 +def _positive_int(value: Any, default: int) -> int:
 +    parsed = _coerce_int(value)
 +    return parsed if parsed is not None and parsed > 0 else default
++
++
++def _bounded_ratio(value: Any, default: float) -> float:
++    try:
++        parsed = float(value)
++    except (TypeError, ValueError):
++        return default
++    return parsed if 0.0 <= parsed <= 1.0 else default
 +
 +
 +def _first_present(obj: Any, *names: str) -> Any:
@@ -237,6 +314,11 @@ index 0000000000..558b1cc1ed
 +                or os.getenv("TELEGRAM_USERBOT_ALLOWED_CHATS")
 +            )
 +        )
++        # Every inbound event is gated by _message_to_event before dispatch.
++        # Expose that local admission decision to the gateway so it does not
++        # run the bot-oriented pairing flow a second time.
++        self._dm_policy = "allowlist"
++        self._group_policy = "allowlist"
 +        self.mark_read = _coerce_bool(extra.get("mark_read"), False)
 +        self.download_media = _coerce_bool(extra.get("download_media"), False)
 +        self.max_media_bytes = _positive_int(
@@ -249,9 +331,34 @@ index 0000000000..558b1cc1ed
 +            extra.get("max_media_cache_files"), DEFAULT_MAX_MEDIA_CACHE_FILES
 +        )
 +        self.send_typing_enabled = _coerce_bool(extra.get("send_typing"), True)
++        self.human_pacing_enabled = _coerce_bool(
++            extra.get("human_pacing_enabled"), False
++        )
++        self.human_pacing_excluded_user_ids = set(
++            _split_csv(extra.get("human_pacing_excluded_user_ids"))
++        )
++        self.thinking_delay_min_ms = _positive_int(
++            extra.get("thinking_delay_min_ms"), 1200
++        )
++        self.thinking_delay_max_ms = _positive_int(
++            extra.get("thinking_delay_max_ms"), 3200
++        )
++        self.typing_chars_per_second = _positive_int(
++            extra.get("typing_chars_per_second"), 12
++        )
++        self.typing_jitter_ratio = _bounded_ratio(
++            extra.get("typing_jitter_ratio"), 0.15
++        )
++        self.typing_delay_min_ms = _positive_int(
++            extra.get("typing_delay_min_ms"), 1800
++        )
++        self.typing_delay_max_ms = _positive_int(
++            extra.get("typing_delay_max_ms"), 30000
++        )
 +        self._client: Any = None
 +        self._client_task: Optional[asyncio.Task] = None
-+        self._typing_tasks: dict[str, asyncio.Task] = {}
++        self._typing_tasks: dict[str, _TypingAction] = {}
++        self._typing_lock = asyncio.Lock()
 +        self._lifecycle_lock = asyncio.Lock()
 +        self._teardown_complete = asyncio.Event()
 +        self._teardown_complete.set()
@@ -262,6 +369,16 @@ index 0000000000..558b1cc1ed
 +    @property
 +    def name(self) -> str:
 +        return "Telegram Userbot"
++
++    @property
++    def suppress_home_channel_onboarding(self) -> bool:
++        """Keep user-account chats free of bot-oriented setup notices."""
++        return True
++
++    @property
++    def enforces_own_access_policy(self) -> bool:
++        """Inbound senders are admitted locally before gateway dispatch."""
++        return True
 +
 +    @property
 +    def session_path(self) -> Path:
@@ -458,31 +575,46 @@ index 0000000000..558b1cc1ed
 +            self._tearing_down = True
 +            self._teardown_complete.clear()
 +            self._mark_disconnected()
-+            disconnect_cancelled = False
-+            try:
-+                await self._cancel_typing_tasks()
-+                disconnect_cancelled = await self._disconnect_client_safely(
-+                    client,
-+                    context="client loop cleanup",
-+                )
-+            finally:
-+                if self._client is client:
-+                    self._client = None
-+                if self._client_task is current_task:
-+                    self._client_task = None
-+                self._release_session_lock()
-+                self._tearing_down = False
-+                self._teardown_complete.set()
-+            if disconnect_cancelled:
++            cleanup_task = asyncio.create_task(
++                self._cleanup_client_loop(client, current_task),
++                name="telegram-userbot-client-cleanup",
++            )
++            cancelled = await self._await_critical_cleanup(cleanup_task)
++            disconnect_cancelled = cleanup_task.result()
++            if cancelled or disconnect_cancelled:
 +                raise asyncio.CancelledError
 +
++    async def _cleanup_client_loop(
++        self,
++        client: Any,
++        owner_task: Optional[asyncio.Task],
++    ) -> bool:
++        """Finish client-loop teardown despite repeated owner cancellation."""
++        disconnect_cancelled = False
++        try:
++            await self._cancel_typing_tasks()
++            disconnect_cancelled = await self._disconnect_client_safely(
++                client,
++                context="client loop cleanup",
++            )
++        finally:
++            if self._client is client:
++                self._client = None
++            if self._client_task is owner_task:
++                self._client_task = None
++            self._release_session_lock()
++            self._tearing_down = False
++            self._teardown_complete.set()
++        return disconnect_cancelled
++
 +    async def _cancel_typing_tasks(self) -> None:
-+        tasks = list(self._typing_tasks.values())
-+        self._typing_tasks.clear()
-+        for task in tasks:
-+            task.cancel()
-+        if tasks:
-+            await asyncio.gather(*tasks, return_exceptions=True)
++        async with self._typing_lock:
++            tasks = [action.task for action in self._typing_tasks.values()]
++            self._typing_tasks.clear()
++            for task in tasks:
++                task.cancel()
++            if tasks:
++                await asyncio.gather(*tasks, return_exceptions=True)
 +
 +    async def disconnect(self) -> None:
 +        while True:
@@ -535,22 +667,88 @@ index 0000000000..558b1cc1ed
 +                success=False,
 +                error="Telegram userbot text message is empty",
 +            )
-+        last: Optional[SendResult] = None
-+        for chunk in self.truncate_message(content, self.MAX_MESSAGE_LENGTH):
-+            try:
-+                message = await self._require_client().send_message(
-+                    self._target_entity(chat_id),
-+                    chunk,
-+                    reply_to=_coerce_int(reply_to),
++        pacing_turn = self._pacing_turn_for_chat(chat_id)
++        try:
++            await self._apply_human_pacing(chat_id, content)
++            last: Optional[SendResult] = None
++            for chunk in self.truncate_message(content, self.MAX_MESSAGE_LENGTH):
++                try:
++                    message = await self._require_client().send_message(
++                        self._target_entity(chat_id),
++                        chunk,
++                        reply_to=_coerce_int(reply_to),
++                    )
++                except Exception as exc:
++                    return SendResult(success=False, error=str(exc), retryable=True)
++                last = SendResult(
++                    success=True,
++                    message_id=_as_str(getattr(message, "id", None)) or None,
++                    raw_response=message,
 +                )
-+            except Exception as exc:
-+                return SendResult(success=False, error=str(exc), retryable=True)
-+            last = SendResult(
-+                success=True,
-+                message_id=_as_str(getattr(message, "id", None)) or None,
-+                raw_response=message,
-+            )
-+        return last or SendResult(success=False, error="No message chunks were sent")
++            return last or SendResult(success=False, error="No message chunks were sent")
++        finally:
++            if pacing_turn is not None:
++                pacing_turn.typing_complete = True
++                await self._stop_typing_now(
++                    chat_id,
++                    owner=pacing_turn.typing_owner,
++                )
++
++    def _pacing_turn_for_chat(self, chat_id: str) -> Optional[_PacingTurn]:
++        turn = _current_pacing_turn.get()
++        if (
++            turn is None
++            or turn.chat_id != str(chat_id)
++            or not self._human_pacing_applies()
++            or turn.thinking_until is None
++        ):
++            return None
++        return turn
++
++    async def _apply_human_pacing(self, chat_id: str, content: str) -> None:
++        """Pad a fast response until its visible typing time looks plausible."""
++        turn = _current_pacing_turn.get()
++        if (
++            not self._human_pacing_applies()
++            or turn is None
++            or turn.chat_id != str(chat_id)
++        ):
++            return
++        thinking_until = turn.thinking_until
++        if thinking_until is None:
++            # Do not delay one-off outbound/system messages.
++            return
++
++        loop = asyncio.get_running_loop()
++        remaining_thought = thinking_until - loop.time()
++        if remaining_thought > 0:
++            await asyncio.sleep(remaining_thought)
++
++        typing_started = turn.typing_started_at
++        if typing_started is None:
++            typing_started = loop.time()
++            turn.typing_started_at = typing_started
++            await self.send_typing(chat_id)
++
++        min_seconds = self.typing_delay_min_ms / 1000.0
++        max_seconds = self.typing_delay_max_ms / 1000.0
++        if min_seconds > max_seconds:
++            min_seconds, max_seconds = max_seconds, min_seconds
++        target_seconds = len(content) / float(self.typing_chars_per_second)
++        target_seconds *= random.uniform(
++            1.0 - self.typing_jitter_ratio,
++            1.0 + self.typing_jitter_ratio,
++        )
++        target_seconds = max(min_seconds, min(max_seconds, target_seconds))
++        remaining_typing = target_seconds - (loop.time() - typing_started)
++        if remaining_typing > 0:
++            await asyncio.sleep(remaining_typing)
++
++    def _human_pacing_applies(self) -> bool:
++        turn = _current_pacing_turn.get()
++        return self.human_pacing_enabled and turn is not None and (
++            turn.sender_id not in self.human_pacing_excluded_user_ids
++        )
 +
 +    async def edit_message(
 +        self,
@@ -581,7 +779,13 @@ index 0000000000..558b1cc1ed
 +            raw_response=message,
 +        )
 +
-+    async def _hold_typing(self, key: str, entity: Any, client: Any) -> None:
++    async def _hold_typing(
++        self,
++        key: str,
++        entity: Any,
++        client: Any,
++        owner: object | None,
++    ) -> None:
 +        current_task = asyncio.current_task()
 +        try:
 +            async with client.action(entity, "typing"):
@@ -595,23 +799,112 @@ index 0000000000..558b1cc1ed
 +                exc,
 +            )
 +        finally:
-+            if self._typing_tasks.get(key) is current_task:
++            action = self._typing_tasks.get(key)
++            if (
++                action is not None
++                and action.owner is owner
++                and action.task is current_task
++            ):
 +                self._typing_tasks.pop(key, None)
 +
 +    async def send_typing(self, chat_id: str, metadata=None) -> None:
 +        if not self.send_typing_enabled or self._client is None:
 +            return
 +        key = str(chat_id)
-+        previous = self._typing_tasks.pop(key, None)
-+        if previous is not None:
-+            previous.cancel()
-+            await asyncio.gather(previous, return_exceptions=True)
-+        task = asyncio.create_task(
-+            self._hold_typing(key, self._target_entity(chat_id), self._client),
-+            name=f"telegram-userbot-typing-{key}",
++        turn = _current_pacing_turn.get()
++        owner = turn.typing_owner if turn is not None and turn.chat_id == key else None
++        if turn is not None and turn.chat_id == key and turn.typing_complete:
++            return
++        async with self._typing_lock:
++            previous = self._typing_tasks.pop(key, None)
++            if previous is not None:
++                previous.task.cancel()
++                await asyncio.gather(previous.task, return_exceptions=True)
++            task = asyncio.create_task(
++                self._hold_typing(
++                    key,
++                    self._target_entity(chat_id),
++                    self._client,
++                    owner,
++                ),
++                name=f"telegram-userbot-typing-{key}",
++            )
++            self._typing_tasks[key] = _TypingAction(owner=owner, task=task)
++            await asyncio.sleep(0)
++
++    async def stop_typing(self, chat_id: str) -> None:
++        if self._pacing_turn_for_chat(chat_id) is not None:
++            # Gateway asks to stop when generation finishes, before Base sends
++            # the final response. Keep the action alive through the remaining
++            # simulated typing delay; send() performs the immediate cleanup.
++            return
++        turn = _current_pacing_turn.get()
++        owner = (
++            turn.typing_owner
++            if turn is not None and turn.chat_id == str(chat_id)
++            else None
 +        )
-+        self._typing_tasks[key] = task
-+        await asyncio.sleep(0)
++        await self._stop_typing_now(chat_id, owner=owner)
++
++    async def _stop_typing_now(
++        self,
++        chat_id: str,
++        *,
++        owner: object | None = None,
++    ) -> None:
++        key = str(chat_id)
++        async with self._typing_lock:
++            action = self._typing_tasks.get(key)
++            if action is None or (owner is not None and action.owner is not owner):
++                return
++            self._typing_tasks.pop(key, None)
++            action.task.cancel()
++            await asyncio.gather(action.task, return_exceptions=True)
++
++    async def _keep_typing(
++        self,
++        chat_id: str,
++        interval: float = 2.0,
++        metadata=None,
++        stop_event: asyncio.Event | None = None,
++    ) -> None:
++        if not self._human_pacing_applies():
++            await super()._keep_typing(
++                chat_id,
++                interval=interval,
++                metadata=metadata,
++                stop_event=stop_event,
++            )
++            return
++
++        turn = _current_pacing_turn.get()
++        if turn is None or turn.chat_id != str(chat_id):
++            return
++        loop = asyncio.get_running_loop()
++        min_seconds = self.thinking_delay_min_ms / 1000.0
++        max_seconds = self.thinking_delay_max_ms / 1000.0
++        if min_seconds > max_seconds:
++            min_seconds, max_seconds = max_seconds, min_seconds
++        thinking_delay = random.uniform(min_seconds, max_seconds)
++        thinking_until = loop.time() + thinking_delay
++        turn.thinking_until = thinking_until
++        try:
++            await asyncio.sleep(thinking_delay)
++            if stop_event is not None and stop_event.is_set():
++                return
++            turn.typing_started_at = loop.time()
++            await super()._keep_typing(
++                chat_id,
++                interval=interval,
++                metadata=metadata,
++                stop_event=stop_event,
++            )
++        finally:
++            if turn.thinking_until == thinking_until:
++                turn.thinking_until = None
++                turn.typing_started_at = None
++                turn.typing_complete = True
++            await self._stop_typing_now(chat_id, owner=turn.typing_owner)
 +
 +    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
 +        target = str(chat_id).strip()
@@ -679,6 +972,28 @@ index 0000000000..558b1cc1ed
 +            raw_response=message,
 +        )
 +
++    async def _process_message_background(
++        self,
++        event: MessageEvent,
++        session_key: str,
++    ) -> None:
++        """Bind pacing identity to the event processed by this task.
++
++        Base may drain a queued follow-up in a task created by the previous
++        sender's turn. Rebinding here prevents that inherited ContextVar from
++        applying the previous sender's pacing or bypass policy.
++        """
++        pacing_token = _current_pacing_turn.set(
++            _PacingTurn(
++                chat_id=str(event.source.chat_id),
++                sender_id=_as_str(event.source.user_id).strip(),
++            )
++        )
++        try:
++            await super()._process_message_background(event, session_key)
++        finally:
++            _current_pacing_turn.reset(pacing_token)
++
 +    async def _handle_new_message(self, raw_event: Any) -> None:
 +        event = self._message_to_event(raw_event)
 +        if event is None:
@@ -694,7 +1009,16 @@ index 0000000000..558b1cc1ed
 +                    event.message_id,
 +                    exc,
 +                )
-+        await self.handle_message(event)
++        pacing_token = _current_pacing_turn.set(
++            _PacingTurn(
++                chat_id=str(event.source.chat_id),
++                sender_id=_as_str(event.source.user_id).strip(),
++            )
++        )
++        try:
++            await self.handle_message(event)
++        finally:
++            _current_pacing_turn.reset(pacing_token)
 +
 +    def _message_to_event(self, raw_event: Any) -> Optional[MessageEvent]:
 +        message = getattr(raw_event, "message", raw_event)
@@ -1040,12 +1364,64 @@ index 0000000000..703ab4671d
 +    description: "Optional Telethon StringSession; prefer a profile-local session file"
 +    prompt: "Telethon session string"
 +    password: true
+diff --git a/tests/gateway/test_status_command.py b/tests/gateway/test_status_command.py
+index cadeb9ca70..82557305d4 100644
+--- a/tests/gateway/test_status_command.py
++++ b/tests/gateway/test_status_command.py
+@@ -477,3 +477,47 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
++@pytest.mark.asyncio
++async def test_first_run_platform_can_suppress_home_channel_onboarding(monkeypatch):
++    import gateway.run as gateway_run
++
++    platform = Platform("telegram_userbot")
++    source = _make_source(platform)
++    session_entry = SessionEntry(
++        session_key=build_session_key(source),
++        session_id="sess-1",
++        created_at=datetime.now(),
++        updated_at=datetime.now(),
++        platform=platform,
++        chat_type="dm",
++    )
++    runner = _make_runner(session_entry, platform=platform)
++    runner.adapters[platform].suppress_home_channel_onboarding = True
++    runner.session_store.load_transcript.return_value = []
++    runner.session_store.has_any_sessions.return_value = False
++    runner._run_agent = AsyncMock(
++        return_value={
++            "final_response": "ok",
++            "messages": [],
++            "tools": [],
++            "history_offset": 0,
++            "last_prompt_tokens": 0,
++            "input_tokens": 0,
++            "output_tokens": 0,
++            "model": "openai/test-model",
++        }
++    )
++
++    monkeypatch.delenv("TELEGRAM_USERBOT_HOME_CHANNEL", raising=False)
++    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
++    monkeypatch.setattr(
++        "agent.model_metadata.get_model_context_length",
++        lambda *_args, **_kwargs: 100000,
++    )
++
++    result = await runner._handle_message(_make_event("hello", platform=platform))
++
++    assert result == "ok"
++    runner.adapters[platform].send.assert_not_awaited()
++
++
+ @pytest.mark.asyncio
+ async def test_handle_message_discards_stale_result_after_session_invalidation(monkeypatch):
+     import gateway.run as gateway_run
 diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plugins/test_telegram_userbot_platform_plugin.py
 new file mode 100644
-index 0000000000..51d8819206
+index 0000000000..595c9377ce
 --- /dev/null
 +++ b/tests/plugins/test_telegram_userbot_platform_plugin.py
-@@ -0,0 +1,1215 @@
+@@ -0,0 +1,1760 @@
 +"""Behavior tests for the PatchKit Telegram MTProto userbot platform plugin."""
 +
 +from __future__ import annotations
@@ -1271,6 +1647,36 @@ index 0000000000..51d8819206
 +    assert event.message_type.value == "text"
 +
 +
++def test_allowlisted_sender_reaches_gateway_without_bot_pairing(monkeypatch):
++    from gateway.run import GatewayRunner
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    for key in (
++        "GATEWAY_ALLOWED_USERS",
++        "GATEWAY_ALLOW_ALL_USERS",
++        "TELEGRAM_USERBOT_ALLOWED_USERS",
++        "TELEGRAM_USERBOT_ALLOW_ALL_USERS",
++    ):
++        monkeypatch.delenv(key, raising=False)
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allowed_users": ["123"]},
++        )
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    assert event is not None
++
++    runner = object.__new__(GatewayRunner)
++    runner.adapters = {Platform("telegram_userbot"): adapter}
++    runner.pairing_store = SimpleNamespace(is_approved=lambda *_args: False)
++
++    assert runner._is_user_authorized(event.source) is True
++
++
 +
 +def test_message_to_event_rejects_unallowlisted_sender():
 +    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
@@ -1366,6 +1772,452 @@ index 0000000000..51d8819206
 +    await adapter.disconnect()
 +    assert client.active_actions == set()
 +
++
++@pytest.mark.asyncio
++async def test_human_pacing_keeps_initial_thinking_pause_silent():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 25,
++                "thinking_delay_max_ms": 25,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def observe_typing(event):
++        task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.01)
++        assert client.actions == []
++        await asyncio.sleep(0.03)
++        assert client.actions == [(-100777, "typing")]
++        task.cancel()
++        await asyncio.gather(task, return_exceptions=True)
++
++    adapter.handle_message = observe_typing
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_pads_fast_text_response_by_length():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++                "typing_chars_per_second": 1000,
++                "typing_delay_min_ms": 25,
++                "typing_delay_max_ms": 25,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    elapsed: list[float] = []
++    results: list[SendResult] = []
++
++    async def send_fast_reply(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        started = asyncio.get_running_loop().time()
++        results.append(await adapter.send(event.source.chat_id, "hello"))
++        elapsed.append(asyncio.get_running_loop().time() - started)
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = send_fast_reply
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++
++    assert results[0].success is True
++    assert elapsed[0] >= 0.02
++    assert client.actions == [(-100777, "typing")]
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_excluded_sender_bypasses_artificial_delays():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "human_pacing_excluded_user_ids": ["380342859", 777],
++            },
++        )
++    )
++    observed: list[tuple[str | None, bool]] = []
++
++    async def capture_pacing(event):
++        observed.append((event.source.user_id, adapter._human_pacing_applies()))
++
++    adapter.handle_message = capture_pacing
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=380342859), private=True)
++    )
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++
++    assert adapter.human_pacing_excluded_user_ids == {"380342859", "777"}
++    assert observed == [("380342859", False), ("123", True)]
++
++
++@pytest.mark.asyncio
++async def test_queued_follow_up_uses_pending_event_sender_context(monkeypatch):
++    from gateway.platforms.base import BasePlatformAdapter
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allow_all_users": True, "human_pacing_enabled": True},
++        )
++    )
++    pending_event = adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=456), private=True)
++    )
++    assert pending_event is not None
++    observed: list[str | None] = []
++
++    async def capture_context(_self, event, _session_key):
++        turn = userbot_module._current_pacing_turn.get()
++        observed.append(turn.sender_id if turn is not None else None)
++        assert event.source.user_id == "456"
++
++    monkeypatch.setattr(
++        BasePlatformAdapter,
++        "_process_message_background",
++        capture_context,
++    )
++    outer_token = userbot_module._current_pacing_turn.set(
++        userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    )
++    try:
++        await adapter._process_message_background(pending_event, "shared-group-session")
++        restored_turn = userbot_module._current_pacing_turn.get()
++        assert restored_turn is not None
++        assert restored_turn.sender_id == "123"
++    finally:
++        userbot_module._current_pacing_turn.reset(outer_token)
++
++    assert observed == ["456"]
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_does_not_delay_one_off_send_during_active_turn():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 80,
++                "thinking_delay_max_ms": 80,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    turn_started = asyncio.Event()
++    release_turn = asyncio.Event()
++
++    async def hold_inbound_turn(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0)
++        turn_started.set()
++        await release_turn.wait()
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = hold_inbound_turn
++    inbound_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++        )
++    )
++    await turn_started.wait()
++
++    started = asyncio.get_running_loop().time()
++    result = await adapter.send("-100777", "service message")
++    elapsed = asyncio.get_running_loop().time() - started
++
++    release_turn.set()
++    await inbound_task
++    assert result.success is True
++    assert elapsed < 0.04
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_isolated_between_concurrent_turns_in_same_chat():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 60,
++                "thinking_delay_max_ms": 60,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    first_ready = asyncio.Event()
++    second_started = asyncio.Event()
++    release_second = asyncio.Event()
++    first_elapsed: list[float] = []
++
++    async def concurrent_reply(event):
++        sender_id = event.source.user_id
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        if sender_id == "123":
++            await asyncio.sleep(0.075)
++            first_ready.set()
++            await second_started.wait()
++            started = asyncio.get_running_loop().time()
++            await adapter.send(event.source.chat_id, "first reply")
++            first_elapsed.append(asyncio.get_running_loop().time() - started)
++        else:
++            second_started.set()
++            await release_second.wait()
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = concurrent_reply
++    first_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++        )
++    )
++    await first_ready.wait()
++    second_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=456), private=True)
++        )
++    )
++    await second_started.wait()
++    await first_task
++    release_second.set()
++    await second_task
++
++    assert first_elapsed and first_elapsed[0] < 0.04
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_stop_typing_cancels_active_mtproto_action():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    await adapter.send_typing("-100777")
++    assert client.active_actions == {(-100777, "typing")}
++
++    await adapter.stop_typing("-100777")
++
++    assert client.active_actions == set()
++    assert adapter._typing_tasks == {}
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_paced_turn_defers_stop_typing_until_final_send():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def finish_generation_then_send(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        assert client.active_actions == {(-100777, "typing")}
++
++        await adapter.stop_typing(event.source.chat_id)
++        assert client.active_actions == {(-100777, "typing")}
++
++        result = await adapter.send(event.source.chat_id, "final")
++        assert result.success is True
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = finish_generation_then_send
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_paced_turn_without_final_send_cleans_up_typing_action():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def cancel_without_send(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        assert client.active_actions == {(-100777, "typing")}
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++
++    adapter.handle_message = cancel_without_send
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_older_turn_cleanup_does_not_stop_newer_turn_typing():
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++    client = FakeTelegramClient()
++    adapter._client = client
++    first_turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    second_turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="456")
++
++    first_token = userbot_module._current_pacing_turn.set(first_turn)
++    try:
++        await adapter.send_typing("-100777")
++        second_token = userbot_module._current_pacing_turn.set(second_turn)
++        try:
++            await adapter.send_typing("-100777")
++        finally:
++            userbot_module._current_pacing_turn.reset(second_token)
++
++        await adapter.stop_typing("-100777")
++        assert client.active_actions == {(-100777, "typing")}
++    finally:
++        userbot_module._current_pacing_turn.reset(first_token)
++
++    await adapter.stop_typing("-100777")
++    assert client.active_actions == set()
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_cancelling_send_during_pacing_stops_owned_typing_action():
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "human_pacing_enabled": True,
++                "typing_delay_min_ms": 10000,
++                "typing_delay_max_ms": 10000,
++                "typing_jitter_ratio": 0,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    turn.thinking_until = asyncio.get_running_loop().time()
++    turn.typing_started_at = asyncio.get_running_loop().time()
++
++    token = userbot_module._current_pacing_turn.set(turn)
++    try:
++        await adapter.send_typing("-100777")
++        send_task = asyncio.create_task(adapter.send("-100777", "delayed response"))
++        await asyncio.sleep(0)
++        send_task.cancel()
++        with pytest.raises(asyncio.CancelledError):
++            await send_task
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++    finally:
++        userbot_module._current_pacing_turn.reset(token)
++
++    await adapter.disconnect()
++
++
++def test_human_pacing_uses_configured_typing_jitter_ratio():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"typing_jitter_ratio": 0.05},
++        )
++    )
++
++    assert adapter.typing_jitter_ratio == pytest.approx(0.05)
++
++
++@pytest.mark.parametrize("value", [-0.1, 1.1, "invalid"])
++def test_human_pacing_rejects_invalid_typing_jitter_ratio(value):
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"typing_jitter_ratio": value})
++    )
++
++    assert adapter.typing_jitter_ratio == pytest.approx(0.15)
 +
 +
 +def test_session_lock_prevents_two_clients_for_same_file_session(tmp_path, monkeypatch):
@@ -1644,7 +2496,7 @@ index 0000000000..51d8819206
 +    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 +    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
 +    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
-+    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
 +    install_fake_telethon(monkeypatch)
 +    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
 +
@@ -1684,6 +2536,69 @@ index 0000000000..51d8819206
 +
 +
 +@pytest.mark.asyncio
++async def test_repeated_run_loop_cancellation_during_typing_cleanup_is_fail_safe(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
++
++    client = SlowDisconnectLifecycleClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++    assert await adapter.connect() is True
++    client_task = adapter._client_task
++    assert client_task is not None
++    await asyncio.wait_for(client.run_entered.wait(), timeout=1)
++
++    typing_cancelled = asyncio.Event()
++    release_typing = asyncio.Event()
++
++    async def slow_typing_cleanup():
++        try:
++            await asyncio.Event().wait()
++        except asyncio.CancelledError:
++            typing_cancelled.set()
++            await release_typing.wait()
++
++    typing_task = asyncio.create_task(slow_typing_cleanup())
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
++
++    client_task.cancel()
++    await asyncio.wait_for(typing_cancelled.wait(), timeout=1)
++    client_task.cancel()
++    await asyncio.sleep(0)
++    client_task.cancel()
++    await asyncio.sleep(0)
++
++    assert client_task.done() is False
++    assert adapter._teardown_complete.is_set() is False
++    assert adapter._session_lock_file is not None
++    assert client.disconnect_entered.is_set() is False
++
++    release_typing.set()
++    await asyncio.wait_for(client.disconnect_entered.wait(), timeout=1)
++    client.release_disconnect.set()
++    result = await asyncio.gather(client_task, return_exceptions=True)
++
++    assert isinstance(result[0], asyncio.CancelledError)
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++    assert adapter._teardown_complete.is_set() is True
++
++
++@pytest.mark.asyncio
 +async def test_disconnect_cancellation_during_typing_cleanup_is_fail_safe(
 +    tmp_path, monkeypatch
 +):
@@ -1692,7 +2607,10 @@ index 0000000000..51d8819206
 +    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
 +    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
 +    install_fake_telethon(monkeypatch)
-+    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
 +
 +    first = BlockingLifecycleClient()
 +    second = BlockingLifecycleClient()
@@ -1714,7 +2632,7 @@ index 0000000000..51d8819206
 +            await release_typing.wait()
 +
 +    typing_task = asyncio.create_task(slow_typing_cleanup())
-+    adapter._typing_tasks["chat"] = typing_task
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
 +
 +    disconnect_task = asyncio.create_task(adapter.disconnect())
 +    await asyncio.wait_for(typing_cancelled.wait(), timeout=1)
@@ -1832,7 +2750,10 @@ index 0000000000..51d8819206
 +    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
 +    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
 +    install_fake_telethon(monkeypatch)
-+    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
 +
 +    first = GateStartLifecycleClient()
 +    second = BlockingLifecycleClient()
@@ -1853,7 +2774,7 @@ index 0000000000..51d8819206
 +            await release_typing.wait()
 +
 +    typing_task = asyncio.create_task(slow_typing_cleanup())
-+    adapter._typing_tasks["chat"] = typing_task
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
 +
 +    connect_task = asyncio.create_task(adapter.connect())
 +    await asyncio.wait_for(first.start_entered.wait(), timeout=1)

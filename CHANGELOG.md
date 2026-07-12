@@ -7,9 +7,13 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Added
-- `079-telegram-userbot-platform-plugin`: experimental opt-in Telegram MTProto user-account adapter backed by Telethon, with profile-local locked sessions, deny-by-default allowlists, text/reply/edit/typing support, inbound media caching, native file delivery, focused tests, and EN/RU operator documentation.
+- `079-telegram-userbot-platform-plugin`: experimental opt-in Telegram MTProto user-account adapter backed by Telethon, with profile-local locked sessions, deny-by-default allowlists, text/reply/edit/typing support, optional human-paced replies with per-sender bypass IDs, inbound media caching, native file delivery, focused tests, and EN/RU operator documentation.
+
+### Fixed
+- `079-telegram-userbot-platform-plugin`: locally allowlisted Telethon senders are now declared authorized before gateway dispatch, preventing the bot-oriented pairing handshake from replying to valid user-account contacts while preserving deny-by-default intake for unknown senders; Telegram userbot also suppresses the unsolicited first-message home-channel setup notice while keeping explicit `/sethome` available.
 
 ### Changed
+- `079-telegram-userbot-platform-plugin`: added opt-in asynchronous human pacing with length-aware typing, jitter, generation-time accounting, an upper bound, and per-sender bypass IDs; narrowed the exported unit to its own plugin and focused tests by removing unrelated provider/registry test hunks.
 - refreshed public README/catalog anchors to the current `v2026.7.7.2` / Hermes `0.18.2` release line.
 
 ### Fixed

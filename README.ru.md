@@ -102,7 +102,7 @@ PatchKit возвращает эту границу:
 - `080-api-server-provider-proxy` — главный provider gateway patch, описанный выше. Он превращает Hermes API Server в opt-in OpenAI-compatible proxy поверх explicit provider/model catalog, без запуска Hermes agent layer для этих запросов. IDE path покрывает streaming, tool calls, inline images, RooCode `reasoning_effort` и фильтрацию Codex sampling parameters.
 - `070-max-platform-plugin` — release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval-кнопки и компактный edit-in-place tool progress без raw non-verbose command previews.
 - `078-max-userbot-platform-plugin` — отдельный experimental MAX userbot plugin через MaxApiTeam/PyMax (`maxapi-python`) для user-account access: profile-local sessions, session locking, allowlists, replies/edits, media mapping, file delivery и approval payloads.
-- `079-telegram-userbot-platform-plugin` — отдельный experimental explicit opt-in Telegram userbot plugin через Telethon/MTProto: profile-local locked session, deny-by-default allowlist, text/reply/edit, typing, bounded media cache и native file delivery. См. [docs/ru/telegram-userbot.md](docs/ru/telegram-userbot.md).
+- `079-telegram-userbot-platform-plugin` — отдельный experimental explicit opt-in Telegram userbot plugin через Telethon/MTProto: profile-local locked session, deny-by-default allowlist до gateway dispatch, без bot-style pairing и самовольного home-channel onboarding для уже допущенных отправителей, text/reply/edit, typing, опциональный length-aware human pacing с исключениями по sender ID, bounded media cache и native file delivery. См. [docs/ru/telegram-userbot.md](docs/ru/telegram-userbot.md).
 
 ## Быстрый старт
 

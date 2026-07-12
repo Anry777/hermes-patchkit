@@ -69,6 +69,9 @@ class PatchCatalogTests(unittest.TestCase):
         )
         self.assertIn("ctx.register_platform", patch_text)
         self.assertIn("TELEGRAM_USERBOT_API_HASH", patch_text)
+        self.assertIn("human_pacing_enabled", patch_text)
+        self.assertIn("human_pacing_excluded_user_ids", patch_text)
+        self.assertIn("test_human_pacing_excluded_sender_bypasses_artificial_delays", patch_text)
         self.assertNotIn("gateway/platforms/telegram.py", patch_text)
 
         profile = json.loads(
