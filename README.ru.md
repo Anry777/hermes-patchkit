@@ -7,7 +7,7 @@
 Hermes PatchKit проверяет твои локальные фиксы на свежем upstream checkout до того, как трогает live-установку.
 Он показывает, какие patch'и всё ещё применяются, какие уже похожи на upstreamed, а какие нужно обновить.
 
-Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.7.7.2` / `0.18.2`. Текущий personal profile несёт только актуальный v0.18 overlay: shared root auth, credential-pool recovery, MAX Bot API, MAX userbot и Telegram MTProto userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity и VibeMode provider plugin с Hermes User-Agent для VibeMode Responses endpoint. Telegram rich/gating, SMTP_SSL, document media types, API-server fallback-model kwargs и старый Home Assistant config URL overlay retired там, где upstream v0.18 уже закрывает поведение. См. [NEWS.md](NEWS.md).
+Новости: PatchKit re-anchor'нут на Hermes Agent `v2026.7.7.2` / `0.18.2`. Текущий personal profile несёт только актуальный v0.18 overlay: shared root auth, credential-pool recovery, MAX Bot API, MAX userbot и Telegram MTProto userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity и VibeMode provider plugin с Hermes User-Agent и provider-scoped фильтрацией `X-Stainless-*` для VibeMode OpenAI-wire endpoints. Telegram rich/gating, SMTP_SSL, document media types, API-server fallback-model kwargs и старый Home Assistant config URL overlay retired там, где upstream v0.18 уже закрывает поведение. См. [NEWS.md](NEWS.md).
 
 ## Главный patch сейчас: Provider Proxy Gateway
 

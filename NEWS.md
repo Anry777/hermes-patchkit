@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-13 — VibeMode GLM SDK header compatibility
+
+PatchKit now applies a provider-scoped HTTPX request filter for VibeMode OpenAI-wire clients. It removes only OpenAI SDK `X-Stainless-*` identity metadata after the SDK has fully materialized the request, fixing false `Invalid API key` responses from valid `glm-5.2` credentials while preserving bearer authorization, `User-Agent: HermesAgent/1.0`, request payloads, and all non-VibeMode providers.
+
+The behavior is declared by the VibeMode provider profile and enforced in the main-agent, auxiliary sync/async, and API-server provider-proxy OpenAI client paths. Regression coverage verifies the VibeMode strip, non-VibeMode isolation, and preservation of authorization and Hermes User-Agent headers.
+
+---
+
+# Новости
+
+## 2026-07-13 — Совместимость VibeMode GLM с SDK headers
+
+PatchKit добавляет provider-scoped HTTPX request filter для VibeMode OpenAI-wire clients. Он удаляет только identity metadata OpenAI SDK `X-Stainless-*` после полной сборки request внутри SDK. Это устраняет ложный `Invalid API key` для валидных credentials `glm-5.2`, сохраняя bearer authorization, `User-Agent: HermesAgent/1.0`, request payload и все остальные providers без изменений.
+
+Поведение объявлено в VibeMode provider profile и применяется в main-agent, auxiliary sync/async и API-server provider-proxy OpenAI client paths. Regression tests проверяют удаление headers только для VibeMode, изоляцию остальных providers и сохранение authorization/Hermes User-Agent.
+
+---
+
 ## 2026-07-12 — Optional human pacing for Telegram userbot
 
 PatchKit unit `079-telegram-userbot-platform-plugin` now supports opt-in human-paced replies on the Telethon/MTProto path only. With `human_pacing_enabled: true`, a reply can wait through a short silent thinking phase, then show Telegram typing while a length-aware delay accounts for time already spent generating the response. The delay is asynchronous, jittered, capped, and applies only to replies associated with an inbound sender.

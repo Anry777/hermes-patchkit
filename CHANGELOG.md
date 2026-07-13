@@ -10,6 +10,7 @@ The format follows Keep a Changelog.
 - `079-telegram-userbot-platform-plugin`: experimental opt-in Telegram MTProto user-account adapter backed by Telethon, with profile-local locked sessions, deny-by-default allowlists, text/reply/edit/typing support, optional human-paced replies with per-sender bypass IDs, inbound media caching, native file delivery, focused tests, and EN/RU operator documentation.
 
 ### Fixed
+- `100-vibemode-provider-plugin`: VibeMode OpenAI-wire clients now remove only OpenAI SDK `X-Stainless-*` identity metadata at the final HTTPX request boundary. This fixes false `Invalid API key` responses for valid `glm-5.2` credentials while preserving `Authorization`, `User-Agent: HermesAgent/1.0`, request payloads, and every non-VibeMode provider; main-agent, auxiliary sync/async, and API-server provider-proxy transports have regression coverage.
 - `079-telegram-userbot-platform-plugin`: locally allowlisted Telethon senders are now declared authorized before gateway dispatch, preventing the bot-oriented pairing handshake from replying to valid user-account contacts while preserving deny-by-default intake for unknown senders; Telegram userbot also suppresses the unsolicited first-message home-channel setup notice while keeping explicit `/sethome` available.
 
 ### Changed
