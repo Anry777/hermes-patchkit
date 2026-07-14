@@ -13,6 +13,7 @@ MVP поддерживает:
 - deny-by-default allowlist пользователей и чатов;
 - inbound text и profile-local media download;
 - outbound text, replies, edits, typing, images, documents и video files;
+- подавление human-account system UI: известные Hermes slash-команды игнорируются, internal agent failures остаются в logs, а approval prompts завершаются fail-closed;
 - dynamic Hermes platform registration без изменений встроенного Telegram Bot API adapter.
 
 ## Применение PatchKit unit
@@ -80,7 +81,11 @@ TELEGRAM_USERBOT_PHONE=+...
 
 `work_dir` должен находиться внутри `HERMES_HOME` активного профиля, а `session_name` должен быть простым filename. Path traversal и absolute session names отклоняются.
 
-Non-secret allowlists и media limits храни в `config.yaml`, а не в `.env`. Запись в `allowed_chats` разрешает сообщения от всех участников этого чата; для ограничения по sender используй `allowed_users`. Adapter применяет эту deny-by-default политику до gateway dispatch и объявляет результат своей локальной access policy, поэтому допущенное сообщение user account не попадает в bot-style pairing Hermes. Неизвестные отправители по-прежнему отбрасываются на входе Telethon. Telegram userbot также подавляет самовольный first-message home-channel onboarding notice; `/sethome` остаётся доступной, если оператор вызовет её явно. Media download по умолчанию выключен и включается явно только после принятия storage risk. Вложения с неизвестным metadata size или размером выше `max_media_bytes` отклоняются до transfer. Downloads сериализованы и stream-ятся в profile-local files; actual bytes проверяются перед каждой записью, а byte/file-count quotas повторно проверяются до сохранения файла.
+Non-secret allowlists и media limits храни в `config.yaml`, а не в `.env`. Запись в `allowed_chats` разрешает сообщения от всех участников этого чата; для ограничения по sender используй `allowed_users`. Adapter применяет эту deny-by-default политику до gateway dispatch и объявляет результат своей локальной access policy, поэтому допущенное сообщение user account не попадает в bot-style pairing Hermes. Неизвестные отправители по-прежнему отбрасываются на входе Telethon.
+
+Telegram userbot всегда использует human-account system-message policy. Известные Hermes gateway-команды, включая `/reset`, `/new`, `/approve`, `/status` и `/sethome`, на этом transport молча игнорируются; даже при active session они не отменяют running task, не заменяют session guard и не drain-ят pending work. Неизвестный slash-prefixed text остаётся обычным conversation input. Internal agent failures пишутся только в server log без generic ответа `Sorry, I encountered an unexpected error`. Dangerous-command approvals завершаются fail-closed без кнопок и text prompts. Обычные финальные ответы модели не меняются. Operator-действия выполняй через CLI/terminal нужного профиля или отдельный доверенный bot channel, а не через user-account chat.
+
+Media download по умолчанию выключен и включается явно только после принятия storage risk. Вложения с неизвестным metadata size или размером выше `max_media_bytes` отклоняются до transfer. Downloads сериализованы и stream-ятся в profile-local files; actual bytes проверяются перед каждой записью, а byte/file-count quotas повторно проверяются до сохранения файла.
 
 ## Первая авторизация
 
@@ -132,7 +137,8 @@ cd /root/.hermes/hermes-agent
 scripts/run_tests.sh \
   tests/plugins/test_telegram_userbot_platform_plugin.py \
   tests/providers/test_plugin_discovery.py \
-  tests/gateway/test_platform_registry.py
+  tests/gateway/test_platform_registry.py \
+  tests/gateway/test_status_command.py
 ```
 
 PatchKit checks:

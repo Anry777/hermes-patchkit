@@ -1,5 +1,23 @@
 # News
 
+## 2026-07-14 — Silent Hermes control plane for Telegram userbot
+
+PatchKit unit `079-telegram-userbot-platform-plugin` now treats the MTProto user-account transport as a human-account surface rather than a bot control channel. Recognized Hermes gateway commands such as `/reset`, `/new`, `/approve`, `/status`, and `/sethome` are silently ignored before active-session dispatch, so `/stop`, `/new`, and `/reset` cannot cancel a running task or mutate its guard/pending work. Internal agent exceptions stay in gateway logs, and dangerous-command approval prompts fail closed without buttons or fallback text. Unknown slash-prefixed text and ordinary final model replies remain unaffected. Bot API Telegram and every other adapter keep their existing behavior through a default-off capability.
+
+The change was developed test-first and verified with focused userbot/status/error-path tests, adjacent approval coverage, and clean apply/reverse checks against official `v2026.7.7.2`.
+
+---
+
+# Новости
+
+## 2026-07-14 — Тихий Hermes control plane для Telegram userbot
+
+PatchKit unit `079-telegram-userbot-platform-plugin` теперь рассматривает MTProto user-account transport как human-account surface, а не bot control channel. Известные Hermes gateway-команды, включая `/reset`, `/new`, `/approve`, `/status` и `/sethome`, молча игнорируются до active-session dispatch, поэтому `/stop`, `/new` и `/reset` не могут отменить running task или изменить его guard/pending work. Internal agent exceptions остаются в gateway logs, а dangerous-command approval prompts завершаются fail-closed без кнопок и fallback text. Неизвестный slash-prefixed text и обычные финальные ответы модели не меняются. Telegram Bot API и остальные adapters сохраняют прежнее поведение благодаря default-off capability.
+
+Изменение сделано через TDD и проверено focused userbot/status/error-path tests, смежными approval tests и clean apply/reverse checks на official `v2026.7.7.2`.
+
+---
+
 ## 2026-07-13 — VibeMode GLM SDK header compatibility
 
 PatchKit now applies a provider-scoped HTTPX request filter for VibeMode OpenAI-wire clients. It removes only OpenAI SDK `X-Stainless-*` identity metadata after the SDK has fully materialized the request, fixing false `Invalid API key` responses from valid `glm-5.2` credentials while preserving bearer authorization, `User-Agent: HermesAgent/1.0`, request payloads, and all non-VibeMode providers.
@@ -22,7 +40,7 @@ PatchKit добавляет provider-scoped HTTPX request filter для VibeMode
 
 PatchKit unit `079-telegram-userbot-platform-plugin` now supports opt-in human-paced replies on the Telethon/MTProto path only. With `human_pacing_enabled: true`, a reply can wait through a short silent thinking phase, then show Telegram typing while a length-aware delay accounts for time already spent generating the response. The delay is asynchronous, jittered, capped, and applies only to replies associated with an inbound sender.
 
-`human_pacing_excluded_user_ids` bypasses both artificial phases for selected Telegram sender IDs, including inside groups where sender ID and chat ID differ. Locally admitted `allowed_users`/`allowed_chats` senders are also declared authorized before gateway dispatch, so the Telegram user account no longer sends Hermes' bot-oriented pairing prompt to valid contacts; unknown senders remain denied at Telethon intake. The unsolicited first-message home-channel onboarding notice is suppressed for Telegram userbot as well, while explicit `/sethome` remains available. The feature remains disabled by default, does not modify the official Bot API adapter, and does not delay unrelated outbound service messages. The `079` export was also narrowed to its own plugin and directly required gateway capability/test hunks, removing unrelated provider/registry test changes. Validation covered PatchKit catalog/self-check, clean apply and reverse-check against official `v2026.7.7.2`, and focused userbot, home-onboarding, access-policy, and typing tests.
+`human_pacing_excluded_user_ids` bypasses both artificial phases for selected Telegram sender IDs, including inside groups where sender ID and chat ID differ. Locally admitted `allowed_users`/`allowed_chats` senders are also declared authorized before gateway dispatch, so the Telegram user account no longer sends Hermes' bot-oriented pairing prompt to valid contacts; unknown senders remain denied at Telethon intake. The unsolicited first-message home-channel onboarding notice is suppressed for Telegram userbot as well. The later 2026-07-14 human-account policy also silently ignores explicit Hermes gateway commands on this transport. The pacing feature remains disabled by default, does not modify the official Bot API adapter, and does not delay unrelated outbound service messages. The `079` export was also narrowed to its own plugin and directly required gateway capability/test hunks, removing unrelated provider/registry test changes. Validation covered PatchKit catalog/self-check, clean apply and reverse-check against official `v2026.7.7.2`, and focused userbot, home-onboarding, access-policy, and typing tests.
 
 ---
 
@@ -32,7 +50,7 @@ PatchKit unit `079-telegram-userbot-platform-plugin` now supports opt-in human-p
 
 PatchKit unit `079-telegram-userbot-platform-plugin` теперь поддерживает opt-in человекоподобный темп ответа только в Telethon/MTProto path. При `human_pacing_enabled: true` сначала выдерживается короткая тихая thinking-пауза, затем Telegram показывает typing, пока length-aware задержка учитывает уже прошедшее время генерации. Ожидание асинхронное, с jitter и верхним пределом; оно применяется только к ответам, связанным с входящим sender.
 
-`human_pacing_excluded_user_ids` полностью обходит обе искусственные фазы для выбранных Telegram sender ID, в том числе в группах, где sender ID не равен chat ID. Локально допущенные через `allowed_users`/`allowed_chats` отправители теперь также объявляются авторизованными до gateway dispatch, поэтому Telegram user account больше не посылает валидным контактам bot-style pairing prompt Hermes; неизвестные отправители по-прежнему отклоняются на входе Telethon. Для Telegram userbot также подавлен самовольный first-message home-channel onboarding notice, при этом явная команда `/sethome` остаётся доступной. По умолчанию pacing выключен, official Bot API adapter не изменяется, а несвязанные служебные исходящие сообщения не задерживаются. Export `079` сужен до собственного plugin и непосредственно необходимых gateway capability/test hunks: чужие provider/registry test changes удалены. Проверены PatchKit catalog/self-check, чистое применение и reverse-check на official `v2026.7.7.2`, а также focused tests userbot, home-onboarding, access-policy и typing.
+`human_pacing_excluded_user_ids` полностью обходит обе искусственные фазы для выбранных Telegram sender ID, в том числе в группах, где sender ID не равен chat ID. Локально допущенные через `allowed_users`/`allowed_chats` отправители теперь также объявляются авторизованными до gateway dispatch, поэтому Telegram user account больше не посылает валидным контактам bot-style pairing prompt Hermes; неизвестные отправители по-прежнему отклоняются на входе Telethon. Для Telegram userbot также подавлен самовольный first-message home-channel onboarding notice. Более поздняя human-account policy от 2026-07-14 дополнительно молча игнорирует explicit Hermes gateway-команды на этом transport. По умолчанию pacing выключен, official Bot API adapter не изменяется, а несвязанные служебные исходящие сообщения не задерживаются. Export `079` сужен до собственного plugin и непосредственно необходимых gateway capability/test hunks: чужие provider/registry test changes удалены. Проверены PatchKit catalog/self-check, чистое применение и reverse-check на official `v2026.7.7.2`, а также focused tests userbot, home-onboarding, access-policy и typing.
 
 ---
 

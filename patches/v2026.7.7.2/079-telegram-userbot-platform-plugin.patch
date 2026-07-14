@@ -1,8 +1,11 @@
 diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
-index 21ca4af6bb..c34c777e3c 100644
+index 21ca4af6bb4d959b5b7d762ac61a26ea03eaf81d..acc2c998786d286188d79c95f5213bebc39a5134 100644
 --- a/gateway/platforms/base.py
 +++ b/gateway/platforms/base.py
-@@ -2411,3 +2411,13 @@ class BasePlatformAdapter(ABC):
+@@ -2408,6 +2408,27 @@ class BasePlatformAdapter(ABC):
+         """
+         return len
+ 
 +    @property
 +    def suppress_home_channel_onboarding(self) -> bool:
 +        """Whether first-run home-channel setup notices should stay silent.
@@ -13,14 +16,150 @@ index 21ca4af6bb..c34c777e3c 100644
 +        """
 +        return False
 +
++    @property
++    def suppress_system_messages(self) -> bool:
++        """Whether Hermes-owned command and failure notices should stay silent.
++
++        Bot-oriented platforms keep the default interactive gateway UX. Adapters
++        that represent an ordinary user account can opt in so known gateway
++        commands are ignored, internal failures stay server-side, and approval
++        prompts fail closed instead of exposing bot control surfaces.
++        """
++        return False
++
      @property
      def enforces_own_access_policy(self) -> bool:
          """Whether this adapter gates inbound access before dispatch.
+@@ -4601,6 +4622,28 @@ class BasePlatformAdapter(ABC):
+         # Offloaded: the sync hook must not block the loop.
+         await asyncio.to_thread(self._apply_topic_recovery, event)
+ 
++        # Human-account transports expose no Hermes command control plane.
++        # Drop only commands recognized by the real gateway registry before any
++        # active-session guard, task, debounce, or pending-message mutation.
++        if self.suppress_system_messages is True:
++            cmd = event.get_command()
++            if cmd:
++                from hermes_cli.commands import (
++                    is_gateway_known_command,
++                    resolve_command,
++                )
++
++                command_def = resolve_command(cmd)
++                canonical = command_def.name if command_def is not None else cmd
++                if is_gateway_known_command(canonical):
++                    logger.info(
++                        "[%s] Silently ignored gateway command '/%s' before "
++                        "session dispatch",
++                        self.name,
++                        canonical,
++                    )
++                    return
++
+         session_key = build_session_key(
+             event.source,
+             group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
+@@ -5210,25 +5253,29 @@ class BasePlatformAdapter(ABC):
+         except Exception as e:
+             await self._run_processing_hook("on_processing_complete", event, ProcessingOutcome.FAILURE)
+             logger.error("[%s] Error handling message: %s", self.name, e, exc_info=True)
+-            # Send the error to the user so they aren't left with radio silence
+-            try:
+-                error_type = type(e).__name__
+-                error_detail = str(e)[:300] if str(e) else "no details available"
+-                _thread_metadata = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))
+-                await self.send(
+-                    chat_id=event.source.chat_id,
+-                    content=(
+-                        f"Sorry, I encountered an error ({error_type}).\n"
+-                        f"{error_detail}\n"
+-                        "Try again or use /reset to start a fresh session."
+-                    ),
+-                    metadata=_thread_metadata,
+-                )
+-            except Exception as notify_err:
+-                logger.error(
+-                    "[%s] Failed to send error notification to user: %s",
+-                    self.name, notify_err, exc_info=True,
+-                )  # Last resort — don't let error reporting crash the handler
++            # Human-account transports keep framework failures server-side.
++            # Bot-style transports retain the existing user-facing notice.
++            if self.suppress_system_messages is not True:
++                try:
++                    error_type = type(e).__name__
++                    error_detail = str(e)[:300] if str(e) else "no details available"
++                    _thread_metadata = _thread_metadata_for_source(
++                        event.source, _reply_anchor_for_event(event)
++                    )
++                    await self.send(
++                        chat_id=event.source.chat_id,
++                        content=(
++                            f"Sorry, I encountered an error ({error_type}).\n"
++                            f"{error_detail}\n"
++                            "Try again or use /reset to start a fresh session."
++                        ),
++                        metadata=_thread_metadata,
++                    )
++                except Exception as notify_err:
++                    logger.error(
++                        "[%s] Failed to send error notification to user: %s",
++                        self.name, notify_err, exc_info=True,
++                    )  # Last resort — don't let error reporting crash the handler
+         finally:
+             # Stop typing before any deferred callback work.  Post-delivery
+             # callbacks may perform platform I/O; a stuck callback must not
 diff --git a/gateway/run.py b/gateway/run.py
-index 11eff2fd9d..ae0814468d 100644
+index 11eff2fd9df4a7ad72d9ce3f86f6b25a1c5820d4..8bcabfed207ad9056409145ac073f7bcc7cd1462 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -11209,6 +11209,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -216,6 +216,11 @@ def _gateway_platform_value(platform: Any) -> str:
+     return str(getattr(platform, "value", platform) or "").strip().lower()
+ 
+ 
++def _system_messages_suppressed(adapter: Any) -> bool:
++    """Return True only when an adapter explicitly opts out of system UI."""
++    return getattr(adapter, "suppress_system_messages", False) is True
++
++
+ def _non_conversational_metadata(
+     metadata: Optional[Dict[str, Any]] = None,
+     *,
+@@ -8845,6 +8850,33 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                     # Record rate limit so subsequent messages are silently ignored
+                     self.pairing_store._record_rate_limit(platform_name, source.user_id)
+             return None
++
++        # Human-account transports must not expose Hermes's bot control plane.
++        # Ignore only commands known to the gateway; unknown slash-prefixed text
++        # remains ordinary conversation input.
++        _system_adapter = self._adapter_for_source(source)
++        if _system_messages_suppressed(_system_adapter):
++            _system_command = event.get_command()
++            if _system_command:
++                from hermes_cli.commands import (
++                    is_gateway_known_command as _is_gateway_known_system_command,
++                    resolve_command as _resolve_system_command,
++                )
++
++                _system_command_def = _resolve_system_command(_system_command)
++                _system_canonical = (
++                    _system_command_def.name
++                    if _system_command_def is not None
++                    else _system_command
++                )
++                if _is_gateway_known_system_command(_system_canonical):
++                    logger.info(
++                        "Silently ignored gateway command /%s on system-message-"
++                        "suppressed platform %s",
++                        _system_canonical,
++                        source.platform.value if source.platform else "unknown",
++                    )
++                    return None
+         
+         # Intercept messages that are responses to a pending /update prompt.
+         # The update process (detached) wrote .update_prompt.json; the watcher
+@@ -11208,7 +11240,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+         
          # One-time prompt if no home channel is set for this platform
          # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
 -        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
@@ -39,9 +178,37 @@ index 11eff2fd9d..ae0814468d 100644
              platform_name = source.platform.value
              env_key = _home_target_env_var(platform_name)
              if not os.getenv(env_key):
+@@ -11944,6 +11987,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 logger.debug("Failed to persist inbound user message after agent exception", exc_info=True)
+             # Log full details server-side only; never expose raw exception
+             # types or messages to end users (info-leakage risk).
++            if _system_messages_suppressed(self._adapter_for_source(source)):
++                logger.info(
++                    "Suppressed agent failure notice on platform %s",
++                    source.platform.value if source.platform else "unknown",
++                )
++                return None
+             status_hint = ""
+             status_code = getattr(e, "status_code", None)
+             _hist_len = len(history) if 'history' in locals() else 0
+@@ -18274,6 +18323,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 UX.  Otherwise fall back to a plain text message with
+                 ``/approve`` instructions.
+                 """
++                # Human-account transports intentionally expose no approval UI.
++                # Raising is fail-closed: tools.approval drops the queued entry
++                # and returns a blocked result instead of waiting or sending text.
++                if _system_messages_suppressed(_status_adapter):
++                    raise RuntimeError(
++                        "Gateway approval prompts are disabled for this platform"
++                    )
++
+                 # Pause the typing indicator while the agent waits for
+                 # user approval.  Critical for Slack's Assistant API where
+                 # assistant_threads_setStatus disables the compose box — the
 diff --git a/plugins/platforms/telegram_userbot/__init__.py b/plugins/platforms/telegram_userbot/__init__.py
 new file mode 100644
-index 0000000000..39785a9c46
+index 0000000000000000000000000000000000000000..39785a9c460c16dc7b71b4ce7f3401e6b4d965a8
 --- /dev/null
 +++ b/plugins/platforms/telegram_userbot/__init__.py
 @@ -0,0 +1,5 @@
@@ -52,10 +219,10 @@ index 0000000000..39785a9c46
 +__all__ = ["register"]
 diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/telegram_userbot/adapter.py
 new file mode 100644
-index 0000000000..929213b093
+index 0000000000000000000000000000000000000000..d9336da050fa028fbab16907e82a05b28d631dad
 --- /dev/null
 +++ b/plugins/platforms/telegram_userbot/adapter.py
-@@ -0,0 +1,1269 @@
+@@ -0,0 +1,1274 @@
 +"""Telegram MTProto userbot platform plugin backed by Telethon.
 +
 +This adapter is intentionally separate from ``plugins.platforms.telegram``.
@@ -373,6 +540,11 @@ index 0000000000..929213b093
 +    @property
 +    def suppress_home_channel_onboarding(self) -> bool:
 +        """Keep user-account chats free of bot-oriented setup notices."""
++        return True
++
++    @property
++    def suppress_system_messages(self) -> bool:
++        """Keep Hermes command/error UI out of ordinary user-account chats."""
 +        return True
 +
 +    @property
@@ -1327,7 +1499,7 @@ index 0000000000..929213b093
 +    )
 diff --git a/plugins/platforms/telegram_userbot/plugin.yaml b/plugins/platforms/telegram_userbot/plugin.yaml
 new file mode 100644
-index 0000000000..703ab4671d
+index 0000000000000000000000000000000000000000..703ab4671d138b8f648214fa1eef618049b784cc
 --- /dev/null
 +++ b/plugins/platforms/telegram_userbot/plugin.yaml
 @@ -0,0 +1,33 @@
@@ -1365,10 +1537,13 @@ index 0000000000..703ab4671d
 +    prompt: "Telethon session string"
 +    password: true
 diff --git a/tests/gateway/test_status_command.py b/tests/gateway/test_status_command.py
-index cadeb9ca70..82557305d4 100644
+index cadeb9ca70686d85f53c0d7227ad18dcdbc56060..66afdd991af7e3d3a6ba454344d52fa58459c71c 100644
 --- a/tests/gateway/test_status_command.py
 +++ b/tests/gateway/test_status_command.py
-@@ -477,3 +477,47 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
+@@ -474,6 +474,156 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
+     assert "Type /sethome" in onboarding
+ 
+ 
 +@pytest.mark.asyncio
 +async def test_first_run_platform_can_suppress_home_channel_onboarding(monkeypatch):
 +    import gateway.run as gateway_run
@@ -1413,15 +1588,121 @@ index cadeb9ca70..82557305d4 100644
 +    runner.adapters[platform].send.assert_not_awaited()
 +
 +
++@pytest.mark.asyncio
++async def test_platform_can_silently_ignore_known_gateway_commands():
++    platform = Platform("telegram_userbot")
++    source = _make_source(platform)
++    session_entry = SessionEntry(
++        session_key=build_session_key(source),
++        session_id="sess-1",
++        created_at=datetime.now(),
++        updated_at=datetime.now(),
++        platform=platform,
++        chat_type="dm",
++    )
++    runner = _make_runner(session_entry, platform=platform)
++    runner.adapters[platform].suppress_system_messages = True
++    runner._maybe_confirm_destructive_slash = AsyncMock(return_value="confirm reset")
++
++    result = await runner._handle_message(_make_event("/reset", platform=platform))
++
++    assert result is None
++    runner._maybe_confirm_destructive_slash.assert_not_awaited()
++
++
++@pytest.mark.asyncio
++async def test_platform_can_suppress_internal_agent_error_messages(monkeypatch):
++    import gateway.run as gateway_run
++
++    platform = Platform("telegram_userbot")
++    source = _make_source(platform)
++    session_entry = SessionEntry(
++        session_key=build_session_key(source),
++        session_id="sess-1",
++        created_at=datetime.now(),
++        updated_at=datetime.now(),
++        platform=platform,
++        chat_type="dm",
++    )
++    runner = _make_runner(session_entry, platform=platform)
++    runner.adapters[platform].suppress_system_messages = True
++    runner.session_store.load_transcript.return_value = [
++        {"role": "user", "content": "earlier"}
++    ]
++    runner._run_agent = AsyncMock(side_effect=RuntimeError("internal failure"))
++
++    monkeypatch.setattr(
++        gateway_run,
++        "_resolve_runtime_agent_kwargs",
++        lambda: {"api_key": "***"},
++    )
++    monkeypatch.setattr(
++        "agent.model_metadata.get_model_context_length",
++        lambda *_args, **_kwargs: 100000,
++    )
++
++    result = await runner._handle_message(_make_event("hello", platform=platform))
++
++    assert result is None
++    runner._run_agent.assert_awaited_once()
++
++
++@pytest.mark.asyncio
++async def test_platform_system_message_suppression_preserves_normal_reply(monkeypatch):
++    import gateway.run as gateway_run
++
++    platform = Platform("telegram_userbot")
++    source = _make_source(platform)
++    session_entry = SessionEntry(
++        session_key=build_session_key(source),
++        session_id="sess-1",
++        created_at=datetime.now(),
++        updated_at=datetime.now(),
++        platform=platform,
++        chat_type="dm",
++    )
++    runner = _make_runner(session_entry, platform=platform)
++    runner.adapters[platform].suppress_system_messages = True
++    runner.session_store.load_transcript.return_value = [
++        {"role": "user", "content": "earlier"}
++    ]
++    runner._run_agent = AsyncMock(
++        return_value={
++            "final_response": "ordinary reply",
++            "messages": [],
++            "tools": [],
++            "history_offset": 0,
++            "last_prompt_tokens": 0,
++            "input_tokens": 0,
++            "output_tokens": 0,
++            "model": "openai/test-model",
++        }
++    )
++
++    monkeypatch.setattr(
++        gateway_run,
++        "_resolve_runtime_agent_kwargs",
++        lambda: {"api_key": "***"},
++    )
++    monkeypatch.setattr(
++        "agent.model_metadata.get_model_context_length",
++        lambda *_args, **_kwargs: 100000,
++    )
++
++    result = await runner._handle_message(_make_event("hello", platform=platform))
++
++    assert result == "ordinary reply"
++
++
  @pytest.mark.asyncio
  async def test_handle_message_discards_stale_result_after_session_invalidation(monkeypatch):
      import gateway.run as gateway_run
 diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plugins/test_telegram_userbot_platform_plugin.py
 new file mode 100644
-index 0000000000..595c9377ce
+index 0000000000000000000000000000000000000000..0c10b10242f8dada956ebb58a4f62337f4014934
 --- /dev/null
 +++ b/tests/plugins/test_telegram_userbot_platform_plugin.py
-@@ -0,0 +1,1760 @@
+@@ -0,0 +1,1894 @@
 +"""Behavior tests for the PatchKit Telegram MTProto userbot platform plugin."""
 +
 +from __future__ import annotations
@@ -1433,11 +1714,12 @@ index 0000000000..595c9377ce
 +from pathlib import Path
 +from types import ModuleType, SimpleNamespace
 +from typing import Any
++from unittest.mock import AsyncMock
 +
 +import pytest
 +
 +from gateway.config import Platform, PlatformConfig
-+from gateway.platforms.base import SendResult
++from gateway.platforms.base import SendResult, build_session_key
 +
 +
 +class FakeTelegramMessage:
@@ -1564,6 +1846,139 @@ index 0000000000..595c9377ce
 +    assert adapter.session_name == "main"
 +    assert adapter.session_path == tmp_path / "telegram_userbot" / "main.session"
 +
++
++def test_telegram_userbot_suppresses_bot_style_system_messages(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++
++    assert adapter.suppress_system_messages is True
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("command", ["/stop", "/new", "/reset"])
++async def test_suppressed_commands_leave_active_session_unchanged(
++    command, tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text=command),
++            private=True,
++        )
++    )
++    assert event is not None
++
++    session_key = build_session_key(
++        event.source,
++        group_sessions_per_user=adapter.config.extra.get(
++            "group_sessions_per_user", True
++        ),
++        thread_sessions_per_user=adapter.config.extra.get(
++            "thread_sessions_per_user", False
++        ),
++    )
++    guard = asyncio.Event()
++    active_task = asyncio.create_task(asyncio.sleep(60))
++    pending_event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(message_id=222, text="pending"),
++            private=True,
++        )
++    )
++    assert pending_event is not None
++    adapter._active_sessions[session_key] = guard
++    adapter._session_tasks[session_key] = active_task
++    adapter._pending_messages[session_key] = pending_event
++    adapter._message_handler = AsyncMock(return_value=None)
++    adapter.cancel_session_processing = AsyncMock()
++
++    try:
++        await adapter.handle_message(event)
++
++        assert adapter._active_sessions[session_key] is guard
++        assert adapter._session_tasks[session_key] is active_task
++        assert adapter._pending_messages[session_key] is pending_event
++        assert active_task.cancelled() is False
++        adapter._message_handler.assert_not_awaited()
++        adapter.cancel_session_processing.assert_not_awaited()
++    finally:
++        active_task.cancel()
++        spawned_tasks = list(adapter._background_tasks)
++        for task in spawned_tasks:
++            task.cancel()
++        await asyncio.gather(active_task, *spawned_tasks, return_exceptions=True)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("suppress_system_messages", [True, False])
++async def test_background_handler_errors_follow_system_message_capability(
++    suppress_system_messages, tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    class AdapterUnderTest(TelegramUserbotAdapter):
++        @property
++        def suppress_system_messages(self):
++            return suppress_system_messages
++
++    adapter = AdapterUnderTest(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text="trigger background failure"),
++            private=True,
++        )
++    )
++    assert event is not None
++    adapter._message_handler = AsyncMock(
++        side_effect=RuntimeError("sensitive internal detail")
++    )
++    adapter.send = AsyncMock()
++
++    await adapter.handle_message(event)
++    background_tasks = list(adapter._background_tasks)
++    assert background_tasks
++    await asyncio.gather(*background_tasks)
++
++    if suppress_system_messages:
++        adapter.send.assert_not_awaited()
++    else:
++        adapter.send.assert_awaited_once()
++        content = adapter.send.await_args.kwargs["content"]
++        assert "RuntimeError" in content
++        assert "sensitive internal detail" in content
++
++
++@pytest.mark.asyncio
++async def test_unknown_slash_text_reaches_userbot_message_handler(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text="/not-a-hermes-command"),
++            private=True,
++        )
++    )
++    assert event is not None
++    adapter._message_handler = AsyncMock(return_value=None)
++
++    await adapter.handle_message(event)
++    await asyncio.gather(*list(adapter._background_tasks))
++
++    adapter._message_handler.assert_awaited_once_with(event)
 +
 +
 +def test_validate_config_requires_env_credentials_plus_bootstrap_or_session(
