@@ -90,7 +90,7 @@ index 623560250d..94504e68d5 100644
      normalized = normalized.rstrip("/").lower()
      return (
          normalized.startswith(("https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic"))
-+        or base_url_host_matches(normalized, "api.vibemod.pro")
++        or base_url_host_matches(normalized, "api.vibemode.top")
          or "azure.com" in normalized
      )
  
@@ -4356,7 +4356,7 @@ index 0000000000..945426ff7e
 +    signup_url="https://vibemod.pro/",
 +    api_mode="chat_completions",
 +    env_vars=("VIBEMODE_API_KEY", "VIBEMODE_BASE_URL"),
-+    base_url="https://api.vibemod.pro/v1",
++    base_url="https://api.vibemode.top/v1",
 +    auth_type="api_key",
 +    # Cloudflare in front of VibeMode blocks the OpenAI Python SDK's default
 +    # ``OpenAI/Python ...`` User-Agent on /v1/responses. Send a stable Hermes UA
@@ -7141,7 +7141,7 @@ index d450580cd3..37c9d41fa6 100644
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="gpt-5.5",
-+                base_url="https://api.vibemod.pro/v1",
++                base_url="https://api.vibemode.top/v1",
 +                api_key="",
 +                provider="vibemode",
 +            ) == 272_000
@@ -7153,7 +7153,7 @@ index d450580cd3..37c9d41fa6 100644
 +             patch("agent.model_metadata.fetch_model_metadata", return_value={}):
 +            assert get_model_context_length(
 +                model="deepseek-v4-pro",
-+                base_url="https://api.vibemod.pro/v1",
++                base_url="https://api.vibemode.top/v1",
 +                api_key="",
 +                provider="",
 +            ) == 1_000_000
@@ -7221,7 +7221,7 @@ index 0000000000..91d9d27de5
 +        provider="vibemode",
 +        model="glm-5.2",
 +        api_mode="chat_completions",
-+        base_url="https://api.vibemod.pro/v1",
++        base_url="https://api.vibemode.top/v1",
 +        api_key="sk-redacted",
 +        runtime={},
 +    )
@@ -7242,7 +7242,7 @@ index 0000000000..91d9d27de5
 +    try:
 +        request = httpx.Request(
 +            "POST",
-+            "https://api.vibemod.pro/v1/chat/completions",
++            "https://api.vibemode.top/v1/chat/completions",
 +            headers={
 +                "Authorization": "Bearer sk-redacted",
 +                "X-Stainless-Lang": "python",
@@ -9058,12 +9058,12 @@ index 0000000000..bb1e2946ac
 +    entry = payload["credential_pool"]["vibemode"][0]
 +    assert entry["label"] == "vm"
 +    assert entry["access_token"] == "vm-test-key"
-+    assert entry["base_url"] == "https://api.vibemod.pro/v1"
++    assert entry["base_url"] == "https://api.vibemode.top/v1"
 +
 +    runtime = resolve_runtime_provider(requested="vibemode", target_model="gpt-5.5")
 +    assert runtime["provider"] == "vibemode"
 +    assert runtime["api_mode"] == "codex_responses"
-+    assert runtime["base_url"] == "https://api.vibemod.pro/v1"
++    assert runtime["base_url"] == "https://api.vibemode.top/v1"
 +    assert runtime["api_key"] == "vm-test-key"
 +
 +
@@ -10097,7 +10097,7 @@ index 3eb2340304..e27a2d8381 100644
 +        p = get_provider_profile("vibemode")
 +        assert p is not None
 +        assert p.api_mode == "chat_completions"
-+        assert p.base_url == "https://api.vibemod.pro/v1"
++        assert p.base_url == "https://api.vibemode.top/v1"
 +        assert p.env_vars == ("VIBEMODE_API_KEY", "VIBEMODE_BASE_URL")
 +        assert p.default_headers == {"User-Agent": "HermesAgent/1.0"}
 +        assert p.fallback_models == ()
@@ -10144,7 +10144,7 @@ index 0000000000..09b1748700
 +
 +    anthropic_adapter.build_anthropic_client(
 +        "sk-vibemode",
-+        "https://api.vibemod.pro/v1",
++        "https://api.vibemode.top/v1",
 +        default_headers={"User-Agent": "HermesAgent/1.0"},
 +    )
 +
@@ -10176,7 +10176,7 @@ index 0000000000..09b1748700
 +
 +    anthropic_adapter.build_anthropic_client(
 +        "sk-vibemode",
-+        "https://api.vibemod.pro/v1",
++        "https://api.vibemode.top/v1",
 +        default_headers={"User-Agent": "HermesAgent/1.0"},
 +    )
 +
@@ -10201,7 +10201,7 @@ index 0000000000..09b1748700
 +
 +        AIAgent(
 +            api_key="sk-vibemode",
-+            base_url="https://api.vibemod.pro/v1",
++            base_url="https://api.vibemode.top/v1",
 +            provider="vibemode",
 +            api_mode="anthropic_messages",
 +            model="qwen3.7-max",
@@ -10220,7 +10220,7 @@ index 0000000000..09b1748700
 +
 +    agent = AIAgent(
 +        api_key="sk-vibemode",
-+        base_url="https://api.vibemod.pro/v1",
++        base_url="https://api.vibemode.top/v1",
 +        provider="vibemode",
 +        api_mode="chat_completions",
 +        model="qwen3.7-max",
@@ -10284,7 +10284,7 @@ index 0000000000..09b1748700
 +            agent,
 +            {
 +                "api_key": "sk-redacted",
-+                "base_url": "https://api.vibemod.pro/v1",
++                "base_url": "https://api.vibemode.top/v1",
 +                "default_headers": {"User-Agent": "HermesAgent/1.0"},
 +            },
 +            reason="test",
@@ -10303,7 +10303,7 @@ index 0000000000..09b1748700
 +    try:
 +        request = httpx.Request(
 +            "POST",
-+            "https://api.vibemod.pro/v1/chat/completions",
++            "https://api.vibemode.top/v1/chat/completions",
 +            headers={
 +                "Authorization": "Bearer sk-redacted",
 +                "User-Agent": "HermesAgent/1.0",
@@ -10348,14 +10348,14 @@ index 0000000000..09b1748700
 +    from agent.auxiliary_client import _openai_http_client_kwargs
 +
 +    kwargs = _openai_http_client_kwargs(
-+        "https://api.vibemod.pro/v1",
++        "https://api.vibemode.top/v1",
 +        provider_id="vibemode",
 +    )
 +    transport = kwargs["http_client"]
 +    try:
 +        request = httpx.Request(
 +            "POST",
-+            "https://api.vibemod.pro/v1/chat/completions",
++            "https://api.vibemode.top/v1/chat/completions",
 +            headers={
 +                "Authorization": "Bearer sk-redacted",
 +                "X-Stainless-Runtime": "CPython",
@@ -10379,7 +10379,7 @@ index 0000000000..09b1748700
 +    captured = {}
 +    fake_client = SimpleNamespace(
 +        api_key="sk-redacted",
-+        base_url="https://api.vibemod.pro/v1",
++        base_url="https://api.vibemode.top/v1",
 +    )
 +
 +    def _fake_create_openai_client(**kwargs):
@@ -10391,7 +10391,7 @@ index 0000000000..09b1748700
 +            "hermes_cli.auth.resolve_api_key_provider_credentials",
 +            return_value={
 +                "api_key": "sk-redacted",
-+                "base_url": "https://api.vibemod.pro/v1",
++                "base_url": "https://api.vibemode.top/v1",
 +            },
 +        ),
 +        patch.object(
@@ -10422,7 +10422,7 @@ index 0000000000..09b1748700
 +    captured = {}
 +    sync_client = SimpleNamespace(
 +        api_key="sk-redacted",
-+        base_url="https://api.vibemod.pro/v1",
++        base_url="https://api.vibemode.top/v1",
 +    )
 +
 +    def _fake_async_openai(**kwargs):
@@ -10436,7 +10436,7 @@ index 0000000000..09b1748700
 +    try:
 +        request = httpx.Request(
 +            "POST",
-+            "https://api.vibemod.pro/v1/chat/completions",
++            "https://api.vibemode.top/v1/chat/completions",
 +            headers={
 +                "Authorization": "Bearer sk-redacted",
 +                "X-Stainless-Async": "async:asyncio",
