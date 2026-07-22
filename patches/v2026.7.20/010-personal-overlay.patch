@@ -3971,7 +3971,7 @@ index a86b1316e9..1d21e9dbac 100644
              if not _cp_model_ids:
                  _cp_model_ids = curated.get(_cp.slug, [])
          _cp_total = len(_cp_model_ids)
-@@ -2229,6 +2248,72 @@ def list_authenticated_providers(
+@@ -2229,6 +2248,74 @@ def list_authenticated_providers(
          seen_slugs.add(_cp.slug.lower())
          _record_builtin_endpoint(_cp.slug)
  
@@ -3993,6 +3993,8 @@ index a86b1316e9..1d21e9dbac 100644
 +            continue
 +        _slug = _plugin_pdef.id
 +        if not _slug or _slug.lower() in seen_slugs:
++            continue
++        if _slug.lower() in _excluded:
 +            continue
 +
 +        _has_plugin_creds = False
