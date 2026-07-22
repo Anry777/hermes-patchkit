@@ -22,7 +22,7 @@ The MVP supports:
 cd /root/hermes-patchkit
 python3 scripts/apply.py \
   --repo /root/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.7.2.yaml \
+  --manifest manifests/upstream-v2026.7.20.yaml \
   --patch telegram-userbot-platform-plugin \
   --yes
 ```
@@ -149,4 +149,4 @@ python3 -m unittest tests.test_patch_catalog
 python3 scripts/verify.py --self-check
 ```
 
-The release patch must apply cleanly to official `v2026.7.7.2`, and `git apply -R --check` must succeed after application.
+The release patch must apply cleanly to official `v2026.7.20`, and `git apply -R --check` must succeed after application.

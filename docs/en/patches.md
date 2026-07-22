@@ -4,7 +4,7 @@ This file is the public catalog for supported PatchKit patch units and workflow 
 
 Compatibility is not a static promise. Run `scripts/update.py` or `scripts/tui.py` against your Hermes checkout before applying anything.
 
-Current release anchor: `manifests/upstream-v2026.7.7.2.yaml`. The release-specific patch files live under `patches/v2026.7.7.2/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.7.7.2` / Hermes Agent `0.18.2`, not post-release `main`.
+Current release anchor: `manifests/upstream-v2026.7.20.yaml`. The release-specific patch files live under `patches/v2026.7.20/` and are checked against the official `NousResearch/hermes-agent` tag `v2026.7.20` / Hermes Agent `0.19.0`, not post-release `main`.
 
 ## Available patch units
 
@@ -12,8 +12,8 @@ Current release anchor: `manifests/upstream-v2026.7.7.2.yaml`. The release-speci
 |---|---|---|---|
 | `010-cli-tui-idle-refresh-fix` | exported | Stops idle classic-CLI repaint from pulling the terminal viewport. | PatchKit keeps `display.cli_refresh_interval` defaulted to `0`; explicit profile config still wins. |
 | `020-auth-profile-root-fallback` | exported | Makes `auth.json` and `auth.lock` root-global so all profiles share provider OAuth state and credential pools. | Keeps config, sessions, skills and logs profile-local. |
-| `030-credential-pool-recovery` | exported | Keeps the remaining PatchKit credential-pool safety semantics on Hermes v0.18. | Codex aux does not bypass exhausted pools through the singleton; stale ok+reset markers are cleared; terminal dead credentials do not keep retry reset state. Depends on `020`. |
-| `041-telegram-rich-flood-fallback` | exported | Restores Telegram duplicate-safety for the v0.18 finalize + overflow split + first-chunk flood-control path. | If Telegram flood-limits the cosmetic first-chunk finalize edit, Hermes treats the visible streaming prefix as partial-overflow delivery and sends only the missing tail instead of posting a duplicate full formatted final answer. |
+| `030-credential-pool-recovery` | exported | Keeps the remaining PatchKit credential-pool safety semantics on Hermes v0.19. | Codex aux does not bypass exhausted pools through the singleton; stale ok+reset markers are cleared; terminal dead credentials do not keep retry reset state. Depends on `020`. |
+| `041-telegram-rich-flood-fallback` | exported | Restores Telegram duplicate-safety for the v0.19 finalize + overflow split + first-chunk flood-control path. | If Telegram flood-limits the cosmetic first-chunk finalize edit, Hermes treats the visible streaming prefix as partial-overflow delivery and sends only the missing tail instead of posting a duplicate full formatted final answer. |
 | `070-max-platform-plugin` | exported | Adds MAX messenger as an official Hermes platform plugin rather than core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons, and safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Adds a separate experimental `max_userbot` platform plugin backed by MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use requires operator risk acceptance and SMS/QR bootstrap. |
 | `079-telegram-userbot-platform-plugin` | exported | Adds a separate experimental `telegram_userbot` platform plugin backed by Telethon/MTProto. | User-account path with profile-local locked sessions, deny-by-default allowlists, no bot-style pairing/onboarding or recognized Hermes slash-command/internal-error/approval UI, fail-closed approvals, and optional length-aware human pacing with per-sender bypass IDs; see [telegram-userbot.md](telegram-userbot.md). |
@@ -23,11 +23,11 @@ Current release anchor: `manifests/upstream-v2026.7.7.2.yaml`. The release-speci
 | `097-gateway-explicit-media-delivery-safety` | exported | Makes gateway local-file delivery explicit by default. | `MEDIA:/path` and structured artifacts deliver as native attachments; bare absolute paths stay text unless `gateway.auto_upload_local_paths: true`. |
 | `099-gateway-auto-reset-context-continuity` | exported | Keeps gateway chat context across idle/daily auto-reset. | New auto-reset sessions link to the expired parent and rehydrate reset-parent transcripts; manual `/new` and `/reset` stay fresh. |
 | `100-vibemode-provider-plugin` | exported | Adds the VibeMode provider plugin, User-Agent propagation, Bearer auth for Messages, per-model endpoint metadata, and provider-scoped SDK header filtering. | Sends `User-Agent: HermesAgent/1.0` across OpenAI-compatible and Anthropic Messages transports, strips only `X-Stainless-*` identity metadata from VibeMode OpenAI-wire requests at the final HTTPX boundary, avoids x-api-key auth on VibeMode Messages, and avoids exhausting credentials on Cloudflare/WAF blocks; model availability remains live-discovered from `/v1/models`. |
-| `040-telegram-free-response-target-gating` | retired in `v2026.7.1` | Upstream v0.18 now carries the Telegram gating behavior needed for the release line. | No standalone v0.18 patch file is shipped. |
-| `050-homeassistant-tool-config-url` | retired in `v2026.7.1` | Upstream/config-sourced behavior no longer needs PatchKit's old Home Assistant tool URL overlay. | The v0.18 profiles do not select it. |
-| `091-email-smtp-ssl` | retired in `v2026.7.1` | Upstream v0.18 email plugin uses SMTP_SSL for port 465 and STARTTLS otherwise. | No standalone v0.18 patch file is shipped. |
-| `092-gateway-document-media-types` | retired in `v2026.7.1` | Upstream v0.18 has unified media/document extension handling and MEDIA cleanup regexes. | No standalone v0.18 patch file is shipped. |
-| `098-api-server-fallback-model-kwarg` | retired in `v2026.7.1` | Upstream v0.18 pops duplicate `model` kwargs before API Server fallback agent construction. | No standalone v0.18 patch file is shipped. |
+| `040-telegram-free-response-target-gating` | retired in `v2026.7.1` | Upstream v0.19 carries the Telegram gating behavior needed for the release line. | No standalone v0.19 patch file is shipped. |
+| `050-homeassistant-tool-config-url` | retired in `v2026.7.1` | Upstream/config-sourced behavior no longer needs PatchKit's old Home Assistant tool URL overlay. | The v0.19 profiles do not select it. |
+| `091-email-smtp-ssl` | retired in `v2026.7.1` | Upstream v0.19 email plugin uses SMTP_SSL for port 465 and STARTTLS otherwise. | No standalone v0.19 patch file is shipped. |
+| `092-gateway-document-media-types` | retired in `v2026.7.1` | Upstream v0.19 has unified media/document extension handling and MEDIA cleanup regexes. | No standalone v0.19 patch file is shipped. |
+| `098-api-server-fallback-model-kwarg` | retired in `v2026.7.1` | Upstream v0.19 pops duplicate `model` kwargs before API Server fallback agent construction. | No standalone v0.19 patch file is shipped. |
 
 ## Patch highlights
 
@@ -61,8 +61,8 @@ Use the dedicated profile when you want to install just this provider gateway pa
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.1.yaml \
-  --profile profiles/v2026.7.1-provider-proxy.yaml \
+  --manifest manifests/upstream-v2026.7.20.yaml \
+  --profile profiles/v2026.7.20-personal.yaml \
   --yes
 ```
 

@@ -1,0 +1,6 @@
+{
+  "name": "v2026.7.20-personal",
+  "patches": [
+    "personal-overlay-v2026.7.20"
+  ]
+}

@@ -6,6 +6,10 @@ The format follows Keep a Changelog.
 
 ## [Unreleased]
 
+### Changed
+- re-anchored PatchKit to Hermes Agent `v2026.7.20` / `0.19.0`, adding `manifests/upstream-v2026.7.20.yaml`, `profiles/v2026.7.20-upstream-fixes.yaml`, `profiles/v2026.7.20-personal.yaml`, `profiles/v2026.7.20-with-telegram-userbot.yaml`, and refreshed `patches/v2026.7.20/` exports.
+- narrowed the v0.19 personal overlay by removing or reducing pieces now covered by upstream: general Telegram overflow duplicate handling, baseline media-delivery path denylist, adjacent session-reset recovery, and most credential-pool refresh/lease work.
+
 ### Added
 - `079-telegram-userbot-platform-plugin`: experimental opt-in Telegram MTProto user-account adapter backed by Telethon, with profile-local locked sessions, deny-by-default allowlists, text/reply/edit/typing support, optional human-paced replies with per-sender bypass IDs, inbound media caching, native file delivery, focused tests, and EN/RU operator documentation.
 
@@ -15,7 +19,7 @@ The format follows Keep a Changelog.
 
 ### Changed
 - `079-telegram-userbot-platform-plugin`: added opt-in asynchronous human pacing with length-aware typing, jitter, generation-time accounting, an upper bound, and per-sender bypass IDs; narrowed the exported unit to its own plugin and focused tests by removing unrelated provider/registry test hunks.
-- refreshed public README/catalog anchors to the current `v2026.7.7.2` / Hermes `0.18.2` release line.
+- refreshed public README/catalog anchors to the current `v2026.7.20` / Hermes `0.19.0` release line.
 
 ### Fixed
 - `080-api-server-provider-proxy`: Chat Completions requests routed to the ChatGPT Codex backend now reuse Hermes' canonical Codex Cloudflare headers (`originator`, Codex `User-Agent`, and JWT-derived account ID), preventing valid OAuth requests from being blocked as non-Codex traffic.

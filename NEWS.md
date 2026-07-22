@@ -1,5 +1,24 @@
 # News
 
+## 2026-07-22 — Hermes 0.19 re-anchor
+
+PatchKit is refreshed against official Hermes Agent `v2026.7.20` / `0.19.0`. The active release manifest is `manifests/upstream-v2026.7.20.yaml`; release patch files live under `patches/v2026.7.20/`.
+
+The v0.19 personal overlay keeps only semantics still needed locally: root-global auth, narrowed credential-pool safety, the remaining Telegram first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins, provider proxy / Codex Responses proxy, WebSocket LSP transport, provider-plugin model switching, explicit auto-upload media policy, idle/daily auto-reset context continuity, and the VibeMode provider plugin. Telegram userbot remains a separate opt-in unit through `profiles/v2026.7.20-with-telegram-userbot.yaml`.
+
+---
+
+# Новости
+
+## 2026-07-22 — Re-anchor на Hermes 0.19
+
+PatchKit refresh'нут against official Hermes Agent `v2026.7.20` / `0.19.0`. Активный release manifest: `manifests/upstream-v2026.7.20.yaml`; release patch files лежат в `patches/v2026.7.20/`.
+
+Personal overlay для v0.19 оставляет только локально нужные semantics: root-global auth, суженный credential-pool safety, оставшийся Telegram duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins, provider proxy / Codex Responses proxy, WebSocket LSP transport, provider-plugin model switching, explicit auto-upload media policy, idle/daily auto-reset context continuity и VibeMode provider plugin. Telegram userbot остаётся отдельным opt-in unit через `profiles/v2026.7.20-with-telegram-userbot.yaml`.
+
+---
+
+
 ## 2026-07-14 — Silent Hermes control plane for Telegram userbot
 
 PatchKit unit `079-telegram-userbot-platform-plugin` now treats the MTProto user-account transport as a human-account surface rather than a bot control channel. Recognized Hermes gateway commands such as `/reset`, `/new`, `/approve`, `/status`, and `/sethome` are silently ignored before active-session dispatch, so `/stop`, `/new`, and `/reset` cannot cancel a running task or mutate its guard/pending work. Internal agent exceptions stay in gateway logs, and dangerous-command approval prompts fail closed without buttons or fallback text. Unknown slash-prefixed text and ordinary final model replies remain unaffected. Bot API Telegram and every other adapter keep their existing behavior through a default-off capability.
