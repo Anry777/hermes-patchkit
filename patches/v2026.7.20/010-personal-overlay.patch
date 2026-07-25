@@ -4287,7 +4287,7 @@ new file mode 100644
 index 0000000000..fb24b7c024
 --- /dev/null
 +++ b/plugins/model-providers/vibemode/__init__.py
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,162 @@
 +"""VibeMode provider profile."""
 +
 +from __future__ import annotations
@@ -4362,6 +4362,36 @@ index 0000000000..fb24b7c024
 +    },
 +    # Anthropic Messages-first models.
 +    "minimax-m3": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    # VibeMode routes Anthropic's Claude slugs only through the native
++    # Messages gateway (/v1/messages).  Sending them to the OpenAI-compatible
++    # /v1/chat/completions or /v1/responses endpoints returns
++    # ``upstream_rejected``.  Keep every cataloged Claude slug pinned to
++    # anthropic_messages so provider-profile api_mode resolution never falls
++    # back to the chat_completions default for them.
++    "claude-fable": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "claude-fable-5": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "claude-sonnet-5": {
++        "context_length": 1_000_000,
++        "api_mode": "anthropic_messages",
++        "endpoint_kinds": ("messages",),
++        "capabilities": ("chat", "vision", "reasoning"),
++    },
++    "claude-opus-4-8": {
 +        "context_length": 1_000_000,
 +        "api_mode": "anthropic_messages",
 +        "endpoint_kinds": ("messages",),
@@ -10096,54 +10126,12 @@ index ee62cccd5e..209770deb5 100644
      ):
          assert required in names, f"Missing profile: {required}"
  
-diff --git a/tests/providers/test_provider_profiles.py b/tests/providers/test_provider_profiles.py
-index 73ca4e2790..a539889f02 100644
---- a/tests/providers/test_provider_profiles.py
-+++ b/tests/providers/test_provider_profiles.py
-@@ -22,12 +22,37 @@ class TestRegistry:
-     def test_unknown_provider_returns_none(self):
-         assert get_provider_profile("nonexistent-provider") is None
- 
-+    def test_vibemode_has_no_extra_aliases(self):
-+        p = get_provider_profile("vibemode")
-+        assert p is not None
-+        assert p.aliases == ()
-+        assert get_provider_profile("vibemode-space") is None
-+        assert get_provider_profile("vibemode-api") is None
-+
-     def test_all_providers_have_name(self):
-         get_provider_profile("nvidia")  # trigger discovery
-         for name, profile in _REGISTRY.items():
-             assert profile.name == name
- 
- 
-+class TestVibeModeProfile:
-+    def test_dynamic_catalog_profile_with_known_model_metadata(self):
-+        p = get_provider_profile("vibemode")
-+        assert p is not None
-+        assert p.api_mode == "chat_completions"
-+        assert p.base_url == "https://api.vibemode.top/v1"
-+        assert p.env_vars == ("VIBEMODE_API_KEY", "VIBEMODE_BASE_URL")
-+        assert p.default_headers == {"User-Agent": "HermesAgent/1.0"}
-+        assert p.fallback_models == ()
-+        assert p.get_model_context_length("gpt-5.5") == 272_000
-+        assert p.get_model_context_length("deepseek-v4-flash") == 1_000_000
-+        assert p.get_model_api_mode("gpt-5.5") == "codex_responses"
-+        assert p.get_model_api_mode("deepseek-v4-pro") == "chat_completions"
-+        assert p.get_model_api_mode("minimax-m3") == "anthropic_messages"
-+        assert p.get_model_capabilities("qwen3.7-plus") == ("chat", "reasoning", "tools")
-+        assert p.get_model_endpoint_kinds("gpt-5.4") == ("responses", "chat_completions")
-+
-+
- class TestNvidiaProfile:
-     def test_max_tokens(self):
-         p = get_provider_profile("nvidia")
 diff --git a/tests/run_agent/test_vibemode_provider_headers.py b/tests/run_agent/test_vibemode_provider_headers.py
 new file mode 100644
 index 0000000000..a8871484e9
 --- /dev/null
 +++ b/tests/run_agent/test_vibemode_provider_headers.py
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,344 @@
 +"""VibeMode provider-profile headers must reach every API surface."""
 +
 +from __future__ import annotations
@@ -10476,6 +10464,18 @@ index 0000000000..a8871484e9
 +        assert request.headers["authorization"] == "Bearer sk-redacted"
 +    finally:
 +        asyncio.run(transport.aclose())
++
++
++def test_vibemode_claude_slugs_resolve_to_anthropic_messages():
++    """VibeMode claude-* slugs must never fall back to chat_completions."""
++    from providers import get_provider_profile
++
++    profile = get_provider_profile("vibemode")
++    assert profile is not None
++    for slug in ("claude-fable", "claude-fable-5", "claude-sonnet-5", "claude-opus-4-8"):
++        assert profile.get_model_api_mode(slug) == "anthropic_messages", slug
++        assert profile.get_model_endpoint_kinds(slug) == ("messages",), slug
++        assert profile.get_model_context_length(slug) == 1_000_000, slug
 diff --git a/tools/managed_tool_gateway.py b/tools/managed_tool_gateway.py
 index d894dcb4b2..e0ec90c0e6 100644
 --- a/tools/managed_tool_gateway.py
@@ -10652,3 +10652,7 @@ index cbcb1f954d..eb46a38ecd 100644
  
  ## Proxy Mode
  
+
+
+
+

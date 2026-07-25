@@ -13,8 +13,8 @@
       "file": "patches/v2026.7.20/010-personal-overlay.patch",
       "title_en": "Personal Hermes overlay for v2026.7.20",
       "title_ru": "Personal Hermes overlay для v2026.7.20",
-      "description_en": "Carries the still-needed local semantics on top of upstream v2026.7.20: root-global auth store, narrowed credential-pool safety, the remaining Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy with Cloudflare-required Codex headers, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata with provider-scoped OpenAI SDK metadata filtering, explicit gateway local-file delivery safety, and gateway auto-reset context continuity across idle/daily reset parents.",
-      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.7.20: root-global auth store, суженный credential-pool safety, оставшийся Telegram overflow duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy с обязательными Codex headers для Cloudflare, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata с provider-scoped фильтрацией OpenAI SDK metadata, explicit gateway local-file delivery safety и gateway auto-reset context continuity через idle/daily reset parents.",
+      "description_en": "Carries the still-needed local semantics on top of upstream v2026.7.20: root-global auth store, narrowed credential-pool safety, the remaining Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy with Cloudflare-required Codex headers, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (including Claude Messages-only endpoint routing) with provider-scoped OpenAI SDK metadata filtering, explicit gateway local-file delivery safety, and gateway auto-reset context continuity across idle/daily reset parents.",
+      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.7.20: root-global auth store, суженный credential-pool safety, оставшийся Telegram overflow duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins, API server provider proxy/Codex Responses proxy с обязательными Codex headers для Cloudflare, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (включая Claude Messages-only endpoint routing) с provider-scoped фильтрацией OpenAI SDK metadata, explicit gateway local-file delivery safety и gateway auto-reset context continuity через idle/daily reset parents.",
       "category": "personal",
       "track": "local-overlay",
       "optional": true,
@@ -57,7 +57,7 @@
       "impact": [
         "Auth remains root-global by design; profile-local auth.json is not authoritative on this host.",
         "codex-responses-proxy/provider-proxy remains available for OpenAI-compatible and Responses-native clients.",
-        "VibeMode OpenAI-wire requests remove only X-Stainless-* SDK metadata at the final HTTPX boundary; authorization, Hermes User-Agent, payloads, and all other providers remain unchanged.",
+        "VibeMode Claude slugs use the native Anthropic Messages endpoint; its OpenAI-wire requests remove only X-Stainless-* SDK metadata at the final HTTPX boundary; authorization, Hermes User-Agent, payloads, and all other providers remain unchanged.",
         "MAX overlays remain in the personal overlay but can be split later if MAX should become optional again.",
         "Telegram overflow handling keeps only the first-chunk flood-control duplicate guard not already covered by upstream v0.19."
       ]
