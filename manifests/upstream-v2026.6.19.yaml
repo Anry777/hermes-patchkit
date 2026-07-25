@@ -483,8 +483,8 @@
       "file": "patches/v2026.6.19/100-vibemode-provider-plugin.patch",
       "title_en": "VibeMode model provider plugin",
       "title_ru": "Model provider plugin для VibeMode",
-      "description_en": "Adds the VibeMode provider plugin with endpoint https://api.vibemod.pro/v1 and provider-profile per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
-      "description_ru": "Добавляет provider plugin VibeMode с endpoint https://api.vibemod.pro/v1 и per-model metadata в ProviderProfile: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
+      "description_en": "Adds the VibeMode provider plugin with provider-profile per-model metadata so known VibeMode models route to Chat Completions, Responses, or Messages while the model catalog remains live-discovered from /v1/models.",
+      "description_ru": "Добавляет provider plugin VibeMode с per-model metadata в ProviderProfile: известные модели VibeMode маршрутизируются в Chat Completions, Responses или Messages, а список моделей остаётся live-discovered через /v1/models.",
       "category": "provider",
       "track": "local-overlay",
       "optional": true,
@@ -507,7 +507,7 @@
       "base_upstream": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
       "refreshed_for": "v2026.6.19",
       "impact": [
-        "`hermes auth add vibemode --type api-key` persists credentials with base URL https://api.vibemod.pro/v1.",
+        "`hermes auth add vibemode --type api-key` persists credentials with the configured VibeMode base URL.",
         "The patched runtime exposes `vibemode` as the canonical VibeMode provider.",
         "Known VibeMode model metadata is an overlay only: /v1/models remains authoritative for model availability, while the overlay supplies context windows, capabilities, endpoint kinds, and per-model api_mode routing."
       ],
