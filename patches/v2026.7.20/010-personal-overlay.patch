@@ -3461,10 +3461,40 @@ index 65d5b324cc..9048e5590f 100644
          gateway_session_key, key_err = self._parse_session_key_header(request)
          if key_err is not None:
 diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
-index c963f87575..dc183da116 100644
+index c963f87575..622d1b572c 100644
 --- a/gateway/platforms/base.py
 +++ b/gateway/platforms/base.py
-@@ -970,6 +970,7 @@ _CACHE_DIR_IMPORT_DEFAULTS = {
+@@ -730,7 +730,12 @@ def cache_image_from_bytes(data: bytes, ext: str = ".jpg") -> str:
+     return str(filepath)
+ 
+ 
+-async def cache_image_from_url(url: str, ext: str = ".jpg", retries: int = 2) -> str:
++async def cache_image_from_url(
++    url: str,
++    ext: str = ".jpg",
++    retries: int = 2,
++    verify: bool | str = True,
++) -> str:
+     """
+     Download an image from a URL and save it to the local cache.
+ 
+@@ -741,6 +746,7 @@ async def cache_image_from_url(url: str, ext: str = ".jpg", retries: int = 2) ->
+         url: The HTTP/HTTPS URL to download from.
+         ext: File extension including the dot (e.g. ".jpg", ".png").
+         retries: Number of retry attempts on transient failures.
++        verify: TLS verification setting passed to the image HTTP client.
+ 
+     Returns:
+         Absolute path to the cached image file as a string.
+@@ -758,6 +764,7 @@ async def cache_image_from_url(url: str, ext: str = ".jpg", retries: int = 2) ->
+     async with httpx.AsyncClient(
+         timeout=30.0,
+         follow_redirects=True,
++        verify=verify,
+         event_hooks={"response": [_ssrf_redirect_guard]},
+     ) as client:
+         for attempt in range(retries + 1):
+@@ -970,6 +977,7 @@ _CACHE_DIR_IMPORT_DEFAULTS = {
  
  _HERMES_HOME = get_hermes_home()
  _HERMES_ROOT = get_default_hermes_root()
@@ -3472,7 +3502,7 @@ index c963f87575..dc183da116 100644
  MEDIA_DELIVERY_ALLOW_DIRS_ENV = "HERMES_MEDIA_ALLOW_DIRS"
  MEDIA_DELIVERY_TRUST_RECENT_ENV = "HERMES_MEDIA_TRUST_RECENT_FILES"
  MEDIA_DELIVERY_TRUST_RECENT_SECONDS_ENV = "HERMES_MEDIA_TRUST_RECENT_SECONDS"
-@@ -1137,6 +1138,12 @@ def _media_delivery_recency_seconds() -> float:
+@@ -1137,6 +1145,12 @@ def _media_delivery_recency_seconds() -> float:
      return float(_MEDIA_DELIVERY_TRUST_RECENT_DEFAULT_SECONDS)
  
  
@@ -3485,7 +3515,7 @@ index c963f87575..dc183da116 100644
  def _media_delivery_strict_mode() -> bool:
      """Return True when path validation should require allowlist/recency match.
  
-@@ -5093,7 +5100,7 @@ class BasePlatformAdapter(ABC):
+@@ -5093,7 +5107,7 @@ class BasePlatformAdapter(ABC):
                      logger.info("[%s] extract_images found %d image(s) in response (%d chars)", self.name, len(images), len(response))
  
                  local_files = []
@@ -3928,7 +3958,7 @@ index 526fa93451..10567eacee 100644
          try:
              import json
 diff --git a/hermes_cli/model_switch.py b/hermes_cli/model_switch.py
-index a86b1316e9..1d21e9dbac 100644
+index a86b1316e9..2a6349c9b5 100644
 --- a/hermes_cli/model_switch.py
 +++ b/hermes_cli/model_switch.py
 @@ -30,6 +30,7 @@ from hermes_cli.providers import (
@@ -4284,7 +4314,7 @@ index 639d6d48f0..94c03e12e3 100644
  
 diff --git a/plugins/model-providers/vibemode/__init__.py b/plugins/model-providers/vibemode/__init__.py
 new file mode 100644
-index 0000000000..fb24b7c024
+index 0000000000..1162a76c6d
 --- /dev/null
 +++ b/plugins/model-providers/vibemode/__init__.py
 @@ -0,0 +1,162 @@
@@ -4471,10 +4501,10 @@ index 0000000000..d4f1d7bf0e
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 0000000000..50dc43f361
+index 0000000000..4b3128d8f8
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1356 @@
+@@ -0,0 +1,1378 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -4505,6 +4535,7 @@ index 0000000000..50dc43f361
 +import os
 +import re
 +from datetime import datetime
++from pathlib import Path
 +from typing import Any, Dict, Optional
 +from urllib.parse import urlparse
 +
@@ -4534,7 +4565,8 @@ index 0000000000..50dc43f361
 +
 +logger = logging.getLogger(__name__)
 +
-+DEFAULT_BASE_URL = "https://platform-api.max.ru"
++DEFAULT_BASE_URL = "https://platform-api2.max.ru"
++DEFAULT_CA_BUNDLE_PATH = Path(__file__).resolve().parent / "certs" / "russian_trusted_root_ca_pem.crt"
 +DEFAULT_WEBHOOK_HOST = "127.0.0.1"
 +DEFAULT_WEBHOOK_PORT = 8647
 +DEFAULT_WEBHOOK_PATH = "/max-webhook"
@@ -4639,6 +4671,7 @@ index 0000000000..50dc43f361
 +    filename: str = "",
 +    mime_type: str = "",
 +    retries: int = 2,
++    verify: bool | str = True,
 +) -> str:
 +    """Download a MAX document attachment safely and cache it locally."""
 +    from tools.url_safety import is_safe_url
@@ -4653,6 +4686,7 @@ index 0000000000..50dc43f361
 +    async with httpx.AsyncClient(
 +        timeout=30.0,
 +        follow_redirects=True,
++        verify=verify,
 +        event_hooks={"response": [_ssrf_redirect_guard]},
 +    ) as client:
 +        for attempt in range(retries + 1):
@@ -4695,6 +4729,14 @@ index 0000000000..50dc43f361
 +        extra = config.extra or {}
 +        self.token = (config.token or extra.get("token") or os.getenv("MAX_BOT_TOKEN", "")).strip()
 +        self.base_url = str(extra.get("base_url") or os.getenv("MAX_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
++        configured_ca_bundle = extra.get("ca_bundle")
++        self.ca_bundle = (
++            Path(str(configured_ca_bundle)).expanduser()
++            if configured_ca_bundle
++            else DEFAULT_CA_BUNDLE_PATH
++        )
++        if not self.ca_bundle.is_file() or not os.access(self.ca_bundle, os.R_OK):
++            raise ValueError(f"[MAX] CA bundle is missing or unreadable: {self.ca_bundle}")
 +        self.bot_user_id = _as_str(extra.get("bot_user_id") or os.getenv("MAX_BOT_USER_ID")).strip()
 +        self.bot_username = _as_str(extra.get("bot_username") or os.getenv("MAX_BOT_USERNAME")).strip().lstrip("@")
 +        self.webhook_host = str(extra.get("webhook_host") or os.getenv("MAX_WEBHOOK_HOST") or DEFAULT_WEBHOOK_HOST)
@@ -4751,7 +4793,10 @@ index 0000000000..50dc43f361
 +
 +    def _get_client(self) -> httpx.AsyncClient:
 +        if self._client is None:
-+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
++            self._client = httpx.AsyncClient(
++                timeout=httpx.Timeout(30.0, connect=10.0),
++                verify=str(self.ca_bundle),
++            )
 +        return self._client
 +
 +    async def connect(self, *, is_reconnect: bool = False) -> bool:
@@ -5424,7 +5469,13 @@ index 0000000000..50dc43f361
 +            media_type = event.media_types[i] if i < len(event.media_types) else ""
 +            if media_type.startswith("image/") or (not media_type and event.message_type == MessageType.PHOTO):
 +                try:
-+                    cached_urls.append(await cache_image_from_url(url, ext=self._image_ext(url, media_type)))
++                    cached_urls.append(
++                        await cache_image_from_url(
++                            url,
++                            ext=self._image_ext(url, media_type),
++                            verify=str(self.ca_bundle),
++                        )
++                    )
 +                except Exception as exc:
 +                    logger.warning(
 +                        "[MAX] Failed to cache MAX image attachment %s: %s",
@@ -5440,6 +5491,7 @@ index 0000000000..50dc43f361
 +                        url,
 +                        filename=filename,
 +                        mime_type=media_type or explicit_mime,
++                        verify=str(self.ca_bundle),
 +                    )
 +                )
 +            except Exception as exc:
@@ -5831,6 +5883,46 @@ index 0000000000..50dc43f361
 +        platform_hint=MAX_PLATFORM_HINT,
 +        emoji="💬",
 +    )
+diff --git a/plugins/platforms/max/certs/russian_trusted_root_ca_pem.crt b/plugins/platforms/max/certs/russian_trusted_root_ca_pem.crt
+new file mode 100644
+index 0000000000..4c143a21f7
+--- /dev/null
++++ b/plugins/platforms/max/certs/russian_trusted_root_ca_pem.crt
+@@ -0,0 +1,33 @@
++-----BEGIN CERTIFICATE-----
++MIIFwjCCA6qgAwIBAgICEAAwDQYJKoZIhvcNAQELBQAwcDELMAkGA1UEBhMCUlUx
++PzA9BgNVBAoMNlRoZSBNaW5pc3RyeSBvZiBEaWdpdGFsIERldmVsb3BtZW50IGFu
++ZCBDb21tdW5pY2F0aW9uczEgMB4GA1UEAwwXUnVzc2lhbiBUcnVzdGVkIFJvb3Qg
++Q0EwHhcNMjIwMzAxMjEwNDE1WhcNMzIwMjI3MjEwNDE1WjBwMQswCQYDVQQGEwJS
++VTE/MD0GA1UECgw2VGhlIE1pbmlzdHJ5IG9mIERpZ2l0YWwgRGV2ZWxvcG1lbnQg
++YW5kIENvbW11bmljYXRpb25zMSAwHgYDVQQDDBdSdXNzaWFuIFRydXN0ZWQgUm9v
++dCBDQTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAMfFOZ8pUAL3+r2n
++qqE0Zp52selXsKGFYoG0GM5bwz1bSFtCt+AZQMhkWQheI3poZAToYJu69pHLKS6Q
++XBiwBC1cvzYmUYKMYZC7jE5YhEU2bSL0mX7NaMxMDmH2/NwuOVRj8OImVa5s1F4U
++zn4Kv3PFlDBjjSjXKVY9kmjUBsXQrIHeaqmUIsPIlNWUnimXS0I0abExqkbdrXbX
++YwCOXhOO2pDUx3ckmJlCMUGacUTnylyQW2VsJIyIGA8V0xzdaeUXg0VZ6ZmNUr5Y
++Ber/EAOLPb8NYpsAhJe2mXjMB/J9HNsoFMBFJ0lLOT/+dQvjbdRZoOT8eqJpWnVD
++U+QL/qEZnz57N88OWM3rabJkRNdU/Z7x5SFIM9FrqtN8xewsiBWBI0K6XFuOBOTD
++4V08o4TzJ8+Ccq5XlCUW2L48pZNCYuBDfBh7FxkB7qDgGDiaftEkZZfApRg2E+M9
++G8wkNKTPLDc4wH0FDTijhgxR3Y4PiS1HL2Zhw7bD3CbslmEGgfnnZojNkJtcLeBH
++BLa52/dSwNU4WWLubaYSiAmA9IUMX1/RpfpxOxd4Ykmhz97oFbUaDJFipIggx5sX
++ePAlkTdWnv+RWBxlJwMQ25oEHmRguNYf4Zr/Rxr9cS93Y+mdXIZaBEE0KS2iLRqa
++OiWBki9IMQU4phqPOBAaG7A+eP8PAgMBAAGjZjBkMB0GA1UdDgQWBBTh0YHlzlpf
++BKrS6badZrHF+qwshzAfBgNVHSMEGDAWgBTh0YHlzlpfBKrS6badZrHF+qwshzAS
++BgNVHRMBAf8ECDAGAQH/AgEEMA4GA1UdDwEB/wQEAwIBhjANBgkqhkiG9w0BAQsF
++AAOCAgEAALIY1wkilt/urfEVM5vKzr6utOeDWCUczmWX/RX4ljpRdgF+5fAIS4vH
++tmXkqpSCOVeWUrJV9QvZn6L227ZwuE15cWi8DCDal3Ue90WgAJJZMfTshN4OI8cq
++W9E4EG9wglbEtMnObHlms8F3CHmrw3k6KmUkWGoa+/ENmcVl68u/cMRl1JbW2bM+
++/3A+SAg2c6iPDlehczKx2oa95QW0SkPPWGuNA/CE8CpyANIhu9XFrj3RQ3EqeRcS
++AQQod1RNuHpfETLU/A2gMmvn/w/sx7TB3W5BPs6rprOA37tutPq9u6FTZOcG1Oqj
++C/B7yTqgI7rbyvox7DEXoX7rIiEqyNNUguTk/u3SZ4VXE2kmxdmSh3TQvybfbnXV
++4JbCZVaqiZraqc7oZMnRoWrXRG3ztbnbes/9qhRGI7PqXqeKJBztxRTEVj8ONs1d
++WN5szTwaPIvhkhO3CO5ErU2rVdUr89wKpNXbBODFKRtgxUT70YpmJ46VVaqdAhOZ
++D9EUUn4YaeLaS8AjSF/h7UkjOibNc4qVDiPP+rkehFWM66PVnP1Msh93tc+taIfC
++EYVMxjh8zNbFuoc7fzvvrFILLe7ifvEIUqSVIC/AzplM/Jxw7buXFeGP1qVCBEHq
++391d/9RAfaZ12zkwFsl+IKwE/OZxW8AHa9i1p4GO0YSNuczzEm4=
++-----END CERTIFICATE-----
+\ No newline at end of file
 diff --git a/plugins/platforms/max/plugin.yaml b/plugins/platforms/max/plugin.yaml
 new file mode 100644
 index 0000000000..d10b7430bf
@@ -9353,10 +9445,10 @@ index 0000000000..6b6cc8460d
 +    assert dead.get("last_error_reset_at") is None
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 0000000000..ffb3de27d4
+index 0000000000..1bb9e4990b
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,482 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -9367,7 +9459,7 @@ index 0000000000..ffb3de27d4
 +import pytest
 +
 +from gateway.config import Platform, PlatformConfig
-+from gateway.platforms.base import SendResult
++from gateway.platforms.base import MessageType, SendResult
 +
 +
 +class FakeResponse:
@@ -9473,6 +9565,69 @@ index 0000000000..ffb3de27d4
 +    assert validate_max_config(PlatformConfig(enabled=True)) is True
 +
 +
++def test_max_defaults_to_platform_api2_and_bundled_ca_bundle():
++    from plugins.platforms.max.adapter import DEFAULT_BASE_URL, DEFAULT_CA_BUNDLE_PATH, MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++
++    assert DEFAULT_BASE_URL == "https://platform-api2.max.ru"
++    assert adapter.base_url == DEFAULT_BASE_URL
++    assert adapter.ca_bundle == DEFAULT_CA_BUNDLE_PATH
++    assert adapter.ca_bundle.is_file()
++
++    with patch("plugins.platforms.max.adapter.httpx.AsyncClient") as client_factory:
++        adapter._get_client()
++
++    assert client_factory.call_args.kwargs["verify"] == str(DEFAULT_CA_BUNDLE_PATH)
++
++
++def test_max_accepts_profile_local_ca_bundle_override(tmp_path):
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    ca_bundle = tmp_path / "max-ca.pem"
++    ca_bundle.write_text("placeholder")
++    adapter = MaxAdapter(
++        PlatformConfig(
++            enabled=True,
++            token="max-token",
++            extra={"transport": "polling", "ca_bundle": str(ca_bundle)},
++        )
++    )
++
++    assert adapter.ca_bundle == ca_bundle
++
++
++def test_max_rejects_missing_ca_bundle(tmp_path):
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    with pytest.raises(ValueError, match="CA bundle is missing or unreadable"):
++        MaxAdapter(
++            PlatformConfig(
++                enabled=True,
++                token="max-token",
++                extra={"ca_bundle": str(tmp_path / "missing.pem")},
++            )
++        )
++
++
++@pytest.mark.asyncio
++async def test_max_media_cache_receives_scoped_ca_bundle():
++    from plugins.platforms.max.adapter import MaxAdapter
++
++    adapter = MaxAdapter(PlatformConfig(enabled=True, token="max-token", extra={"transport": "polling"}))
++
++    with patch("plugins.platforms.max.adapter.cache_image_from_url", return_value="/tmp/image.jpg") as image_cache:
++        event = SimpleNamespace(
++            media_urls=["https://platform-api2.max.ru/media/image"],
++            media_types=["image/jpeg"],
++            message_type=MessageType.PHOTO,
++            raw_message={},
++        )
++        await adapter._cache_attachment_media(event)
++
++    assert image_cache.call_args.kwargs["verify"] == str(adapter.ca_bundle)
++
++
 +@pytest.mark.asyncio
 +async def test_send_text_uses_max_markdown_format_and_raw_authorization():
 +    from plugins.platforms.max.adapter import MaxAdapter
@@ -9542,7 +9697,7 @@ index 0000000000..ffb3de27d4
 +    assert result.message_id == "msg-123"
 +    assert client.puts == [
 +        {
-+            "url": "https://platform-api.max.ru/messages",
++            "url": "https://platform-api2.max.ru/messages",
 +            "params": {"message_id": "msg-123"},
 +            "json": {"text": "**updated progress**", "format": "markdown"},
 +            "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
@@ -9633,7 +9788,7 @@ index 0000000000..ffb3de27d4
 +    assert adapter._approval_state == {}
 +    assert client.posts == [
 +        {
-+            "url": "https://platform-api.max.ru/answers",
++            "url": "https://platform-api2.max.ru/answers",
 +            "params": {"callback_id": "cb-123"},
 +            "json": {
 +                "notification": "✅ Approved for session",
@@ -9667,7 +9822,7 @@ index 0000000000..ffb3de27d4
 +    assert adapter._approval_state == {1: "max:777"}
 +    assert client.posts == [
 +        {
-+            "url": "https://platform-api.max.ru/answers",
++            "url": "https://platform-api2.max.ru/answers",
 +            "params": {"callback_id": "cb-bad"},
 +            "json": {"notification": "⛔ You are not authorized to approve commands."},
 +            "headers": {"Authorization": "max-token", "Content-Type": "application/json"},
@@ -10128,7 +10283,7 @@ index ee62cccd5e..209770deb5 100644
  
 diff --git a/tests/run_agent/test_vibemode_provider_headers.py b/tests/run_agent/test_vibemode_provider_headers.py
 new file mode 100644
-index 0000000000..a8871484e9
+index 0000000000..21b7852571
 --- /dev/null
 +++ b/tests/run_agent/test_vibemode_provider_headers.py
 @@ -0,0 +1,344 @@
@@ -10652,7 +10807,3 @@ index cbcb1f954d..eb46a38ecd 100644
  
  ## Proxy Mode
  
-
-
-
-
