@@ -4501,10 +4501,10 @@ index 0000000000..d4f1d7bf0e
 +__all__ = ["register"]
 diff --git a/plugins/platforms/max/adapter.py b/plugins/platforms/max/adapter.py
 new file mode 100644
-index 0000000000..4b3128d8f8
+index 0000000000..74734a6efc
 --- /dev/null
 +++ b/plugins/platforms/max/adapter.py
-@@ -0,0 +1,1378 @@
+@@ -0,0 +1,1386 @@
 +"""MAX messenger platform plugin adapter.
 +
 +Webhook-first MAX Bot API integration for Hermes gateway.
@@ -4728,7 +4728,15 @@ index 0000000000..4b3128d8f8
 +        super().__init__(config, Platform("max"))
 +        extra = config.extra or {}
 +        self.token = (config.token or extra.get("token") or os.getenv("MAX_BOT_TOKEN", "")).strip()
-+        self.base_url = str(extra.get("base_url") or os.getenv("MAX_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
++        configured_base_url = str(
++            extra.get("base_url") or os.getenv("MAX_BASE_URL") or DEFAULT_BASE_URL
++        ).rstrip("/")
++        if configured_base_url == "https://platform-api.max.ru":
++            logger.warning(
++                "[MAX] Migrating deprecated platform-api.max.ru to platform-api2.max.ru"
++            )
++            configured_base_url = DEFAULT_BASE_URL
++        self.base_url = configured_base_url
 +        configured_ca_bundle = extra.get("ca_bundle")
 +        self.ca_bundle = (
 +            Path(str(configured_ca_bundle)).expanduser()
@@ -9445,10 +9453,10 @@ index 0000000000..6b6cc8460d
 +    assert dead.get("last_error_reset_at") is None
 diff --git a/tests/plugins/test_max_platform_plugin.py b/tests/plugins/test_max_platform_plugin.py
 new file mode 100644
-index 0000000000..1bb9e4990b
+index 0000000000..d8ee6ede60
 --- /dev/null
 +++ b/tests/plugins/test_max_platform_plugin.py
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,498 @@
 +"""Tests for the bundled MAX gateway platform plugin."""
 +
 +from __future__ import annotations
@@ -9579,6 +9587,22 @@ index 0000000000..1bb9e4990b
 +        adapter._get_client()
 +
 +    assert client_factory.call_args.kwargs["verify"] == str(DEFAULT_CA_BUNDLE_PATH)
++
++
++def test_max_migrates_legacy_platform_api_base_url(caplog):
++    from plugins.platforms.max.adapter import DEFAULT_BASE_URL, MaxAdapter
++
++    with caplog.at_level("WARNING"):
++        adapter = MaxAdapter(
++            PlatformConfig(
++                enabled=True,
++                token="max-token",
++                extra={"base_url": "https://platform-api.max.ru", "transport": "polling"},
++            )
++        )
++
++    assert adapter.base_url == DEFAULT_BASE_URL
++    assert "deprecated platform-api.max.ru" in caplog.text
 +
 +
 +def test_max_accepts_profile_local_ca_bundle_override(tmp_path):

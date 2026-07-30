@@ -116,7 +116,7 @@ Russian Trusted Sub CA:
 DEFAULT_BASE_URL = "https://platform-api2.max.ru"
 ```
 
-Существующий `extra.base_url` должен продолжить иметь приоритет для временного rollback/совместимости.
+Существующий `extra.base_url` должен продолжить иметь приоритет для временного rollback/совместимости; единственное исключение — точный legacy URL `https://platform-api.max.ru`, который нормализуется в `https://platform-api2.max.ru`, чтобы старые profile config не возвращали сломанный endpoint.
 
 ### 2. Scoped CA bundle
 
