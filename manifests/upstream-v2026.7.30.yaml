@@ -13,8 +13,8 @@
       "file": "patches/v2026.7.30/010-personal-overlay.patch",
       "title_en": "Personal Hermes overlay for v2026.7.30",
       "title_ru": "Personal Hermes overlay для v2026.7.30",
-      "description_en": "Carries the still-needed local semantics on top of upstream v2026.7.30: root-global auth store, narrowed credential-pool safety, the remaining Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins with platform-api2 TLS and scoped MinDigital CA-bundle support, API server provider proxy/Codex Responses proxy with Cloudflare-required Codex headers, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (including Claude Messages-only endpoint routing) with provider-scoped OpenAI SDK metadata filtering, explicit gateway local-file delivery safety, and gateway auto-reset context continuity across idle/daily reset parents.",
-      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.7.30: root-global auth store, суженный credential-pool safety, оставшийся Telegram overflow duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins со scoped TLS CA bundle для platform-api2.max.ru, API server provider proxy/Codex Responses proxy с обязательными Codex headers для Cloudflare, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (включая Claude Messages-only endpoint routing) с provider-scoped фильтрацией OpenAI SDK metadata, explicit gateway local-file delivery safety и gateway auto-reset context continuity через idle/daily reset parents.",
+      "description_en": "Carries the still-needed local semantics on top of upstream v2026.7.30: root-global auth store, narrowed credential-pool safety, the remaining Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins with platform-api2 TLS and scoped MinDigital CA-bundle support, API server provider proxy/Codex Responses proxy with Cloudflare-required Codex headers, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (including Claude Messages-only endpoint routing) with provider-scoped OpenAI SDK metadata filtering, explicit gateway local-file delivery safety, gateway auto-reset context continuity across idle/daily reset parents.",
+      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.7.30: root-global auth store, суженный credential-pool safety, оставшийся Telegram overflow duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins со scoped TLS CA bundle для platform-api2.max.ru, API server provider proxy/Codex Responses proxy с обязательными Codex headers для Cloudflare, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (включая Claude Messages-only endpoint routing) с provider-scoped фильтрацией OpenAI SDK metadata, explicit gateway local-file delivery safety, gateway auto-reset context continuity через idle/daily reset parents.",
       "category": "personal",
       "track": "local-overlay",
       "optional": true,
@@ -61,6 +61,32 @@
         "VibeMode Claude slugs use the native Anthropic Messages endpoint; its OpenAI-wire requests remove only X-Stainless-* SDK metadata at the final HTTPX boundary; authorization, Hermes User-Agent, payloads, and all other providers remain unchanged.",
         "MAX overlays remain in the personal overlay but can be split later if MAX should become optional again.",
         "Telegram overflow handling keeps only the first-chunk flood-control duplicate guard not already covered by upstream v0.19."
+      ]
+    },
+    {
+      "id": "relay-optional-noop-v2026.7.30",
+      "file": "patches/v2026.7.30/081-relay-optional-noop.patch",
+      "title_en": "Quiet no-op fallback when NeMo Relay is unavailable",
+      "title_ru": "Тихий no-op fallback при отсутствии NeMo Relay",
+      "description_en": "Keeps the optional NeMo Relay integration fail-open: a missing nemo-relay binding selects NoopRelayRuntime without a traceback, while missing transitive dependencies remain visible as warnings.",
+      "description_ru": "Сохраняет fail-open для optional NeMo Relay: отсутствие binding nemo-relay выбирает NoopRelayRuntime без traceback, а missing transitive dependencies по-прежнему остаются видимыми как warnings.",
+      "category": "observability",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": ["personal-overlay-v2026.7.30"],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "cc4cab2f592e60a197e796506de9168f74baf3ea",
+      "refreshed_for": "v2026.7.30",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_relay_shared_metrics_runtime.py"
+        ]
+      },
+      "impact": [
+        "Profiles without the optional nemo-relay package continue with reduced Relay capability.",
+        "Unexpected missing transitive dependencies still produce the existing warning and Noop fallback."
       ]
     },
     {
