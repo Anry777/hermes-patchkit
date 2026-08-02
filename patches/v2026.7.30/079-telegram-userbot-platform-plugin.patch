@@ -1,0 +1,3424 @@
+diff --git a/gateway/platforms/base.py b/gateway/platforms/base.py
+index b3aa6bc19d..725b88006d 100644
+--- a/gateway/platforms/base.py
++++ b/gateway/platforms/base.py
+@@ -2891,6 +2891,16 @@ class BasePlatformAdapter(ABC):
+         """
+         return self.message_len_fn
+ 
++    @property
++    def suppress_home_channel_onboarding(self) -> bool:
++        """Whether first-run home-channel setup notices stay silent."""
++        return False
++
++    @property
++    def suppress_system_messages(self) -> bool:
++        """Whether Hermes-owned command and failure notices stay silent."""
++        return False
++
+     @property
+     def enforces_own_access_policy(self) -> bool:
+         """Whether this adapter gates inbound access before dispatch.
+@@ -5565,6 +5575,28 @@ class BasePlatformAdapter(ABC):
+         # Offloaded: the sync hook must not block the loop.
+         await asyncio.to_thread(self._apply_topic_recovery, event)
+ 
++        # Human-account transports expose no Hermes command control plane.
++        # Drop only commands recognized by the real gateway registry before any
++        # active-session guard, task, debounce, or pending-message mutation.
++        if self.suppress_system_messages is True:
++            cmd = event.get_command()
++            if cmd:
++                from hermes_cli.commands import (
++                    is_gateway_known_command,
++                    resolve_command,
++                )
++
++                command_def = resolve_command(cmd)
++                canonical = command_def.name if command_def is not None else cmd
++                if is_gateway_known_command(canonical):
++                    logger.info(
++                        "[%s] Silently ignored gateway command '/%s' before "
++                        "session dispatch",
++                        self.name,
++                        canonical,
++                    )
++                    return
++
+         session_key = build_session_key(
+             event.source,
+             group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
+@@ -6340,25 +6372,29 @@ class BasePlatformAdapter(ABC):
+         except Exception as e:
+             await self._run_processing_hook("on_processing_complete", event, ProcessingOutcome.FAILURE)
+             logger.error("[%s] Error handling message: %s", self.name, e, exc_info=True)
+-            # Send the error to the user so they aren't left with radio silence
+-            try:
+-                error_type = type(e).__name__
+-                error_detail = str(e)[:300] if str(e) else "no details available"
+-                _thread_metadata = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))
+-                await self.send(
+-                    chat_id=event.source.chat_id,
+-                    content=(
+-                        f"Sorry, I encountered an error ({error_type}).\n"
+-                        f"{error_detail}\n"
+-                        "Try again or use /reset to start a fresh session."
+-                    ),
+-                    metadata=_thread_metadata,
+-                )
+-            except Exception as notify_err:
+-                logger.error(
+-                    "[%s] Failed to send error notification to user: %s",
+-                    self.name, notify_err, exc_info=True,
+-                )  # Last resort — don't let error reporting crash the handler
++            # Human-account transports keep framework failures server-side.
++            # Bot-style transports retain the existing user-facing notice.
++            if self.suppress_system_messages is not True:
++                try:
++                    error_type = type(e).__name__
++                    error_detail = str(e)[:300] if str(e) else "no details available"
++                    _thread_metadata = _thread_metadata_for_source(
++                        event.source, _reply_anchor_for_event(event)
++                    )
++                    await self.send(
++                        chat_id=event.source.chat_id,
++                        content=(
++                            f"Sorry, I encountered an error ({error_type}).\n"
++                            f"{error_detail}\n"
++                            "Try again or use /reset to start a fresh session."
++                        ),
++                        metadata=_thread_metadata,
++                    )
++                except Exception as notify_err:
++                    logger.error(
++                        "[%s] Failed to send error notification to user: %s",
++                        self.name, notify_err, exc_info=True,
++                    )  # Last resort — don't let error reporting crash the handler
+         finally:
+             # Stop typing before any deferred callback work.  Post-delivery
+             # callbacks may perform platform I/O; a stuck callback must not
+diff --git a/gateway/run.py b/gateway/run.py
+index 3b27ae83c9..56649289b3 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -303,6 +303,11 @@ def _gateway_platform_value(platform: Any) -> str:
+     return str(getattr(platform, "value", platform) or "").strip().lower()
+ 
+ 
++def _system_messages_suppressed(adapter: Any) -> bool:
++    """Return True only when an adapter explicitly opts out of system UI."""
++    return getattr(adapter, "suppress_system_messages", False) is True
++
++
+ def _non_conversational_metadata(
+     metadata: Optional[Dict[str, Any]] = None,
+     *,
+@@ -4820,6 +4825,13 @@ class TurnRunner:
+                 UX.  Otherwise fall back to a plain text message with
+                 ``/approve`` instructions.
+                 """
++            # Human-account transports expose no approval UI. Fail closed before
++            # queueing or waiting on an approval request.
++            if _system_messages_suppressed(ctx._status_adapter):
++                raise RuntimeError(
++                    "Gateway approval prompts are disabled for this platform"
++                )
++
+             # Pause the typing indicator while the agent waits for
+             # user approval.  Critical for Slack's Assistant API where
+             # assistant_threads_setStatus disables the compose box — the
+@@ -13752,6 +13764,31 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                     # Record rate limit so subsequent messages are silently ignored
+                     pairing_store._record_rate_limit(platform_name, source.user_id)
+             return None
++
++        # Human-account transports must not expose Hermes's bot control plane.
++        # Ignore known gateway commands only; unknown slash text remains normal
++        # conversational input.
++        _system_adapter = self._adapter_for_source(source)
++        if _system_messages_suppressed(_system_adapter):
++            _system_command = event.get_command()
++            if _system_command:
++                from hermes_cli.commands import (
++                    is_gateway_known_command as _is_gateway_known_system_command,
++                    resolve_command as _resolve_system_command,
++                )
++                _system_command_def = _resolve_system_command(_system_command)
++                _system_canonical = (
++                    _system_command_def.name
++                    if _system_command_def is not None
++                    else _system_command
++                )
++                if _is_gateway_known_system_command(_system_canonical):
++                    logger.info(
++                        "Silently ignored gateway command /%s on system-message-suppressed platform %s",
++                        _system_canonical,
++                        source.platform.value if source.platform else "unknown",
++                    )
++                    return None
+         
+         # Intercept messages that are responses to a pending /update prompt.
+         # The update process (detached) wrote .update_prompt.json; the watcher
+@@ -16529,7 +16566,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+         
+         # One-time prompt if no home channel is set for this platform
+         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
++        _home_onboarding_adapter = self._adapter_for_source(source)
++        _suppress_home_onboarding = (
++            getattr(_home_onboarding_adapter, "suppress_home_channel_onboarding", False)
++            is True
++        )
++        if (
++            not history
++            and source.platform
++            and source.platform != Platform.LOCAL
++            and source.platform != Platform.WEBHOOK
++            and not _suppress_home_onboarding
++        ):
+             platform_name = source.platform.value
+             env_key = _home_target_env_var(platform_name)
+             # Multiplex: home channel may live only in the profile secret
+@@ -17381,6 +17429,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                 logger.debug("Failed to persist inbound user message after agent exception", exc_info=True)
+             # Log full details server-side only; never expose raw exception
+             # types or messages to end users (info-leakage risk).
++            if _system_messages_suppressed(self._adapter_for_source(source)):
++                logger.info(
++                    "Suppressed agent failure notice on platform %s",
++                    source.platform.value if source.platform else "unknown",
++                )
++                return None
+             status_hint = ""
+             status_code = getattr(e, "status_code", None)
+             _hist_len = len(history) if 'history' in locals() else 0
+diff --git a/plugins/platforms/telegram_userbot/__init__.py b/plugins/platforms/telegram_userbot/__init__.py
+new file mode 100644
+index 0000000000..39785a9c46
+--- /dev/null
++++ b/plugins/platforms/telegram_userbot/__init__.py
+@@ -0,0 +1,5 @@
++"""Telegram MTProto userbot platform plugin."""
++
++from .adapter import register
++
++__all__ = ["register"]
+diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/telegram_userbot/adapter.py
+new file mode 100644
+index 0000000000..d9336da050
+--- /dev/null
++++ b/plugins/platforms/telegram_userbot/adapter.py
+@@ -0,0 +1,1274 @@
++"""Telegram MTProto userbot platform plugin backed by Telethon.
++
++This adapter is intentionally separate from ``plugins.platforms.telegram``.
++The built-in Telegram platform uses the official Bot API; this plugin connects
++as a normal Telegram user account over MTProto. User-account automation can be
++restricted by Telegram and should be enabled only with explicit operator risk
++acceptance and a strict allowlist.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import fcntl
++import logging
++import mimetypes
++import os
++import random
++import tempfile
++from contextvars import ContextVar
++from dataclasses import dataclass, field
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Any, Dict, Optional
++
++from gateway.config import Platform, PlatformConfig
++from gateway.platforms.base import (
++    BasePlatformAdapter,
++    MessageEvent,
++    MessageType,
++    SendResult,
++)
++from hermes_constants import get_hermes_home
++
++Platform("telegram_userbot")
++
++logger = logging.getLogger(__name__)
++
++
++@dataclass
++class _PacingTurn:
++    """Mutable timing state shared only by tasks spawned for one inbound turn."""
++
++    chat_id: str
++    sender_id: str
++    thinking_until: Optional[float] = None
++    typing_started_at: Optional[float] = None
++    typing_complete: bool = False
++    typing_owner: object = field(default_factory=object, repr=False)
++
++
++@dataclass(frozen=True)
++class _TypingAction:
++    """One owned Telethon typing action for a chat."""
++
++    owner: object | None
++    task: asyncio.Task
++
++
++_current_pacing_turn: ContextVar[Optional[_PacingTurn]] = ContextVar(
++    "telegram_userbot_current_pacing_turn", default=None
++)
++
++TELEGRAM_USERBOT_TEXT_LENGTH = 4096
++DEFAULT_SESSION_NAME = "main"
++DEFAULT_MAX_MEDIA_BYTES = 20 * 1024 * 1024
++DEFAULT_MAX_MEDIA_CACHE_BYTES = 256 * 1024 * 1024
++DEFAULT_MAX_MEDIA_CACHE_FILES = 1000
++_SECRET_EXTRA_KEYS = frozenset(
++    {
++        "api_id",
++        "api_hash",
++        "phone",
++        "session_string",
++        "two_factor_password",
++        "2fa_password",
++    }
++)
++
++
++def _as_str(value: Any) -> str:
++    return "" if value is None else str(value)
++
++
++def _split_csv(value: Any) -> list[str]:
++    if isinstance(value, (list, tuple, set)):
++        return [str(item).strip() for item in value if str(item).strip()]
++    return [part.strip() for part in str(value or "").split(",") if part.strip()]
++
++
++def _coerce_bool(value: Any, default: bool = False) -> bool:
++    if value is None:
++        return default
++    if isinstance(value, bool):
++        return value
++    return str(value).strip().lower() in {"1", "true", "yes", "on"}
++
++
++def _coerce_int(value: Any) -> Optional[int]:
++    if value is None or value == "":
++        return None
++    try:
++        return int(value)
++    except (TypeError, ValueError):
++        return None
++
++
++def _positive_int(value: Any, default: int) -> int:
++    parsed = _coerce_int(value)
++    return parsed if parsed is not None and parsed > 0 else default
++
++
++def _bounded_ratio(value: Any, default: float) -> float:
++    try:
++        parsed = float(value)
++    except (TypeError, ValueError):
++        return default
++    return parsed if 0.0 <= parsed <= 1.0 else default
++
++
++def _first_present(obj: Any, *names: str) -> Any:
++    for name in names:
++        if isinstance(obj, dict):
++            if name in obj and obj[name] is not None:
++                return obj[name]
++            continue
++        value = getattr(obj, name, None)
++        if value is not None:
++            return value
++    return None
++
++
++def _default_work_dir() -> str:
++    return str(get_hermes_home() / "telegram_userbot")
++
++
++def _normalized_session_name(value: Any) -> str:
++    name = str(value or DEFAULT_SESSION_NAME).strip() or DEFAULT_SESSION_NAME
++    return name[:-8] if name.endswith(".session") else name
++
++
++def _reject_secret_config(extra: Dict[str, Any]) -> None:
++    configured = sorted(key for key in _SECRET_EXTRA_KEYS if key in extra)
++    if configured:
++        raise ValueError(
++            "Telegram userbot credentials must be stored in the profile .env, "
++            f"not config extra: {', '.join(configured)}"
++        )
++
++
++def _safe_session_location(config: PlatformConfig) -> tuple[Path, str]:
++    extra = config.extra or {}
++    _reject_secret_config(extra)
++    profile_root = get_hermes_home().expanduser().resolve()
++    work_dir = Path(
++        str(
++            extra.get("work_dir")
++            or os.getenv("TELEGRAM_USERBOT_WORK_DIR")
++            or _default_work_dir()
++        )
++    ).expanduser().resolve()
++    try:
++        work_dir.relative_to(profile_root)
++    except ValueError as exc:
++        raise ValueError(
++            f"Telegram userbot work_dir must stay under profile root {profile_root}"
++        ) from exc
++
++    session_name = _normalized_session_name(
++        extra.get("session_name") or os.getenv("TELEGRAM_USERBOT_SESSION_NAME")
++    )
++    session_path = Path(session_name)
++    if (
++        session_path.is_absolute()
++        or len(session_path.parts) != 1
++        or session_name in {".", ".."}
++    ):
++        raise ValueError("Telegram userbot session_name must be a plain filename")
++    return work_dir, session_name
++
++
++def _session_file_from_config(config: PlatformConfig) -> Path:
++    work_dir, session_name = _safe_session_location(config)
++    return work_dir / f"{session_name}.session"
++
++
++def check_telegram_userbot_requirements() -> bool:
++    """Return True when Telethon is importable."""
++    try:
++        import telethon  # type: ignore[import-not-found]  # noqa: F401
++    except Exception:
++        return False
++    return True
++
++
++def validate_telegram_userbot_config(config: PlatformConfig) -> bool:
++    """Require env-only app credentials plus a bootstrap or saved session."""
++    try:
++        session_path = _session_file_from_config(config)
++    except (TypeError, ValueError):
++        return False
++    api_id = _as_str(os.getenv("TELEGRAM_USERBOT_API_ID")).strip()
++    api_hash = _as_str(os.getenv("TELEGRAM_USERBOT_API_HASH")).strip()
++    if not api_id or not api_hash or _coerce_int(api_id) is None:
++        return False
++    phone = _as_str(os.getenv("TELEGRAM_USERBOT_PHONE")).strip()
++    session_string = _as_str(
++        os.getenv("TELEGRAM_USERBOT_SESSION_STRING")
++    ).strip()
++    return bool(phone or session_string or session_path.is_file())
++
++
++def is_telegram_userbot_connected(config: PlatformConfig) -> bool:
++    return validate_telegram_userbot_config(config)
++
++
++class TelegramUserbotAdapter(BasePlatformAdapter):
++    """Hermes gateway adapter backed by a Telegram MTProto user account."""
++
++    MAX_MESSAGE_LENGTH = TELEGRAM_USERBOT_TEXT_LENGTH
++    splits_long_messages = True
++
++    def __init__(self, config: PlatformConfig):
++        super().__init__(config, Platform("telegram_userbot"))
++        extra = config.extra or {}
++        work_dir, session_name = _safe_session_location(config)
++        self.api_id = _coerce_int(os.getenv("TELEGRAM_USERBOT_API_ID"))
++        self.api_hash = _as_str(os.getenv("TELEGRAM_USERBOT_API_HASH")).strip()
++        self.phone = _as_str(os.getenv("TELEGRAM_USERBOT_PHONE")).strip()
++        self.two_factor_password = _as_str(
++            os.getenv("TELEGRAM_USERBOT_2FA_PASSWORD")
++        )
++        self.session_string = _as_str(
++            os.getenv("TELEGRAM_USERBOT_SESSION_STRING")
++        ).strip()
++        self.work_dir = str(work_dir)
++        self.session_name = session_name
++        self.account_id = _as_str(
++            extra.get("account_id") or os.getenv("TELEGRAM_USERBOT_ACCOUNT_ID")
++        ).strip()
++        self.allow_all_users = _coerce_bool(
++            extra.get("allow_all_users")
++            if "allow_all_users" in extra
++            else os.getenv("TELEGRAM_USERBOT_ALLOW_ALL_USERS"),
++            False,
++        )
++        self.allowed_users = set(
++            _split_csv(
++                extra.get("allowed_users")
++                or extra.get("allow_from")
++                or os.getenv("TELEGRAM_USERBOT_ALLOWED_USERS")
++            )
++        )
++        self.allowed_chats = set(
++            _split_csv(
++                extra.get("allowed_chats")
++                or os.getenv("TELEGRAM_USERBOT_ALLOWED_CHATS")
++            )
++        )
++        # Every inbound event is gated by _message_to_event before dispatch.
++        # Expose that local admission decision to the gateway so it does not
++        # run the bot-oriented pairing flow a second time.
++        self._dm_policy = "allowlist"
++        self._group_policy = "allowlist"
++        self.mark_read = _coerce_bool(extra.get("mark_read"), False)
++        self.download_media = _coerce_bool(extra.get("download_media"), False)
++        self.max_media_bytes = _positive_int(
++            extra.get("max_media_bytes"), DEFAULT_MAX_MEDIA_BYTES
++        )
++        self.max_media_cache_bytes = _positive_int(
++            extra.get("max_media_cache_bytes"), DEFAULT_MAX_MEDIA_CACHE_BYTES
++        )
++        self.max_media_cache_files = _positive_int(
++            extra.get("max_media_cache_files"), DEFAULT_MAX_MEDIA_CACHE_FILES
++        )
++        self.send_typing_enabled = _coerce_bool(extra.get("send_typing"), True)
++        self.human_pacing_enabled = _coerce_bool(
++            extra.get("human_pacing_enabled"), False
++        )
++        self.human_pacing_excluded_user_ids = set(
++            _split_csv(extra.get("human_pacing_excluded_user_ids"))
++        )
++        self.thinking_delay_min_ms = _positive_int(
++            extra.get("thinking_delay_min_ms"), 1200
++        )
++        self.thinking_delay_max_ms = _positive_int(
++            extra.get("thinking_delay_max_ms"), 3200
++        )
++        self.typing_chars_per_second = _positive_int(
++            extra.get("typing_chars_per_second"), 12
++        )
++        self.typing_jitter_ratio = _bounded_ratio(
++            extra.get("typing_jitter_ratio"), 0.15
++        )
++        self.typing_delay_min_ms = _positive_int(
++            extra.get("typing_delay_min_ms"), 1800
++        )
++        self.typing_delay_max_ms = _positive_int(
++            extra.get("typing_delay_max_ms"), 30000
++        )
++        self._client: Any = None
++        self._client_task: Optional[asyncio.Task] = None
++        self._typing_tasks: dict[str, _TypingAction] = {}
++        self._typing_lock = asyncio.Lock()
++        self._lifecycle_lock = asyncio.Lock()
++        self._teardown_complete = asyncio.Event()
++        self._teardown_complete.set()
++        self._tearing_down = False
++        self._media_lock = asyncio.Lock()
++        self._session_lock_file: Optional[Any] = None
++
++    @property
++    def name(self) -> str:
++        return "Telegram Userbot"
++
++    @property
++    def suppress_home_channel_onboarding(self) -> bool:
++        """Keep user-account chats free of bot-oriented setup notices."""
++        return True
++
++    @property
++    def suppress_system_messages(self) -> bool:
++        """Keep Hermes command/error UI out of ordinary user-account chats."""
++        return True
++
++    @property
++    def enforces_own_access_policy(self) -> bool:
++        """Inbound senders are admitted locally before gateway dispatch."""
++        return True
++
++    @property
++    def session_path(self) -> Path:
++        return Path(self.work_dir).expanduser() / f"{self.session_name}.session"
++
++    def _ensure_session_dir(self) -> None:
++        path = Path(self.work_dir).expanduser()
++        path.mkdir(parents=True, exist_ok=True)
++        try:
++            os.chmod(path, 0o700)
++        except OSError:
++            pass
++
++    def _assert_safe_session_paths(self) -> None:
++        lock_path = self.session_path.with_suffix(".session.lock")
++        if self.session_path.is_symlink() or lock_path.is_symlink():
++            raise RuntimeError(
++                "Telegram userbot refuses symlink session or lock paths"
++            )
++
++    def _acquire_session_lock(self) -> None:
++        if self.session_string or self._session_lock_file is not None:
++            return
++        self._ensure_session_dir()
++        self._assert_safe_session_paths()
++        lock_path = self.session_path.with_suffix(".session.lock")
++        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
++        if hasattr(os, "O_NOFOLLOW"):
++            flags |= os.O_NOFOLLOW
++        try:
++            descriptor = os.open(lock_path, flags, 0o600)
++        except OSError as exc:
++            raise RuntimeError(
++                f"Unable to open Telegram userbot session lock safely: {lock_path}"
++            ) from exc
++        try:
++            os.fchmod(descriptor, 0o600)
++        except OSError:
++            pass
++        lock_file = os.fdopen(descriptor, "a+")
++        try:
++            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except OSError as exc:
++            lock_file.close()
++            if isinstance(exc, BlockingIOError):
++                raise RuntimeError(
++                    f"Telegram userbot session is already locked: {lock_path}"
++                ) from exc
++            raise RuntimeError(
++                f"Unable to lock Telegram userbot session safely: {lock_path}"
++            ) from exc
++        self._session_lock_file = lock_file
++
++    def _release_session_lock(self) -> None:
++        lock_file = self._session_lock_file
++        if lock_file is None:
++            return
++        self._session_lock_file = None
++        try:
++            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
++        finally:
++            lock_file.close()
++
++    def _build_client(self) -> Any:
++        if not self.session_string:
++            self._assert_safe_session_paths()
++        try:
++            from telethon import TelegramClient  # type: ignore[import-not-found]
++            from telethon.sessions import StringSession  # type: ignore[import-not-found]
++        except Exception as exc:  # pragma: no cover - check_fn covers discovery
++            raise RuntimeError(
++                "Telethon is not installed; run `uv pip install 'telethon>=1.40,<2'`"
++            ) from exc
++        if not self.api_id or not self.api_hash:
++            raise RuntimeError(
++                "TELEGRAM_USERBOT_API_ID and TELEGRAM_USERBOT_API_HASH are required"
++            )
++        self._ensure_session_dir()
++        session: Any
++        if self.session_string:
++            session = StringSession(self.session_string)
++        else:
++            session = str(Path(self.work_dir).expanduser() / self.session_name)
++        return TelegramClient(session, self.api_id, self.api_hash)
++
++    async def _await_critical_cleanup(self, cleanup_task: asyncio.Future) -> bool:
++        cancelled = False
++        while not cleanup_task.done():
++            try:
++                await asyncio.shield(cleanup_task)
++            except asyncio.CancelledError:
++                cancelled = True
++        return cancelled
++
++    async def connect(self, *, is_reconnect: bool = False) -> bool:
++        while True:
++            await self._teardown_complete.wait()
++            async with self._lifecycle_lock:
++                if self._tearing_down:
++                    continue
++                if self._running:
++                    return True
++                return await self._connect_locked()
++
++    async def _connect_locked(self) -> bool:
++        try:
++            self._acquire_session_lock()
++            if self._client is None:
++                self._client = self._build_client()
++            from telethon import events  # type: ignore[import-not-found]
++
++            self._client.add_event_handler(
++                self._handle_new_message,
++                events.NewMessage(incoming=True),
++            )
++            start_kwargs: dict[str, Any] = {}
++            if self.phone:
++                start_kwargs["phone"] = self.phone
++            if self.two_factor_password:
++                start_kwargs["password"] = self.two_factor_password
++            await self._client.start(**start_kwargs)
++            if not self.session_string and self.session_path.is_file():
++                try:
++                    os.chmod(self.session_path, 0o600)
++                except OSError:
++                    pass
++            me = await self._client.get_me()
++            if me is not None:
++                self.account_id = _as_str(getattr(me, "id", None)).strip()
++            self._mark_connected()
++            self._client_task = asyncio.create_task(
++                self._run_client_loop(self._client),
++                name="telegram-userbot-client",
++            )
++            logger.warning(
++                "[TELEGRAM_USERBOT] Started MTProto user-account client; "
++                "this is not Telegram Bot API support."
++            )
++            return True
++        except asyncio.CancelledError:
++            cleanup = asyncio.create_task(self._cleanup_failed_connect())
++            await self._await_critical_cleanup(cleanup)
++            cleanup.result()
++            raise
++        except Exception as exc:
++            logger.error("[TELEGRAM_USERBOT] failed to connect: %s", exc)
++            cleanup = asyncio.create_task(self._cleanup_failed_connect())
++            cancelled = await self._await_critical_cleanup(cleanup)
++            cleanup.result()
++            if cancelled:
++                raise asyncio.CancelledError
++            return False
++
++    async def _disconnect_client_safely(
++        self,
++        client: Any,
++        *,
++        context: str,
++    ) -> bool:
++        if client is None:
++            return False
++        disconnect_task = asyncio.ensure_future(client.disconnect())
++        cancelled = await self._await_critical_cleanup(disconnect_task)
++        try:
++            disconnect_task.result()
++        except asyncio.CancelledError:
++            cancelled = True
++        except Exception as exc:
++            logger.debug("[TELEGRAM_USERBOT] %s disconnect failed: %s", context, exc)
++        return cancelled
++
++    async def _cleanup_failed_connect(self) -> None:
++        self._mark_disconnected()
++        client = self._client
++        self._client = None
++        await self._cancel_typing_tasks()
++        await self._disconnect_client_safely(client, context="failed connect cleanup")
++        task = self._client_task
++        if task is not None and task is not asyncio.current_task():
++            task.cancel()
++            await asyncio.gather(task, return_exceptions=True)
++        self._client_task = None
++        self._release_session_lock()
++
++    async def _run_client_loop(self, client: Any) -> None:
++        current_task = asyncio.current_task()
++        try:
++            await client.run_until_disconnected()
++        except asyncio.CancelledError:
++            raise
++        except Exception as exc:
++            logger.error("[TELEGRAM_USERBOT] client loop stopped: %s", exc)
++        finally:
++            self._tearing_down = True
++            self._teardown_complete.clear()
++            self._mark_disconnected()
++            cleanup_task = asyncio.create_task(
++                self._cleanup_client_loop(client, current_task),
++                name="telegram-userbot-client-cleanup",
++            )
++            cancelled = await self._await_critical_cleanup(cleanup_task)
++            disconnect_cancelled = cleanup_task.result()
++            if cancelled or disconnect_cancelled:
++                raise asyncio.CancelledError
++
++    async def _cleanup_client_loop(
++        self,
++        client: Any,
++        owner_task: Optional[asyncio.Task],
++    ) -> bool:
++        """Finish client-loop teardown despite repeated owner cancellation."""
++        disconnect_cancelled = False
++        try:
++            await self._cancel_typing_tasks()
++            disconnect_cancelled = await self._disconnect_client_safely(
++                client,
++                context="client loop cleanup",
++            )
++        finally:
++            if self._client is client:
++                self._client = None
++            if self._client_task is owner_task:
++                self._client_task = None
++            self._release_session_lock()
++            self._tearing_down = False
++            self._teardown_complete.set()
++        return disconnect_cancelled
++
++    async def _cancel_typing_tasks(self) -> None:
++        async with self._typing_lock:
++            tasks = [action.task for action in self._typing_tasks.values()]
++            self._typing_tasks.clear()
++            for task in tasks:
++                task.cancel()
++            if tasks:
++                await asyncio.gather(*tasks, return_exceptions=True)
++
++    async def disconnect(self) -> None:
++        while True:
++            await self._teardown_complete.wait()
++            async with self._lifecycle_lock:
++                if self._tearing_down:
++                    continue
++                cleanup_task = asyncio.create_task(
++                    self._disconnect_locked(),
++                    name="telegram-userbot-disconnect-cleanup",
++                )
++                cancelled = await self._await_critical_cleanup(cleanup_task)
++                cleanup_task.result()
++                if cancelled:
++                    raise asyncio.CancelledError
++                return
++
++    async def _disconnect_locked(self) -> None:
++        self._mark_disconnected()
++        client = self._client
++        task = self._client_task
++        await self._cancel_typing_tasks()
++        disconnect_cancelled = await self._disconnect_client_safely(
++            client,
++            context="explicit",
++        )
++        if task is not None and task is not asyncio.current_task():
++            task.cancel()
++            await asyncio.gather(task, return_exceptions=True)
++        self._client_task = None
++        self._client = None
++        self._release_session_lock()
++        if disconnect_cancelled:
++            raise asyncio.CancelledError
++
++    def _require_client(self) -> Any:
++        if self._client is None:
++            self._client = self._build_client()
++        return self._client
++
++    async def send(
++        self,
++        chat_id: str,
++        content: str,
++        reply_to: Optional[str] = None,
++        metadata: Optional[Dict[str, Any]] = None,
++    ) -> SendResult:
++        if not content:
++            return SendResult(
++                success=False,
++                error="Telegram userbot text message is empty",
++            )
++        pacing_turn = self._pacing_turn_for_chat(chat_id)
++        try:
++            await self._apply_human_pacing(chat_id, content)
++            last: Optional[SendResult] = None
++            for chunk in self.truncate_message(content, self.MAX_MESSAGE_LENGTH):
++                try:
++                    message = await self._require_client().send_message(
++                        self._target_entity(chat_id),
++                        chunk,
++                        reply_to=_coerce_int(reply_to),
++                    )
++                except Exception as exc:
++                    return SendResult(success=False, error=str(exc), retryable=True)
++                last = SendResult(
++                    success=True,
++                    message_id=_as_str(getattr(message, "id", None)) or None,
++                    raw_response=message,
++                )
++            return last or SendResult(success=False, error="No message chunks were sent")
++        finally:
++            if pacing_turn is not None:
++                pacing_turn.typing_complete = True
++                await self._stop_typing_now(
++                    chat_id,
++                    owner=pacing_turn.typing_owner,
++                )
++
++    def _pacing_turn_for_chat(self, chat_id: str) -> Optional[_PacingTurn]:
++        turn = _current_pacing_turn.get()
++        if (
++            turn is None
++            or turn.chat_id != str(chat_id)
++            or not self._human_pacing_applies()
++            or turn.thinking_until is None
++        ):
++            return None
++        return turn
++
++    async def _apply_human_pacing(self, chat_id: str, content: str) -> None:
++        """Pad a fast response until its visible typing time looks plausible."""
++        turn = _current_pacing_turn.get()
++        if (
++            not self._human_pacing_applies()
++            or turn is None
++            or turn.chat_id != str(chat_id)
++        ):
++            return
++        thinking_until = turn.thinking_until
++        if thinking_until is None:
++            # Do not delay one-off outbound/system messages.
++            return
++
++        loop = asyncio.get_running_loop()
++        remaining_thought = thinking_until - loop.time()
++        if remaining_thought > 0:
++            await asyncio.sleep(remaining_thought)
++
++        typing_started = turn.typing_started_at
++        if typing_started is None:
++            typing_started = loop.time()
++            turn.typing_started_at = typing_started
++            await self.send_typing(chat_id)
++
++        min_seconds = self.typing_delay_min_ms / 1000.0
++        max_seconds = self.typing_delay_max_ms / 1000.0
++        if min_seconds > max_seconds:
++            min_seconds, max_seconds = max_seconds, min_seconds
++        target_seconds = len(content) / float(self.typing_chars_per_second)
++        target_seconds *= random.uniform(
++            1.0 - self.typing_jitter_ratio,
++            1.0 + self.typing_jitter_ratio,
++        )
++        target_seconds = max(min_seconds, min(max_seconds, target_seconds))
++        remaining_typing = target_seconds - (loop.time() - typing_started)
++        if remaining_typing > 0:
++            await asyncio.sleep(remaining_typing)
++
++    def _human_pacing_applies(self) -> bool:
++        turn = _current_pacing_turn.get()
++        return self.human_pacing_enabled and turn is not None and (
++            turn.sender_id not in self.human_pacing_excluded_user_ids
++        )
++
++    async def edit_message(
++        self,
++        chat_id: str,
++        message_id: str,
++        content: str,
++        *,
++        finalize: bool = False,
++    ) -> SendResult:
++        if not message_id:
++            return SendResult(success=False, error="message_id required")
++        if not content:
++            return SendResult(
++                success=False,
++                error="Telegram userbot text message is empty",
++            )
++        try:
++            message = await self._require_client().edit_message(
++                self._target_entity(chat_id),
++                _coerce_int(message_id) or message_id,
++                content[: self.MAX_MESSAGE_LENGTH],
++            )
++        except Exception as exc:
++            return SendResult(success=False, error=str(exc), retryable=True)
++        return SendResult(
++            success=True,
++            message_id=_as_str(getattr(message, "id", None) or message_id),
++            raw_response=message,
++        )
++
++    async def _hold_typing(
++        self,
++        key: str,
++        entity: Any,
++        client: Any,
++        owner: object | None,
++    ) -> None:
++        current_task = asyncio.current_task()
++        try:
++            async with client.action(entity, "typing"):
++                await asyncio.sleep(4.0)
++        except asyncio.CancelledError:
++            raise
++        except Exception as exc:
++            logger.debug(
++                "[TELEGRAM_USERBOT] typing action failed for chat %s: %s",
++                key,
++                exc,
++            )
++        finally:
++            action = self._typing_tasks.get(key)
++            if (
++                action is not None
++                and action.owner is owner
++                and action.task is current_task
++            ):
++                self._typing_tasks.pop(key, None)
++
++    async def send_typing(self, chat_id: str, metadata=None) -> None:
++        if not self.send_typing_enabled or self._client is None:
++            return
++        key = str(chat_id)
++        turn = _current_pacing_turn.get()
++        owner = turn.typing_owner if turn is not None and turn.chat_id == key else None
++        if turn is not None and turn.chat_id == key and turn.typing_complete:
++            return
++        async with self._typing_lock:
++            previous = self._typing_tasks.pop(key, None)
++            if previous is not None:
++                previous.task.cancel()
++                await asyncio.gather(previous.task, return_exceptions=True)
++            task = asyncio.create_task(
++                self._hold_typing(
++                    key,
++                    self._target_entity(chat_id),
++                    self._client,
++                    owner,
++                ),
++                name=f"telegram-userbot-typing-{key}",
++            )
++            self._typing_tasks[key] = _TypingAction(owner=owner, task=task)
++            await asyncio.sleep(0)
++
++    async def stop_typing(self, chat_id: str) -> None:
++        if self._pacing_turn_for_chat(chat_id) is not None:
++            # Gateway asks to stop when generation finishes, before Base sends
++            # the final response. Keep the action alive through the remaining
++            # simulated typing delay; send() performs the immediate cleanup.
++            return
++        turn = _current_pacing_turn.get()
++        owner = (
++            turn.typing_owner
++            if turn is not None and turn.chat_id == str(chat_id)
++            else None
++        )
++        await self._stop_typing_now(chat_id, owner=owner)
++
++    async def _stop_typing_now(
++        self,
++        chat_id: str,
++        *,
++        owner: object | None = None,
++    ) -> None:
++        key = str(chat_id)
++        async with self._typing_lock:
++            action = self._typing_tasks.get(key)
++            if action is None or (owner is not None and action.owner is not owner):
++                return
++            self._typing_tasks.pop(key, None)
++            action.task.cancel()
++            await asyncio.gather(action.task, return_exceptions=True)
++
++    async def _keep_typing(
++        self,
++        chat_id: str,
++        interval: float = 2.0,
++        metadata=None,
++        stop_event: asyncio.Event | None = None,
++    ) -> None:
++        if not self._human_pacing_applies():
++            await super()._keep_typing(
++                chat_id,
++                interval=interval,
++                metadata=metadata,
++                stop_event=stop_event,
++            )
++            return
++
++        turn = _current_pacing_turn.get()
++        if turn is None or turn.chat_id != str(chat_id):
++            return
++        loop = asyncio.get_running_loop()
++        min_seconds = self.thinking_delay_min_ms / 1000.0
++        max_seconds = self.thinking_delay_max_ms / 1000.0
++        if min_seconds > max_seconds:
++            min_seconds, max_seconds = max_seconds, min_seconds
++        thinking_delay = random.uniform(min_seconds, max_seconds)
++        thinking_until = loop.time() + thinking_delay
++        turn.thinking_until = thinking_until
++        try:
++            await asyncio.sleep(thinking_delay)
++            if stop_event is not None and stop_event.is_set():
++                return
++            turn.typing_started_at = loop.time()
++            await super()._keep_typing(
++                chat_id,
++                interval=interval,
++                metadata=metadata,
++                stop_event=stop_event,
++            )
++        finally:
++            if turn.thinking_until == thinking_until:
++                turn.thinking_until = None
++                turn.typing_started_at = None
++                turn.typing_complete = True
++            await self._stop_typing_now(chat_id, owner=turn.typing_owner)
++
++    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
++        target = str(chat_id).strip()
++        return {"id": target, "name": target, "type": "chat"}
++
++    async def send_image_file(
++        self,
++        chat_id: str,
++        image_path: str,
++        caption: Optional[str] = None,
++        reply_to: Optional[str] = None,
++        metadata: Optional[Dict[str, Any]] = None,
++        **kwargs,
++    ) -> SendResult:
++        return await self._send_file(chat_id, image_path, caption, reply_to)
++
++    async def send_document(
++        self,
++        chat_id: str,
++        file_path: str,
++        caption: Optional[str] = None,
++        file_name: Optional[str] = None,
++        reply_to: Optional[str] = None,
++        metadata: Optional[Dict[str, Any]] = None,
++        **kwargs,
++    ) -> SendResult:
++        return await self._send_file(chat_id, file_path, caption, reply_to)
++
++    async def send_video_file(
++        self,
++        chat_id: str,
++        video_path: str,
++        caption: Optional[str] = None,
++        reply_to: Optional[str] = None,
++        metadata: Optional[Dict[str, Any]] = None,
++        **kwargs,
++    ) -> SendResult:
++        return await self._send_file(chat_id, video_path, caption, reply_to)
++
++    async def _send_file(
++        self,
++        chat_id: str,
++        path: str,
++        caption: Optional[str],
++        reply_to: Optional[str],
++    ) -> SendResult:
++        file_path = Path(path).expanduser()
++        if not file_path.is_file():
++            return SendResult(
++                success=False,
++                error=f"Telegram userbot file does not exist: {path}",
++            )
++        try:
++            message = await self._require_client().send_file(
++                self._target_entity(chat_id),
++                str(file_path),
++                caption=caption or "",
++                reply_to=_coerce_int(reply_to),
++            )
++        except Exception as exc:
++            return SendResult(success=False, error=str(exc), retryable=True)
++        return SendResult(
++            success=True,
++            message_id=_as_str(getattr(message, "id", None)) or None,
++            raw_response=message,
++        )
++
++    async def _process_message_background(
++        self,
++        event: MessageEvent,
++        session_key: str,
++    ) -> None:
++        """Bind pacing identity to the event processed by this task.
++
++        Base may drain a queued follow-up in a task created by the previous
++        sender's turn. Rebinding here prevents that inherited ContextVar from
++        applying the previous sender's pacing or bypass policy.
++        """
++        pacing_token = _current_pacing_turn.set(
++            _PacingTurn(
++                chat_id=str(event.source.chat_id),
++                sender_id=_as_str(event.source.user_id).strip(),
++            )
++        )
++        try:
++            await super()._process_message_background(event, session_key)
++        finally:
++            _current_pacing_turn.reset(pacing_token)
++
++    async def _handle_new_message(self, raw_event: Any) -> None:
++        event = self._message_to_event(raw_event)
++        if event is None:
++            return
++        if self.download_media and getattr(raw_event.message, "media", None) is not None:
++            await self._download_event_media(raw_event, event)
++        if self.mark_read:
++            try:
++                await self._require_client().send_read_acknowledge(raw_event.message)
++            except Exception as exc:
++                logger.debug(
++                    "[TELEGRAM_USERBOT] mark_read failed for message %s: %s",
++                    event.message_id,
++                    exc,
++                )
++        pacing_token = _current_pacing_turn.set(
++            _PacingTurn(
++                chat_id=str(event.source.chat_id),
++                sender_id=_as_str(event.source.user_id).strip(),
++            )
++        )
++        try:
++            await self.handle_message(event)
++        finally:
++            _current_pacing_turn.reset(pacing_token)
++
++    def _message_to_event(self, raw_event: Any) -> Optional[MessageEvent]:
++        message = getattr(raw_event, "message", raw_event)
++        if _coerce_bool(getattr(message, "out", False), False):
++            return None
++        chat_id = _as_str(
++            _first_present(raw_event, "chat_id")
++            or _first_present(message, "chat_id", "peer_id")
++        ).strip()
++        user_id = _as_str(
++            _first_present(raw_event, "sender_id")
++            or _first_present(message, "sender_id", "from_id")
++        ).strip()
++        if not chat_id or self._is_own_user(user_id):
++            return None
++        if not self._is_authorized(user_id, chat_id):
++            return None
++        text = _as_str(
++            _first_present(raw_event, "raw_text")
++            or _first_present(message, "raw_text", "message", "text")
++        )
++        has_media = getattr(message, "media", None) is not None
++        if not text.strip() and not has_media:
++            return None
++        source = self._source_for_event(raw_event, chat_id, user_id)
++        return MessageEvent(
++            text=text,
++            message_type=self._message_type(message),
++            source=source,
++            raw_message=raw_event,
++            message_id=_as_str(_first_present(message, "id", "message_id")) or None,
++            timestamp=self._timestamp(message),
++        )
++
++    def _source_for_event(self, raw_event: Any, chat_id: str, user_id: str):
++        from gateway.session import SessionSource
++
++        is_private = bool(getattr(raw_event, "is_private", False))
++        return SessionSource(
++            platform=Platform("telegram_userbot"),
++            chat_id=chat_id,
++            chat_type="dm" if is_private else "group",
++            user_id=user_id or None,
++        )
++
++    @staticmethod
++    def _media_size(message: Any) -> Optional[int]:
++        candidates: list[Any] = []
++        file_info = getattr(message, "file", None)
++        candidates.append(getattr(file_info, "size", None))
++        document = getattr(message, "document", None)
++        candidates.append(getattr(document, "size", None))
++        photo = getattr(message, "photo", None)
++        for size_info in getattr(photo, "sizes", None) or []:
++            candidates.append(getattr(size_info, "size", None))
++        sizes = [
++            parsed
++            for value in candidates
++            if (parsed := _coerce_int(value)) is not None and parsed >= 0
++        ]
++        return max(sizes) if sizes else None
++
++    @staticmethod
++    def _media_cache_usage(media_dir: Path) -> tuple[int, int]:
++        files = 0
++        total = 0
++        for path in media_dir.rglob("*"):
++            try:
++                if path.is_symlink() or not path.is_file():
++                    continue
++                files += 1
++                total += path.stat().st_size
++            except OSError:
++                continue
++        return files, total
++
++    @staticmethod
++    def _media_suffix(message: Any) -> str:
++        file_info = getattr(message, "file", None)
++        original_name = _as_str(getattr(file_info, "name", None)).strip()
++        suffix = Path(original_name).suffix.lower()
++        if suffix and len(suffix) <= 10 and suffix[1:].isalnum():
++            return suffix
++        document = getattr(message, "document", None)
++        mime = _as_str(getattr(document, "mime_type", None)).strip().lower()
++        guessed = mimetypes.guess_extension(mime) or ""
++        return guessed if len(guessed) <= 10 else ""
++
++    async def _download_event_media(
++        self,
++        raw_event: Any,
++        event: MessageEvent,
++    ) -> None:
++        message = raw_event.message
++        expected_size = self._media_size(message)
++        if expected_size is None:
++            logger.warning(
++                "[TELEGRAM_USERBOT] refusing media with unknown size for message %s",
++                event.message_id,
++            )
++            return
++        if expected_size > self.max_media_bytes:
++            logger.warning(
++                "[TELEGRAM_USERBOT] refusing oversized media for message %s (%s > %s)",
++                event.message_id,
++                expected_size,
++                self.max_media_bytes,
++            )
++            return
++
++        async with self._media_lock:
++            downloaded = await self._download_media_bounded(
++                message,
++                event.message_id,
++                expected_size,
++            )
++        if downloaded is None:
++            return
++
++        local_path = str(downloaded)
++        event.media_urls.append(local_path)
++        document = getattr(message, "document", None)
++        declared_mime = _as_str(getattr(document, "mime_type", None)).strip()
++        mime = declared_mime or mimetypes.guess_type(local_path)[0]
++        mime = mime or "application/octet-stream"
++        event.media_types.append(mime)
++        if mime.startswith("image/"):
++            event.message_type = MessageType.PHOTO
++        elif mime.startswith("audio/"):
++            event.message_type = MessageType.AUDIO
++        elif mime.startswith("video/"):
++            event.message_type = MessageType.VIDEO
++        else:
++            event.message_type = MessageType.DOCUMENT
++
++    async def _download_media_bounded(
++        self,
++        message: Any,
++        message_id: Optional[str],
++        expected_size: int,
++    ) -> Optional[Path]:
++        media_path = Path(self.work_dir).expanduser() / "media"
++        if media_path.is_symlink():
++            logger.error(
++                "[TELEGRAM_USERBOT] refusing symlink media cache: %s",
++                media_path,
++            )
++            return None
++        media_path.mkdir(parents=True, exist_ok=True)
++        media_dir = media_path.resolve()
++        try:
++            media_dir.relative_to(Path(self.work_dir).expanduser().resolve())
++        except ValueError:
++            logger.error(
++                "[TELEGRAM_USERBOT] refusing media cache outside profile work dir: %s",
++                media_dir,
++            )
++            return None
++        try:
++            os.chmod(media_dir, 0o700)
++        except OSError:
++            pass
++
++        file_count, cache_bytes = self._media_cache_usage(media_dir)
++        if (
++            file_count >= self.max_media_cache_files
++            or cache_bytes + expected_size > self.max_media_cache_bytes
++        ):
++            logger.warning(
++                "[TELEGRAM_USERBOT] media cache quota reached; refusing message %s",
++                message_id,
++            )
++            return None
++
++        descriptor, raw_path = tempfile.mkstemp(
++            prefix="incoming-",
++            suffix=self._media_suffix(message),
++            dir=media_dir,
++        )
++        downloaded = Path(raw_path)
++        actual_size = 0
++        exceeded = False
++        try:
++            with os.fdopen(descriptor, "wb") as output:
++                async for chunk in self._require_client().iter_download(
++                    message.media,
++                    request_size=512 * 1024,
++                ):
++                    payload = bytes(chunk)
++                    next_size = actual_size + len(payload)
++                    if (
++                        next_size > self.max_media_bytes
++                        or cache_bytes + next_size > self.max_media_cache_bytes
++                    ):
++                        exceeded = True
++                        break
++                    output.write(payload)
++                    actual_size = next_size
++        except asyncio.CancelledError:
++            try:
++                downloaded.unlink()
++            except OSError:
++                pass
++            raise
++        except Exception as exc:
++            try:
++                downloaded.unlink()
++            except OSError:
++                pass
++            logger.warning(
++                "[TELEGRAM_USERBOT] media download failed for message %s: %s",
++                message_id,
++                exc,
++            )
++            return None
++
++        final_files, final_bytes = self._media_cache_usage(media_dir)
++        if (
++            exceeded
++            or final_files > self.max_media_cache_files
++            or final_bytes > self.max_media_cache_bytes
++        ):
++            try:
++                downloaded.unlink()
++            except OSError:
++                pass
++            logger.warning(
++                "[TELEGRAM_USERBOT] media exceeded quota for message %s",
++                message_id,
++            )
++            return None
++        return downloaded
++
++    def _is_own_user(self, user_id: str) -> bool:
++        return bool(user_id and self.account_id and user_id == self.account_id)
++
++    def _is_authorized(self, user_id: str, chat_id: str) -> bool:
++        if self.allow_all_users or _coerce_bool(
++            os.getenv("GATEWAY_ALLOW_ALL_USERS"), False
++        ):
++            return True
++        allowed_users = set(self.allowed_users)
++        allowed_users.update(_split_csv(os.getenv("GATEWAY_ALLOWED_USERS")))
++        if user_id and (user_id in allowed_users or "*" in allowed_users):
++            return True
++        if chat_id and (
++            chat_id in self.allowed_chats or "*" in self.allowed_chats
++        ):
++            return True
++        return False
++
++    @staticmethod
++    def _message_type(message: Any) -> MessageType:
++        if getattr(message, "photo", None) is not None:
++            return MessageType.PHOTO
++        document = getattr(message, "document", None)
++        mime = _as_str(getattr(document, "mime_type", None)).lower()
++        if mime.startswith("audio/"):
++            return MessageType.AUDIO
++        if mime.startswith("video/"):
++            return MessageType.VIDEO
++        if document is not None or getattr(message, "media", None) is not None:
++            return MessageType.DOCUMENT
++        return MessageType.TEXT
++
++    @staticmethod
++    def _timestamp(message: Any) -> datetime:
++        value = getattr(message, "date", None)
++        return value if isinstance(value, datetime) else datetime.now(timezone.utc)
++
++    @staticmethod
++    def _target_entity(value: Any) -> Any:
++        raw = str(value).strip()
++        if raw.startswith("chat:") or raw.startswith("user:"):
++            raw = raw.split(":", 1)[1]
++        parsed = _coerce_int(raw)
++        return parsed if parsed is not None else raw
++
++
++TELEGRAM_USERBOT_PLATFORM_HINT = (
++    "You are on Telegram through an MTProto user account, not the Telegram "
++    "Bot API. Keep responses concise and chat-friendly. Never reveal Telegram "
++    "application credentials, login codes, two-factor passwords, or session "
++    "strings."
++)
++
++
++def register(ctx) -> None:
++    ctx.register_platform(
++        name="telegram_userbot",
++        label="Telegram Userbot",
++        adapter_factory=lambda cfg: TelegramUserbotAdapter(cfg),
++        check_fn=check_telegram_userbot_requirements,
++        validate_config=validate_telegram_userbot_config,
++        is_connected=is_telegram_userbot_connected,
++        required_env=[
++            "TELEGRAM_USERBOT_API_ID",
++            "TELEGRAM_USERBOT_API_HASH",
++        ],
++        allowed_users_env="TELEGRAM_USERBOT_ALLOWED_USERS",
++        allow_all_env="TELEGRAM_USERBOT_ALLOW_ALL_USERS",
++        max_message_length=TELEGRAM_USERBOT_TEXT_LENGTH,
++        platform_hint=TELEGRAM_USERBOT_PLATFORM_HINT,
++        install_hint="Install Telethon with `uv pip install 'telethon>=1.40,<2'` and bootstrap a profile-local session in the foreground.",
++        emoji="👤",
++    )
+diff --git a/plugins/platforms/telegram_userbot/plugin.yaml b/plugins/platforms/telegram_userbot/plugin.yaml
+new file mode 100644
+index 0000000000..703ab4671d
+--- /dev/null
++++ b/plugins/platforms/telegram_userbot/plugin.yaml
+@@ -0,0 +1,33 @@
++name: telegram-userbot-platform
++label: Telegram Userbot
++kind: platform
++version: 0.1.0
++description: >
++  Experimental Telegram MTProto gateway adapter for Hermes Agent. Uses
++  Telethon to connect through a Telegram user account and remains separate
++  from the official Telegram Bot API platform.
++author: Hermes PatchKit
++pip_dependencies:
++  - telethon>=1.40.0,<2
++requires_env:
++  - name: TELEGRAM_USERBOT_API_ID
++    description: "Telegram application API ID from my.telegram.org"
++    prompt: "Telegram API ID"
++    password: true
++  - name: TELEGRAM_USERBOT_API_HASH
++    description: "Telegram application API hash from my.telegram.org"
++    prompt: "Telegram API hash"
++    password: true
++optional_env:
++  - name: TELEGRAM_USERBOT_PHONE
++    description: "Phone number used only for first-time MTProto authorization"
++    prompt: "Telegram account phone number"
++    password: false
++  - name: TELEGRAM_USERBOT_2FA_PASSWORD
++    description: "Optional Telegram two-step verification password"
++    prompt: "Telegram 2FA password"
++    password: true
++  - name: TELEGRAM_USERBOT_SESSION_STRING
++    description: "Optional Telethon StringSession; prefer a profile-local session file"
++    prompt: "Telethon session string"
++    password: true
+diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plugins/test_telegram_userbot_platform_plugin.py
+new file mode 100644
+index 0000000000..0c10b10242
+--- /dev/null
++++ b/tests/plugins/test_telegram_userbot_platform_plugin.py
+@@ -0,0 +1,1894 @@
++"""Behavior tests for the PatchKit Telegram MTProto userbot platform plugin."""
++
++from __future__ import annotations
++
++import asyncio
++import sys
++from contextlib import asynccontextmanager
++from datetime import datetime, timezone
++from pathlib import Path
++from types import ModuleType, SimpleNamespace
++from typing import Any
++from unittest.mock import AsyncMock
++
++import pytest
++
++from gateway.config import Platform, PlatformConfig
++from gateway.platforms.base import SendResult, build_session_key
++
++
++class FakeTelegramMessage:
++    def __init__(
++        self,
++        *,
++        message_id: int = 111,
++        chat_id: int = -100777,
++        sender_id: int = 123,
++        text: str = "hello",
++        outgoing: bool = False,
++    ) -> None:
++        self.id = message_id
++        self.chat_id = chat_id
++        self.sender_id = sender_id
++        self.raw_text = text
++        self.message = text
++        self.out = outgoing
++        self.date = datetime(2026, 7, 11, tzinfo=timezone.utc)
++        self.photo: Any = None
++        self.document: Any = None
++        self.media: Any = None
++
++
++class FakeNewMessageEvent:
++    def __init__(self, message: FakeTelegramMessage, *, private: bool = False) -> None:
++        self.message = message
++        self.chat_id = message.chat_id
++        self.sender_id = message.sender_id
++        self.raw_text = message.raw_text
++        self.is_private = private
++
++
++class FakeTelegramClient:
++    def __init__(self) -> None:
++        self.sent: list[dict] = []
++        self.sent_files: list[dict] = []
++        self.edited: list[dict] = []
++        self.actions: list[tuple[object, str]] = []
++        self.active_actions: set[tuple[object, str]] = set()
++        self.downloaded_to: list[str] = []
++        self.iterated_media: list[Any] = []
++        self.download_content = b"voice"
++        self.disconnected = False
++
++    async def send_message(self, entity, message, **kwargs):
++        self.sent.append({"entity": entity, "message": message, **kwargs})
++        return SimpleNamespace(id=333)
++
++    async def send_file(self, entity, file, **kwargs):
++        self.sent_files.append({"entity": entity, "file": file, **kwargs})
++        return SimpleNamespace(id=444)
++
++    async def download_media(self, message, *, file):
++        self.downloaded_to.append(file)
++        path = Path(file) / "voice.ogg"
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_bytes(self.download_content)
++        return str(path)
++
++    async def iter_download(self, media, **kwargs):
++        self.iterated_media.append(media)
++        yield self.download_content
++
++    async def edit_message(self, entity, message, text, **kwargs):
++        self.edited.append({"entity": entity, "message": message, "text": text, **kwargs})
++        return SimpleNamespace(id=int(message))
++
++    @asynccontextmanager
++    async def action(self, entity, action):
++        key = (entity, action)
++        self.actions.append(key)
++        self.active_actions.add(key)
++        try:
++            yield
++        finally:
++            self.active_actions.discard(key)
++
++    async def disconnect(self):
++        self.disconnected = True
++
++
++
++def test_register_exposes_telegram_userbot_platform_metadata():
++    from plugins.platforms.telegram_userbot import register
++
++    calls = []
++
++    class Ctx:
++        def register_platform(self, **kwargs):
++            calls.append(kwargs)
++
++    register(Ctx())
++
++    assert len(calls) == 1
++    entry = calls[0]
++    assert entry["name"] == "telegram_userbot"
++    assert entry["label"] == "Telegram Userbot"
++    assert entry["required_env"] == [
++        "TELEGRAM_USERBOT_API_ID",
++        "TELEGRAM_USERBOT_API_HASH",
++    ]
++    assert entry["allowed_users_env"] == "TELEGRAM_USERBOT_ALLOWED_USERS"
++    assert entry["allow_all_env"] == "TELEGRAM_USERBOT_ALLOW_ALL_USERS"
++    assert entry["max_message_length"] == 4096
++    assert "MTProto" in entry["platform_hint"]
++
++
++
++def test_dynamic_platform_value_is_accepted_for_telegram_userbot_plugin():
++    assert Platform("telegram_userbot").value == "telegram_userbot"
++
++
++
++def test_session_work_dir_is_profile_local(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True)
++    )
++
++    assert adapter.work_dir == str(tmp_path / "telegram_userbot")
++    assert adapter.session_name == "main"
++    assert adapter.session_path == tmp_path / "telegram_userbot" / "main.session"
++
++
++def test_telegram_userbot_suppresses_bot_style_system_messages(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++
++    assert adapter.suppress_system_messages is True
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("command", ["/stop", "/new", "/reset"])
++async def test_suppressed_commands_leave_active_session_unchanged(
++    command, tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text=command),
++            private=True,
++        )
++    )
++    assert event is not None
++
++    session_key = build_session_key(
++        event.source,
++        group_sessions_per_user=adapter.config.extra.get(
++            "group_sessions_per_user", True
++        ),
++        thread_sessions_per_user=adapter.config.extra.get(
++            "thread_sessions_per_user", False
++        ),
++    )
++    guard = asyncio.Event()
++    active_task = asyncio.create_task(asyncio.sleep(60))
++    pending_event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(message_id=222, text="pending"),
++            private=True,
++        )
++    )
++    assert pending_event is not None
++    adapter._active_sessions[session_key] = guard
++    adapter._session_tasks[session_key] = active_task
++    adapter._pending_messages[session_key] = pending_event
++    adapter._message_handler = AsyncMock(return_value=None)
++    adapter.cancel_session_processing = AsyncMock()
++
++    try:
++        await adapter.handle_message(event)
++
++        assert adapter._active_sessions[session_key] is guard
++        assert adapter._session_tasks[session_key] is active_task
++        assert adapter._pending_messages[session_key] is pending_event
++        assert active_task.cancelled() is False
++        adapter._message_handler.assert_not_awaited()
++        adapter.cancel_session_processing.assert_not_awaited()
++    finally:
++        active_task.cancel()
++        spawned_tasks = list(adapter._background_tasks)
++        for task in spawned_tasks:
++            task.cancel()
++        await asyncio.gather(active_task, *spawned_tasks, return_exceptions=True)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("suppress_system_messages", [True, False])
++async def test_background_handler_errors_follow_system_message_capability(
++    suppress_system_messages, tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    class AdapterUnderTest(TelegramUserbotAdapter):
++        @property
++        def suppress_system_messages(self):
++            return suppress_system_messages
++
++    adapter = AdapterUnderTest(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text="trigger background failure"),
++            private=True,
++        )
++    )
++    assert event is not None
++    adapter._message_handler = AsyncMock(
++        side_effect=RuntimeError("sensitive internal detail")
++    )
++    adapter.send = AsyncMock()
++
++    await adapter.handle_message(event)
++    background_tasks = list(adapter._background_tasks)
++    assert background_tasks
++    await asyncio.gather(*background_tasks)
++
++    if suppress_system_messages:
++        adapter.send.assert_not_awaited()
++    else:
++        adapter.send.assert_awaited_once()
++        content = adapter.send.await_args.kwargs["content"]
++        assert "RuntimeError" in content
++        assert "sensitive internal detail" in content
++
++
++@pytest.mark.asyncio
++async def test_unknown_slash_text_reaches_userbot_message_handler(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"allow_all_users": True})
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(
++            FakeTelegramMessage(text="/not-a-hermes-command"),
++            private=True,
++        )
++    )
++    assert event is not None
++    adapter._message_handler = AsyncMock(return_value=None)
++
++    await adapter.handle_message(event)
++    await asyncio.gather(*list(adapter._background_tasks))
++
++    adapter._message_handler.assert_awaited_once_with(event)
++
++
++def test_validate_config_requires_env_credentials_plus_bootstrap_or_session(
++    tmp_path, monkeypatch
++):
++    profile_root = tmp_path / "profile"
++    monkeypatch.setenv("HERMES_HOME", str(profile_root))
++    for key in (
++        "TELEGRAM_USERBOT_API_ID",
++        "TELEGRAM_USERBOT_API_HASH",
++        "TELEGRAM_USERBOT_PHONE",
++        "TELEGRAM_USERBOT_SESSION_STRING",
++    ):
++        monkeypatch.delenv(key, raising=False)
++
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        validate_telegram_userbot_config,
++    )
++
++    secret_extra = PlatformConfig(
++        enabled=True,
++        extra={
++            "api_id": "123",
++            "api_hash": "hash",
++            "phone": "+799****0000",
++            "session_string": "opaque-session",
++            "two_factor_password": "must-not-be-in-config",
++            "2fa_password": "must-not-be-in-config",
++        },
++    )
++    assert validate_telegram_userbot_config(secret_extra) is False
++    with pytest.raises(ValueError, match="profile .env"):
++        TelegramUserbotAdapter(secret_extra)
++
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    assert validate_telegram_userbot_config(PlatformConfig(enabled=True)) is False
++
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    assert validate_telegram_userbot_config(PlatformConfig(enabled=True)) is True
++
++    monkeypatch.delenv("TELEGRAM_USERBOT_PHONE")
++    monkeypatch.setenv("TELEGRAM_USERBOT_SESSION_STRING", "opaque-session")
++    assert validate_telegram_userbot_config(PlatformConfig(enabled=True)) is True
++
++    monkeypatch.delenv("TELEGRAM_USERBOT_SESSION_STRING")
++    work_dir = profile_root / "sessions"
++    work_dir.mkdir(parents=True)
++    (work_dir / "main.session").write_text("sqlite-ish")
++    assert validate_telegram_userbot_config(
++        PlatformConfig(
++            enabled=True,
++            extra={"work_dir": str(work_dir), "session_name": "main"},
++        )
++    ) is True
++
++
++
++def test_message_to_event_maps_identity_and_text():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allowed_users": ["123"],
++            },
++        )
++    )
++    raw = FakeNewMessageEvent(FakeTelegramMessage())
++
++    event = adapter._message_to_event(raw)
++
++    assert event is not None
++    assert event.source.platform == Platform("telegram_userbot")
++    assert event.source.chat_id == "-100777"
++    assert event.source.user_id == "123"
++    assert event.text == "hello"
++    assert event.message_id == "111"
++    assert event.message_type.value == "text"
++
++
++def test_allowlisted_sender_reaches_gateway_without_bot_pairing(monkeypatch):
++    from gateway.run import GatewayRunner
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    for key in (
++        "GATEWAY_ALLOWED_USERS",
++        "GATEWAY_ALLOW_ALL_USERS",
++        "TELEGRAM_USERBOT_ALLOWED_USERS",
++        "TELEGRAM_USERBOT_ALLOW_ALL_USERS",
++    ):
++        monkeypatch.delenv(key, raising=False)
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allowed_users": ["123"]},
++        )
++    )
++    event = adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    assert event is not None
++
++    runner = object.__new__(GatewayRunner)
++    runner.adapters = {Platform("telegram_userbot"): adapter}
++    runner.pairing_store = SimpleNamespace(is_approved=lambda *_args: False)
++
++    assert runner._is_user_authorized(event.source) is True
++
++
++
++def test_message_to_event_rejects_unallowlisted_sender():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allowed_users": ["123"],
++            },
++        )
++    )
++
++    assert adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=999))
++    ) is None
++    assert adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123))
++    ) is not None
++
++
++
++def test_message_to_event_ignores_own_outgoing_messages():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allow_all_users": True},
++        )
++    )
++
++    assert adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(outgoing=True))
++    ) is None
++
++
++@pytest.mark.asyncio
++async def test_send_text_and_reply_use_mtproto_client():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True)
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    result = await adapter.send("-100777", "hello", reply_to="55")
++
++    assert isinstance(result, SendResult)
++    assert result.success is True
++    assert result.message_id == "333"
++    assert client.sent == [
++        {"entity": -100777, "message": "hello", "reply_to": 55}
++    ]
++
++
++@pytest.mark.asyncio
++async def test_edit_message_uses_mtproto_client():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True)
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    result = await adapter.edit_message("-100777", "55", "updated")
++
++    assert result.success is True
++    assert result.message_id == "55"
++    assert client.edited == [
++        {"entity": -100777, "message": 55, "text": "updated"}
++    ]
++
++
++@pytest.mark.asyncio
++async def test_send_typing_enters_mtproto_action_context():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True)
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    await adapter.send_typing("-100777")
++    await asyncio.sleep(0)
++
++    assert client.actions == [(-100777, "typing")]
++    assert client.active_actions == {(-100777, "typing")}
++
++    await adapter.disconnect()
++    assert client.active_actions == set()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_keeps_initial_thinking_pause_silent():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 25,
++                "thinking_delay_max_ms": 25,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def observe_typing(event):
++        task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.01)
++        assert client.actions == []
++        await asyncio.sleep(0.03)
++        assert client.actions == [(-100777, "typing")]
++        task.cancel()
++        await asyncio.gather(task, return_exceptions=True)
++
++    adapter.handle_message = observe_typing
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_pads_fast_text_response_by_length():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++                "typing_chars_per_second": 1000,
++                "typing_delay_min_ms": 25,
++                "typing_delay_max_ms": 25,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    elapsed: list[float] = []
++    results: list[SendResult] = []
++
++    async def send_fast_reply(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        started = asyncio.get_running_loop().time()
++        results.append(await adapter.send(event.source.chat_id, "hello"))
++        elapsed.append(asyncio.get_running_loop().time() - started)
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = send_fast_reply
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++
++    assert results[0].success is True
++    assert elapsed[0] >= 0.02
++    assert client.actions == [(-100777, "typing")]
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_excluded_sender_bypasses_artificial_delays():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "human_pacing_excluded_user_ids": ["380342859", 777],
++            },
++        )
++    )
++    observed: list[tuple[str | None, bool]] = []
++
++    async def capture_pacing(event):
++        observed.append((event.source.user_id, adapter._human_pacing_applies()))
++
++    adapter.handle_message = capture_pacing
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=380342859), private=True)
++    )
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++
++    assert adapter.human_pacing_excluded_user_ids == {"380342859", "777"}
++    assert observed == [("380342859", False), ("123", True)]
++
++
++@pytest.mark.asyncio
++async def test_queued_follow_up_uses_pending_event_sender_context(monkeypatch):
++    from gateway.platforms.base import BasePlatformAdapter
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allow_all_users": True, "human_pacing_enabled": True},
++        )
++    )
++    pending_event = adapter._message_to_event(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=456), private=True)
++    )
++    assert pending_event is not None
++    observed: list[str | None] = []
++
++    async def capture_context(_self, event, _session_key):
++        turn = userbot_module._current_pacing_turn.get()
++        observed.append(turn.sender_id if turn is not None else None)
++        assert event.source.user_id == "456"
++
++    monkeypatch.setattr(
++        BasePlatformAdapter,
++        "_process_message_background",
++        capture_context,
++    )
++    outer_token = userbot_module._current_pacing_turn.set(
++        userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    )
++    try:
++        await adapter._process_message_background(pending_event, "shared-group-session")
++        restored_turn = userbot_module._current_pacing_turn.get()
++        assert restored_turn is not None
++        assert restored_turn.sender_id == "123"
++    finally:
++        userbot_module._current_pacing_turn.reset(outer_token)
++
++    assert observed == ["456"]
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_does_not_delay_one_off_send_during_active_turn():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 80,
++                "thinking_delay_max_ms": 80,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    turn_started = asyncio.Event()
++    release_turn = asyncio.Event()
++
++    async def hold_inbound_turn(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0)
++        turn_started.set()
++        await release_turn.wait()
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = hold_inbound_turn
++    inbound_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++        )
++    )
++    await turn_started.wait()
++
++    started = asyncio.get_running_loop().time()
++    result = await adapter.send("-100777", "service message")
++    elapsed = asyncio.get_running_loop().time() - started
++
++    release_turn.set()
++    await inbound_task
++    assert result.success is True
++    assert elapsed < 0.04
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_human_pacing_isolated_between_concurrent_turns_in_same_chat():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 60,
++                "thinking_delay_max_ms": 60,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    first_ready = asyncio.Event()
++    second_started = asyncio.Event()
++    release_second = asyncio.Event()
++    first_elapsed: list[float] = []
++
++    async def concurrent_reply(event):
++        sender_id = event.source.user_id
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        if sender_id == "123":
++            await asyncio.sleep(0.075)
++            first_ready.set()
++            await second_started.wait()
++            started = asyncio.get_running_loop().time()
++            await adapter.send(event.source.chat_id, "first reply")
++            first_elapsed.append(asyncio.get_running_loop().time() - started)
++        else:
++            second_started.set()
++            await release_second.wait()
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = concurrent_reply
++    first_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++        )
++    )
++    await first_ready.wait()
++    second_task = asyncio.create_task(
++        adapter._handle_new_message(
++            FakeNewMessageEvent(FakeTelegramMessage(sender_id=456), private=True)
++        )
++    )
++    await second_started.wait()
++    await first_task
++    release_second.set()
++    await second_task
++
++    assert first_elapsed and first_elapsed[0] < 0.04
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_stop_typing_cancels_active_mtproto_action():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    await adapter.send_typing("-100777")
++    assert client.active_actions == {(-100777, "typing")}
++
++    await adapter.stop_typing("-100777")
++
++    assert client.active_actions == set()
++    assert adapter._typing_tasks == {}
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_paced_turn_defers_stop_typing_until_final_send():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++                "typing_delay_min_ms": 1,
++                "typing_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def finish_generation_then_send(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        assert client.active_actions == {(-100777, "typing")}
++
++        await adapter.stop_typing(event.source.chat_id)
++        assert client.active_actions == {(-100777, "typing")}
++
++        result = await adapter.send(event.source.chat_id, "final")
++        assert result.success is True
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++
++    adapter.handle_message = finish_generation_then_send
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_paced_turn_without_final_send_cleans_up_typing_action():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allow_all_users": True,
++                "human_pacing_enabled": True,
++                "thinking_delay_min_ms": 1,
++                "thinking_delay_max_ms": 1,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    async def cancel_without_send(event):
++        typing_task = asyncio.create_task(adapter._keep_typing(event.source.chat_id))
++        await asyncio.sleep(0.005)
++        assert client.active_actions == {(-100777, "typing")}
++        typing_task.cancel()
++        await asyncio.gather(typing_task, return_exceptions=True)
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++
++    adapter.handle_message = cancel_without_send
++    await adapter._handle_new_message(
++        FakeNewMessageEvent(FakeTelegramMessage(sender_id=123), private=True)
++    )
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_older_turn_cleanup_does_not_stop_newer_turn_typing():
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++    client = FakeTelegramClient()
++    adapter._client = client
++    first_turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    second_turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="456")
++
++    first_token = userbot_module._current_pacing_turn.set(first_turn)
++    try:
++        await adapter.send_typing("-100777")
++        second_token = userbot_module._current_pacing_turn.set(second_turn)
++        try:
++            await adapter.send_typing("-100777")
++        finally:
++            userbot_module._current_pacing_turn.reset(second_token)
++
++        await adapter.stop_typing("-100777")
++        assert client.active_actions == {(-100777, "typing")}
++    finally:
++        userbot_module._current_pacing_turn.reset(first_token)
++
++    await adapter.stop_typing("-100777")
++    assert client.active_actions == set()
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_cancelling_send_during_pacing_stops_owned_typing_action():
++    from plugins.platforms.telegram_userbot import adapter as userbot_module
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "human_pacing_enabled": True,
++                "typing_delay_min_ms": 10000,
++                "typing_delay_max_ms": 10000,
++                "typing_jitter_ratio": 0,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    turn = userbot_module._PacingTurn(chat_id="-100777", sender_id="123")
++    turn.thinking_until = asyncio.get_running_loop().time()
++    turn.typing_started_at = asyncio.get_running_loop().time()
++
++    token = userbot_module._current_pacing_turn.set(turn)
++    try:
++        await adapter.send_typing("-100777")
++        send_task = asyncio.create_task(adapter.send("-100777", "delayed response"))
++        await asyncio.sleep(0)
++        send_task.cancel()
++        with pytest.raises(asyncio.CancelledError):
++            await send_task
++        assert client.active_actions == set()
++        assert adapter._typing_tasks == {}
++    finally:
++        userbot_module._current_pacing_turn.reset(token)
++
++    await adapter.disconnect()
++
++
++def test_human_pacing_uses_configured_typing_jitter_ratio():
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"typing_jitter_ratio": 0.05},
++        )
++    )
++
++    assert adapter.typing_jitter_ratio == pytest.approx(0.05)
++
++
++@pytest.mark.parametrize("value", [-0.1, 1.1, "invalid"])
++def test_human_pacing_rejects_invalid_typing_jitter_ratio(value):
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"typing_jitter_ratio": value})
++    )
++
++    assert adapter.typing_jitter_ratio == pytest.approx(0.15)
++
++
++def test_session_lock_prevents_two_clients_for_same_file_session(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    cfg = PlatformConfig(
++        enabled=True,
++        extra={
++            "work_dir": str(tmp_path),
++            "session_name": "main",
++        },
++    )
++    first = TelegramUserbotAdapter(cfg)
++    second = TelegramUserbotAdapter(cfg)
++
++    first._acquire_session_lock()
++    try:
++        with pytest.raises(RuntimeError, match="already locked"):
++            second._acquire_session_lock()
++    finally:
++        first._release_session_lock()
++
++    second._acquire_session_lock()
++    second._release_session_lock()
++
++
++@pytest.mark.asyncio
++async def test_send_document_uses_mtproto_file_delivery(tmp_path):
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    document = tmp_path / "report.txt"
++    document.write_text("report")
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True)
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++
++    result = await adapter.send_document(
++        "-100777",
++        str(document),
++        caption="Report",
++        reply_to="55",
++    )
++
++    assert result.success is True
++    assert result.message_id == "444"
++    assert client.sent_files == [
++        {
++            "entity": -100777,
++            "file": str(document),
++            "caption": "Report",
++            "reply_to": 55,
++        }
++    ]
++
++
++@pytest.mark.asyncio
++async def test_inbound_media_is_downloaded_profile_locally_before_dispatch(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    cfg = PlatformConfig(
++        enabled=True,
++        extra={
++            "allowed_users": ["123"],
++            "work_dir": str(tmp_path),
++            "download_media": True,
++        },
++    )
++    adapter = TelegramUserbotAdapter(cfg)
++    client = FakeTelegramClient()
++    adapter._client = client
++    message = FakeTelegramMessage(text="")
++    message.media = object()
++    message.document = SimpleNamespace(mime_type="audio/ogg", size=5)
++    raw = FakeNewMessageEvent(message)
++    dispatched = []
++
++    async def capture(event):
++        dispatched.append(event)
++
++    adapter.handle_message = capture
++
++    await adapter._handle_new_message(raw)
++
++    assert len(dispatched) == 1
++    event = dispatched[0]
++    assert event.message_type.value == "audio"
++    assert event.media_types == ["audio/ogg"]
++    assert len(event.media_urls) == 1
++    downloaded = Path(event.media_urls[0])
++    assert downloaded.parent == tmp_path / "media"
++    assert downloaded.suffix in {".oga", ".ogg"}
++    assert downloaded.read_bytes() == b"voice"
++    assert client.iterated_media == [message.media]
++    assert client.downloaded_to == []
++
++
++def install_fake_telethon(monkeypatch) -> None:
++    events_module = ModuleType("telethon.events")
++    setattr(events_module, "NewMessage", lambda **kwargs: object())
++    telethon_module = ModuleType("telethon")
++    setattr(telethon_module, "events", events_module)
++    monkeypatch.setitem(sys.modules, "telethon", telethon_module)
++    monkeypatch.setitem(sys.modules, "telethon.events", events_module)
++
++
++class FakeLifecycleClient:
++    def __init__(self, *, fail_get_me: bool = False) -> None:
++        self.fail_get_me = fail_get_me
++        self.disconnected = False
++        self.handlers = []
++
++    def add_event_handler(self, callback, event):
++        self.handlers.append((callback, event))
++
++    async def start(self, **kwargs):
++        return self
++
++    async def get_me(self):
++        if self.fail_get_me:
++            raise RuntimeError("get_me failed")
++        return SimpleNamespace(id=999)
++
++    async def run_until_disconnected(self):
++        return None
++
++    async def disconnect(self):
++        self.disconnected = True
++
++
++class BlockingLifecycleClient(FakeLifecycleClient):
++    def __init__(self) -> None:
++        super().__init__()
++        self.run_entered = asyncio.Event()
++        self.stopped = asyncio.Event()
++
++    async def run_until_disconnected(self):
++        self.run_entered.set()
++        await self.stopped.wait()
++
++    async def disconnect(self):
++        self.disconnected = True
++        self.stopped.set()
++
++
++class SlowDisconnectLifecycleClient(BlockingLifecycleClient):
++    def __init__(self) -> None:
++        super().__init__()
++        self.disconnect_entered = asyncio.Event()
++        self.release_disconnect = asyncio.Event()
++
++    async def disconnect(self):
++        self.disconnect_entered.set()
++        await self.release_disconnect.wait()
++        self.disconnected = True
++        self.stopped.set()
++
++
++class FutureDisconnectLifecycleClient(BlockingLifecycleClient):
++    def disconnect(self):  # type: ignore[override]
++        self.disconnected = True
++        self.stopped.set()
++        future = asyncio.get_running_loop().create_future()
++        future.set_result(None)
++        return future
++
++
++@pytest.mark.asyncio
++async def test_disconnect_accepts_future_returned_by_telethon(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    client = FutureDisconnectLifecycleClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++
++    assert await adapter.connect() is True
++    await adapter.disconnect()
++
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++
++
++@pytest.mark.asyncio
++async def test_connect_waits_for_unexpected_run_loop_teardown(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    first = SlowDisconnectLifecycleClient()
++    second = BlockingLifecycleClient()
++    clients = [first, second]
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: clients.pop(0)
++
++    assert await adapter.connect() is True
++    first.stopped.set()
++    await asyncio.wait_for(first.disconnect_entered.wait(), timeout=1)
++
++    reconnect = asyncio.create_task(adapter.connect())
++    await asyncio.sleep(0)
++    assert reconnect.done() is False
++
++    first.release_disconnect.set()
++    assert await asyncio.wait_for(reconnect, timeout=1) is True
++    assert adapter._client is second
++    assert adapter._running is True
++    assert len(second.handlers) == 1
++
++    await adapter.disconnect()
++
++
++class FailGetMeSlowDisconnectClient(SlowDisconnectLifecycleClient):
++    async def get_me(self):
++        raise RuntimeError("get_me failed")
++
++
++@pytest.mark.asyncio
++async def test_repeated_cancellation_of_normal_error_cleanup_is_fail_safe(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    client = FailGetMeSlowDisconnectClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++
++    connect_task = asyncio.create_task(adapter.connect())
++    await asyncio.wait_for(client.disconnect_entered.wait(), timeout=1)
++    connect_task.cancel()
++    await asyncio.sleep(0)
++    connect_task.cancel()
++    await asyncio.sleep(0)
++    completed_before_release = connect_task.done()
++
++    client.release_disconnect.set()
++    result = await asyncio.gather(connect_task, return_exceptions=True)
++
++    assert completed_before_release is False
++    assert isinstance(result[0], asyncio.CancelledError)
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++
++
++@pytest.mark.asyncio
++async def test_repeated_cancellation_of_run_loop_teardown_keeps_barrier_closed(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    client = SlowDisconnectLifecycleClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++    assert await adapter.connect() is True
++    client_task = adapter._client_task
++    assert client_task is not None
++    await asyncio.wait_for(client.run_entered.wait(), timeout=1)
++
++    client_task.cancel()
++    await asyncio.wait_for(client.disconnect_entered.wait(), timeout=1)
++    client_task.cancel()
++    await asyncio.sleep(0)
++    client_task.cancel()
++    await asyncio.sleep(0)
++    completed_before_release = client_task.done()
++    barrier_open_before_release = adapter._teardown_complete.is_set()
++    lock_released_before_release = adapter._session_lock_file is None
++
++    client.release_disconnect.set()
++    result = await asyncio.gather(client_task, return_exceptions=True)
++
++    assert completed_before_release is False
++    assert barrier_open_before_release is False
++    assert lock_released_before_release is False
++    assert isinstance(result[0], asyncio.CancelledError)
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++    assert adapter._teardown_complete.is_set() is True
++
++
++@pytest.mark.asyncio
++async def test_repeated_run_loop_cancellation_during_typing_cleanup_is_fail_safe(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+799****0000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
++
++    client = SlowDisconnectLifecycleClient()
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: client
++    assert await adapter.connect() is True
++    client_task = adapter._client_task
++    assert client_task is not None
++    await asyncio.wait_for(client.run_entered.wait(), timeout=1)
++
++    typing_cancelled = asyncio.Event()
++    release_typing = asyncio.Event()
++
++    async def slow_typing_cleanup():
++        try:
++            await asyncio.Event().wait()
++        except asyncio.CancelledError:
++            typing_cancelled.set()
++            await release_typing.wait()
++
++    typing_task = asyncio.create_task(slow_typing_cleanup())
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
++
++    client_task.cancel()
++    await asyncio.wait_for(typing_cancelled.wait(), timeout=1)
++    client_task.cancel()
++    await asyncio.sleep(0)
++    client_task.cancel()
++    await asyncio.sleep(0)
++
++    assert client_task.done() is False
++    assert adapter._teardown_complete.is_set() is False
++    assert adapter._session_lock_file is not None
++    assert client.disconnect_entered.is_set() is False
++
++    release_typing.set()
++    await asyncio.wait_for(client.disconnect_entered.wait(), timeout=1)
++    client.release_disconnect.set()
++    result = await asyncio.gather(client_task, return_exceptions=True)
++
++    assert isinstance(result[0], asyncio.CancelledError)
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++    assert adapter._teardown_complete.is_set() is True
++
++
++@pytest.mark.asyncio
++async def test_disconnect_cancellation_during_typing_cleanup_is_fail_safe(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
++
++    first = BlockingLifecycleClient()
++    second = BlockingLifecycleClient()
++    clients = [first, second]
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: clients.pop(0)
++    assert await adapter.connect() is True
++
++    typing_cancelled = asyncio.Event()
++    release_typing = asyncio.Event()
++
++    async def slow_typing_cleanup():
++        try:
++            await asyncio.Event().wait()
++        except asyncio.CancelledError:
++            typing_cancelled.set()
++            await release_typing.wait()
++
++    typing_task = asyncio.create_task(slow_typing_cleanup())
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
++
++    disconnect_task = asyncio.create_task(adapter.disconnect())
++    await asyncio.wait_for(typing_cancelled.wait(), timeout=1)
++    disconnect_task.cancel()
++    await asyncio.sleep(0)
++    disconnect_task.cancel()
++    await asyncio.sleep(0)
++    completed_before_release = disconnect_task.done()
++
++    release_typing.set()
++    result = await asyncio.gather(disconnect_task, return_exceptions=True)
++    observed = (
++        first.disconnected,
++        adapter._client,
++        adapter._client_task,
++        adapter._session_lock_file,
++        adapter._running,
++    )
++    if observed[1] is not None or observed[3] is not None:
++        await adapter.disconnect()
++
++    assert completed_before_release is False
++    assert isinstance(result[0], asyncio.CancelledError)
++    assert observed == (True, None, None, None, False)
++
++    assert await adapter.connect() is True
++    assert adapter._client is second
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_disconnect_cancellation_finishes_cleanup_before_unlock(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    client = SlowDisconnectLifecycleClient()
++    adapter._build_client = lambda: client
++    assert await adapter.connect() is True
++
++    disconnect_task = asyncio.create_task(adapter.disconnect())
++    await asyncio.wait_for(client.disconnect_entered.wait(), timeout=1)
++    disconnect_task.cancel()
++    client.release_disconnect.set()
++    with pytest.raises(asyncio.CancelledError):
++        await disconnect_task
++
++    observed = (
++        client.disconnected,
++        adapter._client,
++        adapter._client_task,
++        adapter._session_lock_file,
++        adapter._running,
++    )
++    client.stopped.set()
++    await asyncio.sleep(0)
++    await asyncio.sleep(0)
++
++    assert observed == (True, None, None, None, False)
++
++
++class GateStartLifecycleClient(BlockingLifecycleClient):
++    def __init__(self) -> None:
++        super().__init__()
++        self.start_calls = 0
++        self.start_entered = asyncio.Event()
++        self.release_start = asyncio.Event()
++
++    async def start(self, **kwargs):
++        self.start_calls += 1
++        self.start_entered.set()
++        await self.release_start.wait()
++        return self
++
++
++@pytest.mark.asyncio
++async def test_connect_cancellation_cleans_client_and_session_lock(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    client = GateStartLifecycleClient()
++    adapter._build_client = lambda: client
++
++    connect_task = asyncio.create_task(adapter.connect())
++    await asyncio.wait_for(client.start_entered.wait(), timeout=1)
++    connect_task.cancel()
++    with pytest.raises(asyncio.CancelledError):
++        await connect_task
++
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++
++
++@pytest.mark.asyncio
++async def test_repeated_connect_cancellation_finishes_cleanup_before_reconnect(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        _TypingAction,
++    )
++
++    first = GateStartLifecycleClient()
++    second = BlockingLifecycleClient()
++    clients = [first, second]
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: clients.pop(0)
++
++    typing_cancelled = asyncio.Event()
++    release_typing = asyncio.Event()
++
++    async def slow_typing_cleanup():
++        try:
++            await asyncio.Event().wait()
++        except asyncio.CancelledError:
++            typing_cancelled.set()
++            await release_typing.wait()
++
++    typing_task = asyncio.create_task(slow_typing_cleanup())
++    adapter._typing_tasks["chat"] = _TypingAction(owner=None, task=typing_task)
++
++    connect_task = asyncio.create_task(adapter.connect())
++    await asyncio.wait_for(first.start_entered.wait(), timeout=1)
++    connect_task.cancel()
++    await asyncio.wait_for(typing_cancelled.wait(), timeout=1)
++    connect_task.cancel()
++    await asyncio.sleep(0)
++
++    reconnect_task = asyncio.create_task(adapter.connect())
++    await asyncio.sleep(0)
++    completed_before_release = connect_task.done()
++    reconnect_started_before_release = reconnect_task.done()
++
++    release_typing.set()
++    first_result = await asyncio.gather(connect_task, return_exceptions=True)
++    assert await asyncio.wait_for(reconnect_task, timeout=1) is True
++    await asyncio.sleep(0)
++    await asyncio.sleep(0)
++
++    assert completed_before_release is False
++    assert reconnect_started_before_release is False
++    assert isinstance(first_result[0], asyncio.CancelledError)
++    assert first.disconnected is True
++    assert adapter._client is second
++    assert adapter._running is True
++    assert adapter._session_lock_file is not None
++    assert second.disconnected is False
++
++    await adapter.disconnect()
++
++
++@pytest.mark.asyncio
++async def test_parallel_connect_calls_are_serialized(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    client = GateStartLifecycleClient()
++    adapter._build_client = lambda: client
++
++    first = asyncio.create_task(adapter.connect())
++    await asyncio.wait_for(client.start_entered.wait(), timeout=1)
++    second = asyncio.create_task(adapter.connect())
++    await asyncio.sleep(0)
++    observed_start_calls = client.start_calls
++    client.release_start.set()
++
++    results = await asyncio.gather(first, second)
++    observed_handler_count = len(client.handlers)
++    await adapter.disconnect()
++
++    assert results == [True, True]
++    assert observed_start_calls == 1
++    assert client.start_calls == 1
++    assert observed_handler_count == 1
++
++
++@pytest.mark.asyncio
++async def test_successful_connect_disconnect_and_reconnect_use_fresh_clients(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    clients = [BlockingLifecycleClient(), BlockingLifecycleClient()]
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"work_dir": str(tmp_path)})
++    )
++    adapter._build_client = lambda: clients.pop(0)
++
++    assert await adapter.connect() is True
++    first = adapter._client
++    assert first is not None
++    assert len(first.handlers) == 1
++    assert adapter._running is True
++    assert adapter._session_lock_file is not None
++    assert (adapter.session_path.parent.stat().st_mode & 0o777) == 0o700
++    lock_path = adapter.session_path.with_suffix(".session.lock")
++    assert (lock_path.stat().st_mode & 0o777) == 0o600
++
++    await adapter.disconnect()
++    assert first.disconnected is True
++    assert adapter._running is False
++    assert adapter._session_lock_file is None
++
++    assert await adapter.connect() is True
++    second = adapter._client
++    assert second is not None and second is not first
++    assert len(second.handlers) == 1
++    await adapter.disconnect()
++    assert second.disconnected is True
++
++
++@pytest.mark.asyncio
++async def test_partial_connect_failure_disconnects_client_and_releases_lock(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "work_dir": str(tmp_path),
++            },
++        )
++    )
++    client = FakeLifecycleClient(fail_get_me=True)
++    monkeypatch.setattr(adapter, "_build_client", lambda: client)
++
++    assert await adapter.connect() is False
++    assert client.disconnected is True
++    assert adapter._client is None
++    assert adapter._session_lock_file is None
++    assert adapter._running is False
++
++
++@pytest.mark.asyncio
++async def test_unexpected_client_loop_exit_clears_connected_state_and_lock(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_ID", "123")
++    monkeypatch.setenv("TELEGRAM_USERBOT_API_HASH", "hash")
++    monkeypatch.setenv("TELEGRAM_USERBOT_PHONE", "+79990000000")
++    install_fake_telethon(monkeypatch)
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "work_dir": str(tmp_path),
++            },
++        )
++    )
++    client = FakeLifecycleClient()
++    monkeypatch.setattr(adapter, "_build_client", lambda: client)
++
++    assert await adapter.connect() is True
++    for _ in range(20):
++        if adapter._client_task is None:
++            break
++        await asyncio.sleep(0)
++
++    assert adapter._running is False
++    assert adapter._client is None
++    assert adapter._client_task is None
++    assert adapter._session_lock_file is None
++    assert client.disconnected is True
++
++
++def test_session_lock_rejects_profile_escape_symlinks(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    work_dir = tmp_path / "telegram_userbot"
++    work_dir.mkdir()
++    outside = tmp_path / "outside"
++    outside.write_text("unchanged")
++    adapter = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++
++    adapter.session_path.symlink_to(outside)
++    with pytest.raises(RuntimeError, match="symlink"):
++        adapter._acquire_session_lock()
++    adapter.session_path.unlink()
++
++    lock_path = adapter.session_path.with_suffix(".session.lock")
++    lock_path.symlink_to(outside)
++    with pytest.raises(RuntimeError, match="symlink"):
++        adapter._acquire_session_lock()
++    assert outside.read_text() == "unchanged"
++
++
++@pytest.mark.asyncio
++async def test_media_cache_symlink_outside_profile_is_rejected(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={"allowed_users": ["123"], "download_media": True},
++        )
++    )
++    work_dir = Path(adapter.work_dir)
++    work_dir.mkdir(parents=True, exist_ok=True)
++    outside = tmp_path / "outside-media"
++    outside.mkdir()
++    (work_dir / "media").symlink_to(outside, target_is_directory=True)
++    client = FakeTelegramClient()
++    adapter._client = client
++    message = FakeTelegramMessage(text="")
++    message.media = object()
++    message.document = SimpleNamespace(mime_type="audio/ogg", size=5)
++    dispatched = []
++
++    async def capture(event):
++        dispatched.append(event)
++
++    adapter.handle_message = capture
++    await adapter._handle_new_message(FakeNewMessageEvent(message))
++
++    assert len(dispatched) == 1
++    assert dispatched[0].media_urls == []
++    assert client.downloaded_to == []
++    assert list(outside.iterdir()) == []
++
++
++@pytest.mark.parametrize("session_name", ["../escape", "/tmp/escape", "a/b"])
++def test_session_name_cannot_escape_profile_root(tmp_path, monkeypatch, session_name):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        validate_telegram_userbot_config,
++    )
++
++    config = PlatformConfig(enabled=True, extra={"session_name": session_name})
++    assert validate_telegram_userbot_config(config) is False
++    with pytest.raises(ValueError, match="session_name"):
++        TelegramUserbotAdapter(config)
++
++
++def test_work_dir_cannot_escape_profile_root(tmp_path, monkeypatch):
++    profile_root = tmp_path / "profile"
++    outside = tmp_path / "outside"
++    monkeypatch.setenv("HERMES_HOME", str(profile_root))
++    from plugins.platforms.telegram_userbot.adapter import (
++        TelegramUserbotAdapter,
++        validate_telegram_userbot_config,
++    )
++
++    config = PlatformConfig(enabled=True, extra={"work_dir": str(outside)})
++    assert validate_telegram_userbot_config(config) is False
++    with pytest.raises(ValueError, match="work_dir"):
++        TelegramUserbotAdapter(config)
++
++
++def test_adapter_declares_that_it_splits_long_messages(monkeypatch, tmp_path):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    assert TelegramUserbotAdapter.splits_long_messages is True
++
++
++def test_empty_allowlists_deny_and_allowed_chat_accepts_any_participant(
++    monkeypatch, tmp_path
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    denied = TelegramUserbotAdapter(PlatformConfig(enabled=True))
++    raw = FakeNewMessageEvent(FakeTelegramMessage(sender_id=999))
++    assert denied._message_to_event(raw) is None
++
++    allowed_chat = TelegramUserbotAdapter(
++        PlatformConfig(enabled=True, extra={"allowed_chats": ["-100777"]})
++    )
++    assert allowed_chat._message_to_event(raw) is not None
++
++
++@pytest.mark.asyncio
++async def test_concurrent_media_downloads_cannot_oversubscribe_cache(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    class ConcurrentDownloadClient(FakeTelegramClient):
++        def __init__(self):
++            super().__init__()
++            self.started = 0
++            self.gate = asyncio.Event()
++
++        async def download_media(self, message, *, file):
++            self.started += 1
++            if self.started == 2:
++                self.gate.set()
++            await self.gate.wait()
++            path = Path(file) / f"voice-{self.started}.ogg"
++            path.write_bytes(b"12345678")
++            return str(path)
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allowed_users": ["123"],
++                "download_media": True,
++                "max_media_bytes": 10,
++                "max_media_cache_bytes": 10,
++                "max_media_cache_files": 1,
++            },
++        )
++    )
++    client = ConcurrentDownloadClient()
++    adapter._client = client
++    dispatched = []
++
++    async def capture(event):
++        dispatched.append(event)
++
++    adapter.handle_message = capture
++    messages = []
++    for message_id in (41, 42):
++        message = FakeTelegramMessage(text="")
++        message.id = message_id
++        message.media = object()
++        message.document = SimpleNamespace(mime_type="audio/ogg", size=5)
++        messages.append(message)
++
++    await asyncio.gather(
++        *(adapter._handle_new_message(FakeNewMessageEvent(msg)) for msg in messages)
++    )
++
++    media_dir = Path(adapter.work_dir) / "media"
++    files = [path for path in media_dir.iterdir() if path.is_file()]
++    assert len(files) <= 1
++    assert sum(path.stat().st_size for path in files) <= 10
++    assert sum(len(event.media_urls) for event in dispatched) <= 1
++
++
++@pytest.mark.asyncio
++async def test_actual_media_bytes_cannot_exceed_underreported_metadata(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allowed_users": ["123"],
++                "download_media": True,
++                "max_media_bytes": 10,
++                "max_media_cache_bytes": 100,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    client.download_content = b"12345678901"
++    adapter._client = client
++    message = FakeTelegramMessage(text="")
++    message.media = object()
++    message.document = SimpleNamespace(mime_type="audio/ogg", size=5)
++    dispatched = []
++
++    async def capture(event):
++        dispatched.append(event)
++
++    adapter.handle_message = capture
++    await adapter._handle_new_message(FakeNewMessageEvent(message))
++
++    assert len(dispatched) == 1
++    assert dispatched[0].media_urls == []
++    media_dir = Path(adapter.work_dir) / "media"
++    assert list(media_dir.iterdir()) == []
++
++
++@pytest.mark.asyncio
++async def test_oversized_inbound_media_is_rejected_before_download(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "allowed_users": ["123"],
++                "download_media": True,
++                "max_media_bytes": 10,
++                "max_media_cache_bytes": 100,
++            },
++        )
++    )
++    client = FakeTelegramClient()
++    adapter._client = client
++    message = FakeTelegramMessage(text="")
++    message.media = object()
++    message.document = SimpleNamespace(mime_type="audio/ogg", size=11)
++    dispatched = []
++
++    async def capture(event):
++        dispatched.append(event)
++
++    adapter.handle_message = capture
++    await adapter._handle_new_message(FakeNewMessageEvent(message))
++
++    assert len(dispatched) == 1
++    assert dispatched[0].media_urls == []
++    assert client.downloaded_to == []
