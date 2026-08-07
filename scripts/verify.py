@@ -21,6 +21,7 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'manifests/upstream-v2026.7.1.yaml',
         repo_root / 'manifests/upstream-v2026.7.7.2.yaml',
         repo_root / 'manifests/upstream-v2026.7.20.yaml',
+        repo_root / 'manifests/upstream-v2026.8.3.yaml',
         repo_root / 'profiles/minimal.yaml',
         repo_root / 'profiles/v2026.4.30-upstream-fixes.yaml',
         repo_root / 'profiles/v2026.4.30-personal.yaml',
@@ -46,6 +47,9 @@ def verify_self(repo_root: Path) -> None:
         repo_root / 'profiles/v2026.7.20-upstream-fixes.yaml',
         repo_root / 'profiles/v2026.7.20-personal.yaml',
         repo_root / 'profiles/v2026.7.20-with-telegram-userbot.yaml',
+        repo_root / 'profiles/v2026.8.3-upstream-fixes.yaml',
+        repo_root / 'profiles/v2026.8.3-personal.yaml',
+        repo_root / 'profiles/v2026.8.3-with-telegram-userbot.yaml',
         repo_root / 'scripts/apply.py',
         repo_root / 'scripts/migrate_profile_config.py',
         repo_root / 'scripts/install_operator_policy.py',
@@ -68,6 +72,7 @@ def verify_self(repo_root: Path) -> None:
     load_manifest(repo_root / 'manifests/upstream-v2026.7.1.yaml')
     load_manifest(repo_root / 'manifests/upstream-v2026.7.7.2.yaml')
     load_manifest(repo_root / 'manifests/upstream-v2026.7.20.yaml')
+    load_manifest(repo_root / 'manifests/upstream-v2026.8.3.yaml')
     load_profile(repo_root / 'profiles/minimal.yaml')
     load_profile(repo_root / 'profiles/personal.yaml')
     load_profile(repo_root / 'profiles/full.yaml')
@@ -95,6 +100,9 @@ def verify_self(repo_root: Path) -> None:
     load_profile(repo_root / 'profiles/v2026.7.20-upstream-fixes.yaml')
     load_profile(repo_root / 'profiles/v2026.7.20-personal.yaml')
     load_profile(repo_root / 'profiles/v2026.7.20-with-telegram-userbot.yaml')
+    load_profile(repo_root / 'profiles/v2026.8.3-upstream-fixes.yaml')
+    load_profile(repo_root / 'profiles/v2026.8.3-personal.yaml')
+    load_profile(repo_root / 'profiles/v2026.8.3-with-telegram-userbot.yaml')
 
     for script in (repo_root / 'scripts').glob('*.py'):
         py_compile.compile(str(script), doraise=True)

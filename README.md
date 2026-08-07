@@ -7,7 +7,7 @@ You patched Hermes. Upstream moved. Now what?
 Hermes PatchKit checks your local Hermes fixes against a fresh upstream checkout before it touches your live install.
 It tells you which patches still apply, which ones look already upstreamed, and which ones need refresh.
 
-Latest news: PatchKit is re-anchored to Hermes Agent `v2026.7.20` / `0.19.0`. The current personal profile carries the active v0.19 overlay only: shared root auth, narrowed credential-pool recovery, the remaining Telegram first-chunk flood-control duplicate guard, MAX Bot API, MAX userbot, and Telegram MTProto userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity, and the VibeMode provider plugin with the Hermes User-Agent plus provider-scoped `X-Stainless-*` filtering required by VibeMode's OpenAI-wire endpoints. The broader Telegram rich/gating work, SMTP_SSL, document media types, API-server fallback-model kwargs, and the old Home Assistant config URL overlay are retired where upstream v0.19 now covers them. See [NEWS.md](NEWS.md).
+Latest news: PatchKit is re-anchored to Hermes Agent `v2026.8.3` / `0.20.0`. The current personal profile carries the active v0.20 overlay only: shared root auth, narrowed credential-pool recovery, the remaining Telegram first-chunk flood-control duplicate guard, MAX Bot API, MAX userbot, and Telegram MTProto userbot plugins, provider proxy / Codex Responses proxy, configured WebSocket LSP, provider-plugin model switching, explicit media delivery safety, gateway auto-reset continuity, and the VibeMode provider plugin with the Hermes User-Agent plus provider-scoped `X-Stainless-*` filtering required by VibeMode's OpenAI-wire endpoints. The broader Telegram rich/gating work, SMTP_SSL, document media types, API-server fallback-model kwargs, and the old Home Assistant config URL overlay are retired where upstream v0.20 now covers them. See [NEWS.md](NEWS.md).
 
 ## Featured patch: Provider Proxy Gateway
 
@@ -22,8 +22,8 @@ If you want a local Hermes-hosted endpoint that can front multiple provider mode
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-personal.yaml \
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-personal.yaml \
   --yes
 ```
 
@@ -32,8 +32,8 @@ python3 scripts/apply.py \
 ```bash
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-upstream-fixes.yaml
 ```
 
 Headless mode for CI/scripts:
@@ -41,8 +41,8 @@ Headless mode for CI/scripts:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-upstream-fixes.yaml
 ```
 
 The default update check is safe: it fetches upstream metadata, clones the upstream candidate into `/tmp`, checks the selected patch set there, and writes a report under `reports/`. It does not apply patches or merge upstream into your live checkout.
@@ -98,7 +98,7 @@ This repository is still early, but it now has a working safety loop:
 
 Recent patch highlights:
 
-- `v2026.7.20` / Hermes 0.19.0 re-anchor — active overlays are pinned to the official release tag; `079` adds the separate experimental Telegram MTProto userbot plugin.
+- `v2026.8.3` / Hermes 0.20.0 re-anchor — active overlays are pinned to the official release tag; `079` adds the separate experimental Telegram MTProto userbot plugin.
 - `080-api-server-provider-proxy` — the featured provider gateway patch described above. It turns Hermes API Server into an opt-in OpenAI-compatible proxy over an explicit provider/model catalog, without running the Hermes agent layer for those calls. The IDE path covers streaming, tool calls, inline images, RooCode `reasoning_effort`, and Codex sampling-parameter filtering.
 - `070-max-platform-plugin` — the release-pinned MAX platform plugin overlay: webhook/polling, native media/files, Markdown, typing indicators, inline approval buttons, and compact edit-in-place tool progress without raw non-verbose command previews.
 - `078-max-userbot-platform-plugin` — a separate experimental MAX userbot plugin through MaxApiTeam/PyMax (`maxapi-python`) for user-account access, with profile-local sessions, session locking, allowlists, replies/edits, media mapping, file delivery, and approval payloads.
@@ -114,8 +114,8 @@ python3 scripts/verify.py --self-check
 
 python3 scripts/tui.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-upstream-fixes.yaml
 ```
 
 If you prefer non-interactive output:
@@ -123,8 +123,8 @@ If you prefer non-interactive output:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-upstream-fixes.yaml
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-upstream-fixes.yaml
 ```
 
 For a single patch:
@@ -132,8 +132,8 @@ For a single patch:
 ```bash
 python3 scripts/update.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --patch personal-overlay-v2026.7.20
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --patch personal-overlay-v2026.8.3
 ```
 
 ## Patch status meanings

@@ -19,6 +19,8 @@ RELEASE_2026_7_7_2_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.7.7.2.ya
 RELEASE_2026_7_7_2_PATCH_DIR = REPO_ROOT / "patches" / "v2026.7.7.2"
 RELEASE_2026_7_20_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.7.20.yaml"
 RELEASE_2026_7_20_PATCH_DIR = REPO_ROOT / "patches" / "v2026.7.20"
+RELEASE_2026_8_3_MANIFEST = REPO_ROOT / "manifests" / "upstream-v2026.8.3.yaml"
+RELEASE_2026_8_3_PATCH_DIR = REPO_ROOT / "patches" / "v2026.8.3"
 PATCH_FILE = REPO_ROOT / "patches" / "030-credential-pool-recovery.patch"
 TELEGRAM_TARGET_GATING_PATCH = REPO_ROOT / "patches" / "040-telegram-free-response-target-gating.patch"
 RELEASE_2026_4_30_PATCH_DIR = REPO_ROOT / "patches" / "v2026.4.30"
@@ -41,6 +43,59 @@ GROK2API_COMPOSE = REPO_ROOT / "examples" / "sidecars" / "grok2api" / "docker-co
 
 
 class PatchCatalogTests(unittest.TestCase):
+
+    def test_v2026_8_3_manifest_is_pinned_and_reanchored(self):
+        manifest = json.loads(RELEASE_2026_8_3_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["upstream"]["ref"], "v2026.8.3")
+        self.assertEqual(
+            manifest["upstream"]["commit"],
+            "3c27eb6234bf91b8ceee9e9071591b31e9b148cb",
+        )
+        ids = [patch["id"] for patch in manifest["patches"]]
+        self.assertEqual(
+            ids,
+            [
+                "personal-overlay-v2026.8.3",
+                "relay-optional-noop-v2026.8.3",
+                "telegram-userbot-platform-plugin",
+            ],
+        )
+        for entry in manifest["patches"]:
+            self.assertEqual(entry["base_upstream"], manifest["upstream"]["commit"])
+            self.assertEqual(entry["refreshed_for"], "v2026.8.3")
+            self.assertTrue(entry["file"].startswith("patches/v2026.8.3/"))
+            patch_text = (REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+            self.assertIn("diff --git", patch_text)
+            self.assertNotIn("PLACEHOLDER PATCH", patch_text)
+
+        personal_patch = (RELEASE_2026_8_3_PATCH_DIR / "010-personal-overlay.patch").read_text(encoding="utf-8")
+        userbot_patch = (RELEASE_2026_8_3_PATCH_DIR / "079-telegram-userbot-platform-plugin.patch").read_text(encoding="utf-8")
+        relay_patch = (RELEASE_2026_8_3_PATCH_DIR / "081-relay-optional-noop.patch").read_text(encoding="utf-8")
+        self.assertIn("gateway/api_server_provider_proxy.py", personal_patch)
+        self.assertIn("plugins/model-providers/vibemode", personal_patch)
+        self.assertNotIn("plugins/platforms/telegram_userbot", personal_patch)
+        self.assertIn("plugins/platforms/telegram_userbot/adapter.py", userbot_patch)
+        self.assertIn("agent/relay_runtime.py", relay_patch)
+
+        personal_profile = json.loads(
+            (REPO_ROOT / "profiles" / "v2026.8.3-personal.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            personal_profile["patches"],
+            ["personal-overlay-v2026.8.3", "relay-optional-noop-v2026.8.3"],
+        )
+        userbot_profile = json.loads(
+            (REPO_ROOT / "profiles" / "v2026.8.3-with-telegram-userbot.yaml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            userbot_profile["patches"],
+            [
+                "personal-overlay-v2026.8.3",
+                "relay-optional-noop-v2026.8.3",
+                "telegram-userbot-platform-plugin",
+            ],
+        )
 
     def test_v2026_7_20_manifest_is_pinned_and_splits_telegram_userbot(self):
         manifest = json.loads(RELEASE_2026_7_20_MANIFEST.read_text(encoding="utf-8"))

@@ -1,0 +1,7 @@
+{
+  "name": "v2026.8.3-personal",
+  "patches": [
+    "personal-overlay-v2026.8.3",
+    "relay-optional-noop-v2026.8.3"
+  ]
+}

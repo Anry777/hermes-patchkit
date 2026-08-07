@@ -1,5 +1,23 @@
 # News
 
+## 2026-08-07 — Hermes 0.20 re-anchor
+
+PatchKit is refreshed against official Hermes Agent `v2026.8.3` / `0.20.0`. The new release manifest is `manifests/upstream-v2026.8.3.yaml`; release patch files live under `patches/v2026.8.3/`.
+
+The re-anchor was done with a three-way transplant from the v0.19.1 runtime onto the clean v0.20.0 tag. The active local units remain separate: the personal overlay, the optional NeMo Relay no-op fallback, and the opt-in Telegram MTProto userbot plugin. No active unit was dropped: each still produces a non-empty local diff and passes its focused regression coverage. Historical v0.19 manifests and patches remain available for rollback and audit.
+
+---
+
+# Новости
+
+## 2026-08-07 — Re-anchor на Hermes 0.20
+
+PatchKit refresh'нут against official Hermes Agent `v2026.8.3` / `0.20.0`. Новый release manifest: `manifests/upstream-v2026.8.3.yaml`; release patch files лежат в `patches/v2026.8.3/`.
+
+Re-anchor выполнен через three-way transplant с v0.19.1 runtime на чистый tag v0.20.0. Активные local units остаются отдельными: personal overlay, optional NeMo Relay no-op fallback и opt-in Telegram MTProto userbot plugin. Ни один active unit не удалён: каждый по-прежнему даёт непустой local diff и проходит focused regression coverage. Исторические v0.19 manifests и patches сохранены для rollback и аудита.
+
+---
+
 ## 2026-07-22 — Hermes 0.19 re-anchor
 
 PatchKit is refreshed against official Hermes Agent `v2026.7.20` / `0.19.0`. The active release manifest is `manifests/upstream-v2026.7.20.yaml`; release patch files live under `patches/v2026.7.20/`.

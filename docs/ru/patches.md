@@ -4,7 +4,7 @@
 
 Совместимость не статична. Перед применением запускай `scripts/update.py` или `scripts/tui.py` against нужного Hermes checkout.
 
-Текущий релизный якорь: `manifests/upstream-v2026.7.20.yaml`. Release-specific patch files лежат в `patches/v2026.7.20/` и проверяются против official tag `v2026.7.20` / Hermes Agent `0.19.0` из `NousResearch/hermes-agent`, а не против post-release `main`.
+Текущий релизный якорь: `manifests/upstream-v2026.8.3.yaml`. Release-specific patch files лежат в `patches/v2026.8.3/` и проверяются против official tag `v2026.8.3` / Hermes Agent `0.20.0` из `NousResearch/hermes-agent`, а не против post-release `main`.
 
 ## Доступные patch units
 
@@ -12,8 +12,8 @@
 |---|---|---|---|
 | `010-cli-tui-idle-refresh-fix` | exported | Останавливает idle repaint classic CLI, который тянет terminal viewport. | PatchKit держит default `display.cli_refresh_interval` в `0`; явный profile config всё равно главнее. |
 | `020-auth-profile-root-fallback` | exported | Делает `auth.json` и `auth.lock` root-global, чтобы профили делили provider OAuth state и credential pools. | Config, sessions, skills и logs остаются profile-local. |
-| `030-credential-pool-recovery` | exported | Сохраняет оставшиеся PatchKit safety semantics для credential pool на Hermes v0.19. | Codex aux не обходит exhausted pools через singleton; stale ok+reset markers очищаются; terminal dead credentials не держат retry reset state. Depends on `020`. |
-| `041-telegram-rich-flood-fallback` | exported | Возвращает Telegram duplicate-safety для v0.19 сценария finalize + overflow split + first-chunk flood-control. | Если Telegram flood-limit’ит косметический финальный edit первого chunk, Hermes считает уже видимый streaming prefix partial-overflow delivery и отправляет только недостающий tail вместо duplicate full formatted final answer. |
+| `030-credential-pool-recovery` | exported | Сохраняет оставшиеся PatchKit safety semantics для credential pool на Hermes v0.20. | Codex aux не обходит exhausted pools через singleton; stale ok+reset markers очищаются; terminal dead credentials не держат retry reset state. Depends on `020`. |
+| `041-telegram-rich-flood-fallback` | exported | Возвращает Telegram duplicate-safety для v0.20 сценария finalize + overflow split + first-chunk flood-control. | Если Telegram flood-limit’ит косметический финальный edit первого chunk, Hermes считает уже видимый streaming prefix partial-overflow delivery и отправляет только недостающий tail вместо duplicate full formatted final answer. |
 | `070-max-platform-plugin` | exported | Добавляет MAX messenger как official Hermes platform plugin вместо core gateway patches. | Webhook-first, explicit polling fallback, native media/files/audio, Markdown, typing, progress edits, approval buttons и safe media delivery. |
 | `078-max-userbot-platform-plugin` | exported | Добавляет отдельный experimental `max_userbot` platform plugin на базе MaxApiTeam/PyMax. | Internal/unofficial MAX user-account path; live use требует operator risk acceptance и SMS/QR bootstrap. |
 | `079-telegram-userbot-platform-plugin` | exported | Добавляет отдельный experimental plugin `telegram_userbot` на базе Telethon/MTProto. | User-account path с profile-local locked sessions, deny-by-default allowlists, без bot-style pairing/onboarding и известных Hermes slash-command/internal-error/approval UI, с fail-closed approvals и опциональным длино-зависимым human pacing с исключениями по sender ID; см. [telegram-userbot.md](telegram-userbot.md). |
@@ -61,8 +61,8 @@ Upstream Hermes сегодня не даёт такого разделения p
 ```bash
 python3 scripts/apply.py \
   --repo ~/.hermes/hermes-agent \
-  --manifest manifests/upstream-v2026.7.20.yaml \
-  --profile profiles/v2026.7.20-personal.yaml \
+  --manifest manifests/upstream-v2026.8.3.yaml \
+  --profile profiles/v2026.8.3-personal.yaml \
   --yes
 ```
 

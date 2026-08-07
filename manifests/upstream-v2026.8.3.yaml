@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.8.3",
+    "commit": "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
+  },
+  "notes_en": "PatchKit personal and optional Telegram userbot overlays re-anchored on official Hermes Agent v0.20.0 / v2026.8.3. The refresh keeps only the local behavior still absent from upstream and preserves the userbot and Relay units as separate overlays.",
+  "notes_ru": "Personal и optional Telegram userbot overlay PatchKit переякорены на официальный Hermes Agent v0.20.0 / v2026.8.3. После refresh остаётся только локальное поведение, которого нет в upstream; userbot и Relay сохранены отдельными overlay units.",
+  "patches": [
+    {
+      "id": "personal-overlay-v2026.8.3",
+      "file": "patches/v2026.8.3/010-personal-overlay.patch",
+      "title_en": "Personal Hermes overlay for v2026.8.3",
+      "title_ru": "Personal Hermes overlay для v2026.8.3",
+      "description_en": "Carries the still-needed local semantics on top of upstream v2026.8.3: root-global auth store, narrowed credential-pool safety, the remaining Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins with platform-api2 TLS and scoped MinDigital CA-bundle support, API server provider proxy/Codex Responses proxy with Cloudflare-required Codex headers, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (including Claude Messages-only endpoint routing) with provider-scoped OpenAI SDK metadata filtering, explicit gateway local-file delivery safety, gateway auto-reset context continuity across idle/daily reset parents.",
+      "description_ru": "Переносит нужные локальные semantics поверх upstream v2026.8.3: root-global auth store, суженный credential-pool safety, оставшийся Telegram overflow duplicate guard для first-chunk flood-control, MAX/MAX-userbot plugins со scoped TLS CA bundle для platform-api2.max.ru, API server provider proxy/Codex Responses proxy с обязательными Codex headers для Cloudflare, configurable LSP WebSocket transport, provider-plugin/VibeMode routing metadata (включая Claude Messages-only endpoint routing) с provider-scoped фильтрацией OpenAI SDK metadata, explicit gateway local-file delivery safety, gateway auto-reset context continuity через idle/daily reset parents.",
+      "category": "personal",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "3c27eb6234bf91b8ceee9e9071591b31e9b148cb",
+      "refreshed_for": "v2026.8.3",
+      "absorbs": [
+        "cli-tui-idle-refresh-fix",
+        "auth-profile-root-fallback",
+        "credential-pool-recovery",
+        "telegram-rich-flood-fallback",
+        "max-platform-plugin",
+        "max-userbot-platform-plugin",
+        "api-server-provider-proxy",
+        "lsp-configured-websocket-transport",
+        "provider-plugin-model-switch",
+        "gateway-explicit-media-delivery-safety",
+        "gateway-auto-reset-context-continuity",
+        "vibemode-provider-plugin"
+      ],
+      "verification": {
+        "focused_tests": [
+          "tests/patchkit/test_auth_shared_root.py",
+          "tests/patchkit/test_credential_pool_recovery.py",
+          "tests/gateway/test_api_server_provider_proxy.py",
+          "tests/gateway/test_session_reset_notify.py",
+          "tests/hermes_cli/test_model_switch_custom_providers.py",
+          "tests/hermes_cli/test_vibemode_auth.py",
+          "tests/providers/test_provider_profiles.py",
+          "tests/run_agent/test_vibemode_provider_headers.py",
+          "tests/gateway/test_auto_upload_local_paths.py",
+          "tests/plugins/test_max_platform_plugin.py",
+          "tests/gateway/test_media_download_retry.py",
+          "tests/plugins/test_max_userbot_platform_plugin.py",
+          "tests/gateway/test_telegram_overflow_partial.py"
+        ]
+      },
+      "impact": [
+        "Auth remains root-global by design; profile-local auth.json is not authoritative on this host.",
+        "codex-responses-proxy/provider-proxy remains available for OpenAI-compatible and Responses-native clients.",
+        "VibeMode Claude slugs use the native Anthropic Messages endpoint; its OpenAI-wire requests remove only X-Stainless-* SDK metadata at the final HTTPX boundary; authorization, Hermes User-Agent, payloads, and all other providers remain unchanged.",
+        "MAX overlays remain in the personal overlay but can be split later if MAX should become optional again.",
+        "Telegram overflow handling keeps only the first-chunk flood-control duplicate guard not already covered by upstream v0.20."
+      ]
+    },
+    {
+      "id": "relay-optional-noop-v2026.8.3",
+      "file": "patches/v2026.8.3/081-relay-optional-noop.patch",
+      "title_en": "Quiet no-op fallback when NeMo Relay is unavailable (v2026.8.3)",
+      "title_ru": "Тихий no-op fallback при отсутствии NeMo Relay (v2026.8.3)",
+      "description_en": "Keeps the optional NeMo Relay integration fail-open: a missing nemo-relay binding selects NoopRelayRuntime without a traceback, while missing transitive dependencies remain visible as warnings.",
+      "description_ru": "Сохраняет fail-open для optional NeMo Relay: отсутствие binding nemo-relay выбирает NoopRelayRuntime без traceback, а missing transitive dependencies по-прежнему остаются видимыми как warnings.",
+      "category": "observability",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": [
+        "personal-overlay-v2026.8.3"
+      ],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "3c27eb6234bf91b8ceee9e9071591b31e9b148cb",
+      "refreshed_for": "v2026.8.3",
+      "verification": {
+        "focused_tests": [
+          "tests/hermes_cli/test_relay_shared_metrics_runtime.py"
+        ]
+      },
+      "impact": [
+        "Profiles without the optional nemo-relay package continue with reduced Relay capability.",
+        "Unexpected missing transitive dependencies still produce the existing warning and Noop fallback."
+      ]
+    },
+    {
+      "id": "telegram-userbot-platform-plugin",
+      "file": "patches/v2026.8.3/079-telegram-userbot-platform-plugin.patch",
+      "title_en": "Telegram MTProto userbot platform plugin",
+      "title_ru": "Telegram MTProto userbot platform plugin",
+      "description_en": "Adds an experimental, opt-in `telegram_userbot` Hermes platform plugin backed by Telethon. It connects through a Telegram user account over MTProto, keeps file sessions profile-local and locked, enforces deny-by-default user/chat allowlists before gateway dispatch, suppresses bot-style pairing/onboarding plus recognized Hermes slash-command, internal-error, and approval UI for admitted senders with approvals failing closed, and supports text, replies, edits, typing, optional human-paced responses with per-sender bypass IDs, inbound media caching, and native file delivery without modifying the official Bot API adapter.",
+      "description_ru": "Добавляет experimental opt-in platform plugin `telegram_userbot` на базе Telethon. Он подключается через Telegram user account по MTProto, хранит и блокирует file session profile-local, применяет deny-by-default allowlist пользователей/чатов до gateway dispatch, подавляет bot-style pairing/onboarding, известные Hermes slash-команды, internal-error и approval UI для допущенных отправителей с fail-closed approvals и поддерживает текст, replies, edits, typing, опциональный человекоподобный темп ответа с исключениями по sender ID, inbound media cache и native file delivery без изменений official Bot API adapter.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "3c27eb6234bf91b8ceee9e9071591b31e9b148cb",
+      "refreshed_for": "v2026.8.3",
+      "verification": {
+        "focused_tests": [
+          "tests/plugins/test_telegram_userbot_platform_plugin.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/gateway/test_platform_registry.py",
+          "tests/gateway/test_status_command.py"
+        ]
+      },
+      "impact": [
+        "Uses a Telegram user account through MTProto rather than the official Bot API; live use requires explicit operator risk acceptance.",
+        "First authorization must run in the foreground so Telegram login code and optional 2FA can complete before service installation.",
+        "Keep TELEGRAM_USERBOT_API_HASH, login codes, 2FA password, and optional StringSession only in the target profile .env."
+      ]
+    }
+  ],
+  "retired_patches": [
+    {
+      "id": "telegram-free-response-target-gating",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "gateway-document-media-types",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "api-server-fallback-model-kwarg",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "email-smtp-ssl",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Остаётся absorbed upstream с v2026.7.1; не возвращали."
+    },
+    {
+      "id": "telegram-overflow-general-duplicate-guard",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Upstream v0.20 несёт общий partial_overflow/delivered_prefix/final split duplicate guard; PatchKit оставляет только first-chunk flood-control edge case."
+    },
+    {
+      "id": "media-delivery-path-denylist-core",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Upstream v0.20 содержит базовую validation/denylist для media delivery; PatchKit оставляет explicit auto_upload_local_paths policy."
+    },
+    {
+      "id": "config-inline-defaults-overlay",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Upstream v0.20.0 перенёс DEFAULT_CONFIG в hermes_cli/config_defaults.py; overlay перенесён только точечными default values."
+    },
+    {
+      "id": "session-entry-duplicate-parent-field",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Upstream v0.20.0 уже содержит prev_session_id и channel continuity; отдельное поле SessionEntry.parent_session_id не переносится, DB parent lineage и filtered rehydration сохранены."
+    },
+    {
+      "id": "openai-provider-header-duplicate-fallback",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Provider-profile headers для OpenAI-wire уже обслуживаются upstream; сохранён только Anthropic Messages bridge."
+    },
+    {
+      "id": "telegram-overflow-general-partial-copy",
+      "retired_for": "v2026.8.3",
+      "reason_ru": "Общая partial-overflow логика upstream v0.20.0 перенесена; остаётся только first-chunk finalize/flood-control guard."
+    }
+  ]
+}

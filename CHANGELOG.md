@@ -7,6 +7,12 @@ The format follows Keep a Changelog.
 ## [Unreleased]
 
 ### Changed
+- re-anchored the active PatchKit release set on Hermes Agent `v2026.8.3` / `0.20.0` using three-way transplant from the v0.19.1 runtime;
+- added `manifests/upstream-v2026.8.3.yaml`, `profiles/v2026.8.3-upstream-fixes.yaml`, `profiles/v2026.8.3-personal.yaml`, `profiles/v2026.8.3-with-telegram-userbot.yaml`, and refreshed `patches/v2026.8.3/` exports;
+- kept the personal, Relay no-op, and Telegram userbot units separate; no active unit was removed after apply/reverse and focused-test verification;
+- preserved v0.19 release manifests and patch files as historical rollback artifacts.
+
+### Changed
 - re-anchored PatchKit to Hermes Agent `v2026.7.20` / `0.19.0`, adding `manifests/upstream-v2026.7.20.yaml`, `profiles/v2026.7.20-upstream-fixes.yaml`, `profiles/v2026.7.20-personal.yaml`, `profiles/v2026.7.20-with-telegram-userbot.yaml`, and refreshed `patches/v2026.7.20/` exports.
 - narrowed the v0.19 personal overlay by removing or reducing pieces now covered by upstream: general Telegram overflow duplicate handling, baseline media-delivery path denylist, adjacent session-reset recovery, and most credential-pool refresh/lease work.
 
