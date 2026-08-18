@@ -9,7 +9,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
  import logging
  import mimetypes
  import os
-@@ -56,6 +57,16 @@
+@@ -56,6 +57,17 @@
      task: asyncio.Task
  
  
@@ -21,12 +21,13 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +    source: int | str
 +    destination_id: int
 +    interval_seconds: int
++    forward_author_card: bool
 +
 +
  _current_pacing_turn: ContextVar[Optional[_PacingTurn]] = ContextVar(
      "telegram_userbot_current_pacing_turn", default=None
  )
-@@ -117,6 +128,57 @@
+@@ -117,6 +129,58 @@
      return parsed if 0.0 <= parsed <= 1.0 else default
  
  
@@ -75,6 +76,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +                source=source,
 +                destination_id=destination_id,
 +                interval_seconds=_positive_int(item.get("interval_seconds"), 10800),
++                forward_author_card=_coerce_bool(item.get("forward_author_card"), False),
 +            )
 +        )
 +        names.add(name)
@@ -84,7 +86,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
  def _first_present(obj: Any, *names: str) -> Any:
      for name in names:
          if isinstance(obj, dict):
-@@ -297,8 +359,12 @@
+@@ -297,8 +361,12 @@
          self.typing_delay_max_ms = _positive_int(
              extra.get("typing_delay_max_ms"), 30000
          )
@@ -97,7 +99,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
          self._typing_tasks: dict[str, _TypingAction] = {}
          self._typing_lock = asyncio.Lock()
          self._lifecycle_lock = asyncio.Lock()
-@@ -460,6 +526,7 @@
+@@ -460,6 +528,7 @@
                  self._run_client_loop(self._client),
                  name="telegram-userbot-client",
              )
@@ -105,7 +107,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
              logger.warning(
                  "[TELEGRAM_USERBOT] Started MTProto user-account client; "
                  "this is not Telegram Bot API support."
-@@ -501,6 +568,7 @@
+@@ -501,6 +570,7 @@
          self._mark_disconnected()
          client = self._client
          self._client = None
@@ -113,7 +115,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
          await self._cancel_typing_tasks()
          await self._disconnect_client_safely(client, context="failed connect cleanup")
          task = self._client_task
-@@ -539,6 +607,7 @@
+@@ -539,6 +609,7 @@
          """Finish client-loop teardown despite repeated owner cancellation."""
          disconnect_cancelled = False
          try:
@@ -121,7 +123,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
              await self._cancel_typing_tasks()
              disconnect_cancelled = await self._disconnect_client_safely(
                  client,
-@@ -583,6 +652,7 @@
+@@ -583,6 +654,7 @@
          self._mark_disconnected()
          client = self._client
          task = self._client_task
@@ -129,7 +131,7 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
          await self._cancel_typing_tasks()
          disconnect_cancelled = await self._disconnect_client_safely(
              client,
-@@ -726,6 +796,232 @@
+@@ -726,6 +798,404 @@
              raw_response=message,
          )
  
@@ -145,6 +147,12 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +        path = root / f"{monitor.name}.json"
 +        if path.is_symlink():
 +            raise RuntimeError("native forward state file must not be a symlink")
++        return path
++
++    def _monitor_failure_path(self, monitor: _NativeForwardMonitor) -> Path:
++        path = self._monitor_state_path(monitor).with_suffix(".failure.json")
++        if path.is_symlink():
++            raise RuntimeError("native forward failure file must not be a symlink")
 +        return path
 +
 +    def _load_monitor_state(self, monitor: _NativeForwardMonitor) -> Optional[int]:
@@ -205,6 +213,49 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +            except FileNotFoundError:
 +                pass
 +
++    def _store_monitor_failure(
++        self,
++        monitor: _NativeForwardMonitor,
++        *,
++        source_id: int,
++        publication_message_ids: set[int],
++        delivered_message_ids: set[int],
++        stage: str,
++    ) -> None:
++        path = self._monitor_failure_path(monitor)
++        descriptor, temporary = tempfile.mkstemp(
++            prefix=f".{monitor.name}.failure.", suffix=".tmp", dir=path.parent
++        )
++        try:
++            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
++                json.dump(
++                    {
++                        "source_id": source_id,
++                        "destination_id": monitor.destination_id,
++                        "publication_message_ids": sorted(publication_message_ids),
++                        "delivered_message_ids": sorted(delivered_message_ids),
++                        "missing_message_ids": sorted(
++                            publication_message_ids - delivered_message_ids
++                        ),
++                        "stage": stage,
++                    },
++                    handle,
++                    sort_keys=True,
++                )
++                handle.write("\n")
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.chmod(temporary, 0o600)
++            os.replace(temporary, path)
++        finally:
++            try:
++                os.unlink(temporary)
++            except FileNotFoundError:
++                pass
++
++    def _clear_monitor_failure(self, monitor: _NativeForwardMonitor) -> None:
++        self._monitor_failure_path(monitor).unlink(missing_ok=True)
++
 +    @staticmethod
 +    def _forwarded_source_message_id(message: Any, source_id: int) -> Optional[int]:
 +        header = getattr(message, "fwd_from", None)
@@ -232,6 +283,81 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +            if source_message_id is not None:
 +                forwarded.add(source_message_id)
 +        return forwarded
++
++    @staticmethod
++    def _message_text(message: Any) -> str:
++        return _as_str(getattr(message, "message", None))
++
++    @classmethod
++    def _verified_forward_results(
++        cls, records: list[Any], forwarded: Any
++    ) -> tuple[set[int], list[Any]]:
++        results = list(forwarded) if isinstance(forwarded, (list, tuple)) else [forwarded]
++        if len(results) != len(records):
++            return set(), results
++        delivered: set[int] = set()
++        for source_message, destination_message in zip(records, results):
++            if destination_message is None:
++                continue
++            if cls._message_text(source_message) != cls._message_text(destination_message):
++                continue
++            delivered.add(int(source_message.id))
++        return delivered, results
++
++    @staticmethod
++    def _author_card_name(author: Any) -> str:
++        name = " ".join(
++            value.strip()
++            for value in (
++                _as_str(getattr(author, "first_name", None)),
++                _as_str(getattr(author, "last_name", None)),
++            )
++            if value.strip()
++        )
++        if name:
++            return name
++        username = _as_str(getattr(author, "username", None)).strip().lstrip("@")
++        return f"@{username}" if username else "Автор"
++
++    async def _author_card(self, client: Any, records: list[Any]) -> tuple[str, str]:
++        sender_id = _coerce_int(getattr(records[0], "sender_id", None))
++        if sender_id is None or sender_id <= 0:
++            raise RuntimeError("native forward author identity is unavailable")
++        author = await client.get_entity(sender_id)
++        username = _as_str(getattr(author, "username", None)).strip().lstrip("@")
++        if not username:
++            raise RuntimeError("native forward author has no public username")
++        return self._author_card_name(author), username
++
++    async def _send_author_card(
++        self,
++        client: Any,
++        destination: Any,
++        forwarded: list[Any],
++        author_name: str,
++        author_username: str,
++    ) -> None:
++        anchor_id = _coerce_int(getattr(forwarded[0], "id", None)) if forwarded else None
++        if anchor_id is None:
++            raise RuntimeError("native forward author card has no delivery anchor")
++        from telethon.helpers import add_surrogate
++        from telethon.tl.types import MessageEntityTextUrl
++
++        prefix = "Автор: "
++        text = f"{prefix}{author_name}"
++        await client.send_message(
++            destination,
++            text,
++            reply_to=anchor_id,
++            link_preview=False,
++            formatting_entities=[
++                MessageEntityTextUrl(
++                    offset=len(add_surrogate(prefix)),
++                    length=len(add_surrogate(author_name)),
++                    url=f"https://t.me/{author_username}",
++                )
++            ],
++        )
 +
 +    async def _latest_source_message_id(self, client: Any, source: Any) -> int:
 +        async for message in client.iter_messages(source, limit=1):
@@ -292,6 +418,20 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +        verified_cursor = cursor
 +        for records in publications:
 +            source_message_ids = {int(message.id) for message in records}
++            if monitor.forward_author_card:
++                try:
++                    author_card = await self._author_card(client, records)
++                except Exception:
++                    self._store_monitor_failure(
++                        monitor,
++                        source_id=source_id,
++                        publication_message_ids=source_message_ids,
++                        delivered_message_ids=set(),
++                        stage="author_card_identity",
++                    )
++                    raise
++            else:
++                author_card = None
 +            forwarded_ids = await self._destination_forward_ids(
 +                client, destination, source_id
 +            )
@@ -299,20 +439,54 @@ diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/t
 +            if overlap == source_message_ids:
 +                pass
 +            elif overlap:
++                self._store_monitor_failure(
++                    monitor,
++                    source_id=source_id,
++                    publication_message_ids=source_message_ids,
++                    delivered_message_ids=overlap,
++                    stage="pre_existing_partial_album",
++                )
 +                raise RuntimeError(
 +                    f"native forward destination has a partial album: {monitor.name}"
 +                )
 +            else:
-+                await client.forward_messages(destination, records, from_peer=source)
-+                forwarded_ids = await self._destination_forward_ids(
-+                    client, destination, source_id
++                forwarded = await client.forward_messages(
++                    destination, records, from_peer=source
 +                )
-+                if not source_message_ids <= forwarded_ids:
++                delivered_ids, forwarded_results = self._verified_forward_results(
++                    records, forwarded
++                )
++                if delivered_ids != source_message_ids:
++                    self._store_monitor_failure(
++                        monitor,
++                        source_id=source_id,
++                        publication_message_ids=source_message_ids,
++                        delivered_message_ids=delivered_ids,
++                        stage="forward_result_verification",
++                    )
 +                    raise RuntimeError(
 +                        f"native forward destination verification failed: {monitor.name}"
 +                    )
++                if author_card is not None:
++                    try:
++                        await self._send_author_card(
++                            client,
++                            destination,
++                            forwarded_results,
++                            *author_card,
++                        )
++                    except Exception:
++                        self._store_monitor_failure(
++                            monitor,
++                            source_id=source_id,
++                            publication_message_ids=source_message_ids,
++                            delivered_message_ids=delivered_ids,
++                            stage="author_card_delivery",
++                        )
++                        raise
 +            verified_cursor = max(verified_cursor, max(source_message_ids))
 +            self._store_monitor_state(monitor, verified_cursor, source_id)
++            self._clear_monitor_failure(monitor)
 +        if not publications and highest_seen > cursor:
 +            self._store_monitor_state(monitor, highest_seen, source_id)
 +
@@ -373,20 +547,41 @@ diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plug
  import sys
  from contextlib import asynccontextmanager
  from datetime import datetime, timezone
-@@ -97,6 +98,46 @@
+@@ -97,6 +98,89 @@
          self.disconnected = True
  
  
 +class FakeNativeForwardClient:
 +    """Small in-memory Telethon surface for native-forward monitor tests."""
 +
-+    def __init__(self, source_messages, destination_messages=()):
++    def __init__(
++        self,
++        source_messages,
++        destination_messages=(),
++        *,
++        dropped_forward_ids=(),
++        preserves_source_header=True,
++        author_username: str | None = "kirill",
++    ):
 +        self.source_messages = list(source_messages)
 +        self.destination_messages = list(destination_messages)
++        self.dropped_forward_ids = set(dropped_forward_ids)
++        self.preserves_source_header = preserves_source_header
++        self.author_username = author_username
 +        self.forward_calls = []
++        self.sent_messages = []
 +
 +    async def get_entity(self, entity_id):
-+        return SimpleNamespace(id=abs(int(entity_id)))
++        entity_id = abs(int(entity_id))
++        if entity_id == 7001:
++            return SimpleNamespace(
++                id=7001,
++                access_hash=987654321,
++                first_name="Кирилл",
++                last_name=None,
++                username=self.author_username,
++            )
++        return SimpleNamespace(id=entity_id)
 +
 +    async def iter_messages(self, entity, **_kwargs):
 +        messages = (
@@ -402,25 +597,47 @@ diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plug
 +        self.forward_calls.append(
 +            {"destination": destination, "messages": records, "from_peer": from_peer}
 +        )
++        delivered = []
 +        for message in records:
-+            self.destination_messages.append(
-+                SimpleNamespace(
-+                    id=10000 + message.id,
-+                    fwd_from=SimpleNamespace(
++            if message.id in self.dropped_forward_ids:
++                delivered.append(None)
++                continue
++            forwarded = SimpleNamespace(
++                id=10000 + message.id,
++                message=message.message,
++                fwd_from=(
++                    SimpleNamespace(
 +                        channel_post=message.id,
 +                        from_id=SimpleNamespace(channel_id=1001),
-+                    ),
-+                )
++                    )
++                    if self.preserves_source_header
++                    else SimpleNamespace(from_name="source sender")
++                ),
 +            )
++            self.destination_messages.append(forwarded)
++            delivered.append(forwarded)
++        return delivered
++
++    async def send_message(self, destination, message, **kwargs):
++        self.sent_messages.append(
++            {"destination": destination, "message": message, **kwargs}
++        )
++        return SimpleNamespace(id=20000 + len(self.sent_messages))
 +
 +
-+def native_forward_message(message_id, *, grouped_id=None):
-+    return SimpleNamespace(id=message_id, grouped_id=grouped_id, action=None)
++def native_forward_message(message_id, *, grouped_id=None, text="", sender_id=None):
++    return SimpleNamespace(
++        id=message_id,
++        grouped_id=grouped_id,
++        action=None,
++        message=text,
++        sender_id=sender_id,
++    )
 +
  
  def test_register_exposes_telegram_userbot_platform_metadata():
      from plugins.platforms.telegram_userbot import register
-@@ -128,6 +169,120 @@
+@@ -128,6 +212,315 @@
      assert Platform("telegram_userbot").value == "telegram_userbot"
  
  
@@ -471,6 +688,201 @@ diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plug
 +        [103, 104]
 +    ]
 +    assert json.loads(state_path.read_text())["last_processed_message_id"] == 104
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_records_caption_loss_without_advancing_cursor(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    adapter._client = FakeNativeForwardClient(
++        [
++            native_forward_message(102, grouped_id=77),
++            native_forward_message(101, grouped_id=77),
++        ],
++        dropped_forward_ids={101},
++    )
++
++    with pytest.raises(RuntimeError, match="destination verification failed"):
++        await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 100
++    failure_path = tmp_path / "native_forwards" / "source-to-destination.failure.json"
++    assert json.loads(failure_path.read_text()) == {
++        "destination_id": 2002,
++        "delivered_message_ids": [102],
++        "missing_message_ids": [101],
++        "publication_message_ids": [101, 102],
++        "source_id": 1001,
++        "stage": "forward_result_verification",
++    }
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_accepts_private_group_forward_result_without_source_header(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    adapter._client = FakeNativeForwardClient(
++        [native_forward_message(101, text="caption")],
++        preserves_source_header=False,
++    )
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++    assert not (state_path.parent / "private-source-to-destination.failure.json").exists()
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_replies_with_clickable_author_card_for_private_group_post(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "forward_author_card": True,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    client = FakeNativeForwardClient(
++        [native_forward_message(101, text="Объявление", sender_id=7001)],
++        preserves_source_header=False,
++    )
++    class MessageEntityTextUrl:
++        def __init__(self, offset, length, url):
++            self.offset = offset
++            self.length = length
++            self.url = url
++
++    telethon_module = ModuleType("telethon")
++    tl_module = ModuleType("telethon.tl")
++    types_module = ModuleType("telethon.tl.types")
++    helpers_module = ModuleType("telethon.helpers")
++    setattr(types_module, "MessageEntityTextUrl", MessageEntityTextUrl)
++    setattr(helpers_module, "add_surrogate", lambda value: value)
++    setattr(telethon_module, "tl", tl_module)
++    setattr(telethon_module, "helpers", helpers_module)
++    setattr(tl_module, "types", types_module)
++    monkeypatch.setitem(sys.modules, "telethon", telethon_module)
++    monkeypatch.setitem(sys.modules, "telethon.tl", tl_module)
++    monkeypatch.setitem(sys.modules, "telethon.tl.types", types_module)
++    monkeypatch.setitem(sys.modules, "telethon.helpers", helpers_module)
++    adapter._client = client
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert len(client.sent_messages) == 1
++    sent = client.sent_messages[0]
++    assert sent["destination"] == SimpleNamespace(id=2002)
++    assert sent["message"] == "Автор: Кирилл"
++    assert sent["reply_to"] == 10101
++    assert sent["link_preview"] is False
++    entity = sent["formatting_entities"][0]
++    assert type(entity).__name__ == "MessageEntityTextUrl"
++    assert (entity.offset, entity.length, entity.url) == (7, 6, "https://t.me/kirill")
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_refuses_author_card_without_public_username(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "forward_author_card": True,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    client = FakeNativeForwardClient(
++        [native_forward_message(101, text="Объявление", sender_id=7001)],
++        preserves_source_header=False,
++        author_username=None,
++    )
++    adapter._client = client
++
++    with pytest.raises(RuntimeError, match="no public username"):
++        await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert client.forward_calls == []
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 100
++    failure = json.loads((state_path.parent / "private-source-to-destination.failure.json").read_text())
++    assert failure["stage"] == "author_card_identity"
 +
 +
 +@pytest.mark.asyncio

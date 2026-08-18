@@ -80,9 +80,10 @@ platforms:
           source: domkzn          # username source или source_id для private chat
           destination_id: 5553851530
           interval_seconds: 10800
+          forward_author_card: false  # true: отдельный reply с кликабельным автором
 ```
 
-На первом запуске monitor записывает текущий message ID в `$HERMES_HOME/native_forwards/<name>.json` и не пересылает историю. Далее он пересылает только новые сообщения нативно, сохраняет альбомы, проверяет `fwd_from` metadata у получателя и записывает cursor только после проверки. `source` не может быть destination; adapter не отправляет сообщений, реакций или typing в источник. Для перевода уже работающего маршрута сначала перенеси его подтверждённый cursor в новое state-файл, затем отключи старый cron — иначе initial seed намеренно пропустит уже имеющуюся историю.
+На первом запуске monitor записывает текущий message ID в `$HERMES_HOME/native_forwards/<name>.json` и не пересылает историю. Далее он пересылает только новые сообщения нативно, сохраняет альбомы и проверяет фактический результат `forward_messages` для каждого source ID, включая текст/caption; это работает и для private-group forward, где Telegram header содержит только имя автора. Cursor записывается только после проверки. Если Telegram доставил неполный album (включая отсутствующую подпись на первом media), cursor остаётся на прежней позиции, повторная отправка не выполняется, а безопасный диагностический отчёт сохраняется в `$HERMES_HOME/native_forwards/<name>.failure.json`. При `forward_author_card: true` monitor отправляет в destination отдельный reply `Автор: <имя>` с кликабельной публичной ссылкой `https://t.me/<username>` на автора исходного сообщения; номер телефона не запрашивается и не передаётся. Если у автора нет public username, пересылка этого объявления останавливается до отправки и фиксируется в failure-файле: так в destination не появится объявление без обязательного контакта автора. `source` не может быть destination; adapter не отправляет сообщений, реакций или typing в источник. Для перевода уже работающего маршрута сначала перенеси его подтверждённый cursor в новое state-файл, затем отключи старый cron — иначе initial seed намеренно пропустит уже имеющуюся историю.
 
 Credentials хранятся в `/root/.hermes/profiles/telegram-userbot/.env`:
 
