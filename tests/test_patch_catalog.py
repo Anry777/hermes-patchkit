@@ -59,6 +59,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "personal-overlay-v2026.8.3",
                 "relay-optional-noop-v2026.8.3",
                 "telegram-userbot-platform-plugin",
+                "telegram-userbot-native-forward-monitor",
             ],
         )
         for entry in manifest["patches"]:
@@ -94,6 +95,7 @@ class PatchCatalogTests(unittest.TestCase):
                 "personal-overlay-v2026.8.3",
                 "relay-optional-noop-v2026.8.3",
                 "telegram-userbot-platform-plugin",
+                "telegram-userbot-native-forward-monitor",
             ],
         )
 

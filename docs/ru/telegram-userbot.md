@@ -67,6 +67,23 @@ platforms:
 
 `human_pacing_excluded_user_ids` принимает список Telegram sender ID. Для этих авторов обе искусственные паузы полностью обходятся; список работает и в личных, и в групповых чатах, где sender ID отличается от chat ID. Обычное время работы модели не скрывается и не задерживается дополнительно.
 
+### Встроенная нативная пересылка
+
+Optional patch `telegram-userbot-native-forward-monitor` добавляет monitor-ы в уже подключённый adapter. Это не cron: monitor использует тот же Telethon client, не копирует `.session`, не останавливает gateway и завершается вместе с ним.
+
+```yaml
+platforms:
+  telegram_userbot:
+    extra:
+      native_forward_monitors:
+        - name: domkzn-to-ilnur
+          source: domkzn          # username source или source_id для private chat
+          destination_id: 5553851530
+          interval_seconds: 10800
+```
+
+На первом запуске monitor записывает текущий message ID в `$HERMES_HOME/native_forwards/<name>.json` и не пересылает историю. Далее он пересылает только новые сообщения нативно, сохраняет альбомы, проверяет `fwd_from` metadata у получателя и записывает cursor только после проверки. `source` не может быть destination; adapter не отправляет сообщений, реакций или typing в источник. Для перевода уже работающего маршрута сначала перенеси его подтверждённый cursor в новое state-файл, затем отключи старый cron — иначе initial seed намеренно пропустит уже имеющуюся историю.
+
 Credentials хранятся в `/root/.hermes/profiles/telegram-userbot/.env`:
 
 ```bash

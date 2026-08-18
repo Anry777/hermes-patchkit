@@ -120,6 +120,30 @@
         "First authorization must run in the foreground so Telegram login code and optional 2FA can complete before service installation.",
         "Keep TELEGRAM_USERBOT_API_HASH, login codes, 2FA password, and optional StringSession only in the target profile .env."
       ]
+    },
+    {
+      "id": "telegram-userbot-native-forward-monitor",
+      "file": "patches/v2026.8.3/082-telegram-userbot-native-forward-monitor.patch",
+      "title_en": "In-process Telegram native-forward monitor",
+      "title_ru": "Встроенный monitor нативной пересылки Telegram",
+      "description_en": "Adds profile-configured background native-forward monitors to the connected Telegram userbot. Monitors use the existing client and profile-local atomic cursors, seed without replaying history, preserve albums, verify destination forward metadata, and stop with the adapter.",
+      "description_ru": "Добавляет profile-configured фоновые monitor-ы нативной пересылки в уже подключённый Telegram userbot. Monitor использует существующий client и profile-local атомарные cursor-ы, стартует без повторной пересылки истории, сохраняет альбомы, проверяет metadata пересылки в получателе и останавливается вместе с adapter.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": ["telegram-userbot-platform-plugin"],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "3c27eb6234bf91b8ceee9e9071591b31e9b148cb",
+      "refreshed_for": "v2026.8.3",
+      "verification": {
+        "focused_tests": ["tests/plugins/test_telegram_userbot_platform_plugin.py"]
+      },
+      "impact": [
+        "Routes are configured only by the profile operator; the source is never used as a destination.",
+        "The monitor shares the already connected Telethon client and never stops the gateway or opens a second session."
+      ]
     }
   ],
   "retired_patches": [

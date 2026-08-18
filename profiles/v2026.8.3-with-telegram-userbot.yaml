@@ -3,6 +3,7 @@
   "patches": [
     "personal-overlay-v2026.8.3",
     "relay-optional-noop-v2026.8.3",
-    "telegram-userbot-platform-plugin"
+    "telegram-userbot-platform-plugin",
+    "telegram-userbot-native-forward-monitor"
   ]
 }
