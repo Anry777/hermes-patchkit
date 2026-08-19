@@ -12,6 +12,9 @@ The format follows Keep a Changelog.
 - kept the personal, Relay no-op, and Telegram userbot units separate; no active unit was removed after apply/reverse and focused-test verification;
 - preserved v0.19 release manifests and patch files as historical rollback artifacts.
 
+### Fixed
+- `082-telegram-userbot-native-forward-monitor`: optional author-card attribution no longer blocks the primary forward when Telegram omits sender identity or the author has no public username; verified delivery still controls cursor advancement.
+
 ### Changed
 - re-anchored PatchKit to Hermes Agent `v2026.7.20` / `0.19.0`, adding `manifests/upstream-v2026.7.20.yaml`, `profiles/v2026.7.20-upstream-fixes.yaml`, `profiles/v2026.7.20-personal.yaml`, `profiles/v2026.7.20-with-telegram-userbot.yaml`, and refreshed `patches/v2026.7.20/` exports.
 - narrowed the v0.19 personal overlay by removing or reducing pieces now covered by upstream: general Telegram overflow duplicate handling, baseline media-delivery path denylist, adjacent session-reset recovery, and most credential-pool refresh/lease work.
