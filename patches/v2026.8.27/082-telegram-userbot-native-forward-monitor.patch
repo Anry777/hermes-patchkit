@@ -1,0 +1,972 @@
+diff --git a/plugins/platforms/telegram_userbot/adapter.py b/plugins/platforms/telegram_userbot/adapter.py
+index d9336da05..ed78869f5 100644
+--- a/plugins/platforms/telegram_userbot/adapter.py
++++ b/plugins/platforms/telegram_userbot/adapter.py
+@@ -11,6 +11,7 @@ from __future__ import annotations
+ 
+ import asyncio
+ import fcntl
++import json
+ import logging
+ import mimetypes
+ import os
+@@ -56,6 +57,17 @@ class _TypingAction:
+     task: asyncio.Task
+ 
+ 
++@dataclass(frozen=True)
++class _NativeForwardMonitor:
++    """One profile-administered, in-process native-forward route."""
++
++    name: str
++    source: int | str
++    destination_id: int
++    interval_seconds: int
++    forward_author_card: bool
++
++
+ _current_pacing_turn: ContextVar[Optional[_PacingTurn]] = ContextVar(
+     "telegram_userbot_current_pacing_turn", default=None
+ )
+@@ -117,6 +129,58 @@ def _bounded_ratio(value: Any, default: float) -> float:
+     return parsed if 0.0 <= parsed <= 1.0 else default
+ 
+ 
++def _native_forward_monitors(value: Any) -> tuple[_NativeForwardMonitor, ...]:
++    if value is None:
++        return ()
++    if not isinstance(value, list):
++        raise ValueError("native_forward_monitors must be a list")
++
++    monitors: list[_NativeForwardMonitor] = []
++    names: set[str] = set()
++    for item in value:
++        if not isinstance(item, dict):
++            raise ValueError("native_forward_monitors entries must be mappings")
++        name = _as_str(item.get("name")).strip()
++        if (
++            not name
++            or len(name) > 80
++            or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for char in name)
++        ):
++            raise ValueError(
++                "native_forward_monitors.name must contain only lowercase letters, digits, _ or -"
++            )
++        if name in names:
++            raise ValueError(f"duplicate native forward monitor name: {name}")
++        source_value = item.get("source_id", item.get("source"))
++        source_id = _coerce_int(source_value)
++        destination_id = _coerce_int(item.get("destination_id"))
++        if source_id is not None:
++            if source_id <= 0:
++                raise ValueError("native_forward_monitors.source_id must be a positive integer")
++            source: int | str = source_id
++        elif isinstance(source_value, str) and source_value.strip():
++            source = source_value.strip().lstrip("@")
++        else:
++            raise ValueError(
++                "native_forward_monitors requires a positive source_id or non-empty source"
++            )
++        if destination_id is None or destination_id <= 0:
++            raise ValueError("native_forward_monitors.destination_id must be a positive integer")
++        if source_id == destination_id:
++            raise ValueError("native forward source and destination must differ")
++        monitors.append(
++            _NativeForwardMonitor(
++                name=name,
++                source=source,
++                destination_id=destination_id,
++                interval_seconds=_positive_int(item.get("interval_seconds"), 10800),
++                forward_author_card=_coerce_bool(item.get("forward_author_card"), False),
++            )
++        )
++        names.add(name)
++    return tuple(monitors)
++
++
+ def _first_present(obj: Any, *names: str) -> Any:
+     for name in names:
+         if isinstance(obj, dict):
+@@ -297,8 +361,12 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+         self.typing_delay_max_ms = _positive_int(
+             extra.get("typing_delay_max_ms"), 30000
+         )
++        self.native_forward_monitors = _native_forward_monitors(
++            extra.get("native_forward_monitors")
++        )
+         self._client: Any = None
+         self._client_task: Optional[asyncio.Task] = None
++        self._native_forward_tasks: dict[str, asyncio.Task] = {}
+         self._typing_tasks: dict[str, _TypingAction] = {}
+         self._typing_lock = asyncio.Lock()
+         self._lifecycle_lock = asyncio.Lock()
+@@ -460,6 +528,7 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+                 self._run_client_loop(self._client),
+                 name="telegram-userbot-client",
+             )
++            self._start_native_forward_monitors()
+             logger.warning(
+                 "[TELEGRAM_USERBOT] Started MTProto user-account client; "
+                 "this is not Telegram Bot API support."
+@@ -501,6 +570,7 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+         self._mark_disconnected()
+         client = self._client
+         self._client = None
++        await self._cancel_native_forward_monitors()
+         await self._cancel_typing_tasks()
+         await self._disconnect_client_safely(client, context="failed connect cleanup")
+         task = self._client_task
+@@ -539,6 +609,7 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+         """Finish client-loop teardown despite repeated owner cancellation."""
+         disconnect_cancelled = False
+         try:
++            await self._cancel_native_forward_monitors()
+             await self._cancel_typing_tasks()
+             disconnect_cancelled = await self._disconnect_client_safely(
+                 client,
+@@ -583,6 +654,7 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+         self._mark_disconnected()
+         client = self._client
+         task = self._client_task
++        await self._cancel_native_forward_monitors()
+         await self._cancel_typing_tasks()
+         disconnect_cancelled = await self._disconnect_client_safely(
+             client,
+@@ -726,6 +798,416 @@ class TelegramUserbotAdapter(BasePlatformAdapter):
+             raw_response=message,
+         )
+ 
++    def _monitor_state_path(self, monitor: _NativeForwardMonitor) -> Path:
++        root = get_hermes_home() / "native_forwards"
++        if root.is_symlink():
++            raise RuntimeError("native forward state directory must not be a symlink")
++        root.mkdir(parents=True, exist_ok=True)
++        try:
++            os.chmod(root, 0o700)
++        except OSError:
++            pass
++        path = root / f"{monitor.name}.json"
++        if path.is_symlink():
++            raise RuntimeError("native forward state file must not be a symlink")
++        return path
++
++    def _monitor_failure_path(self, monitor: _NativeForwardMonitor) -> Path:
++        path = self._monitor_state_path(monitor).with_suffix(".failure.json")
++        if path.is_symlink():
++            raise RuntimeError("native forward failure file must not be a symlink")
++        return path
++
++    def _load_monitor_state(self, monitor: _NativeForwardMonitor) -> Optional[int]:
++        path = self._monitor_state_path(monitor)
++        if not path.exists():
++            return None
++        try:
++            state = json.loads(path.read_text(encoding="utf-8"))
++        except (OSError, ValueError, TypeError) as exc:
++            raise RuntimeError(f"native forward state is unreadable: {monitor.name}") from exc
++        if not isinstance(state, dict):
++            raise RuntimeError(f"native forward state is invalid: {monitor.name}")
++        if _coerce_int(state.get("destination_id")) != monitor.destination_id:
++            raise RuntimeError(f"native forward state route mismatch: {monitor.name}")
++        if isinstance(monitor.source, int):
++            route_matches = _coerce_int(state.get("source_id")) == monitor.source
++        else:
++            route_matches = state.get("source") == monitor.source
++        if not route_matches:
++            raise RuntimeError(f"native forward state route mismatch: {monitor.name}")
++        cursor = _coerce_int(state.get("last_processed_message_id"))
++        if cursor is None or cursor < 0:
++            raise RuntimeError(f"native forward state cursor is invalid: {monitor.name}")
++        return cursor
++
++    def _store_monitor_state(
++        self,
++        monitor: _NativeForwardMonitor,
++        last_processed_message_id: int,
++        source_id: int,
++    ) -> None:
++        path = self._monitor_state_path(monitor)
++        descriptor, temporary = tempfile.mkstemp(
++            prefix=f".{monitor.name}.", suffix=".tmp", dir=path.parent
++        )
++        try:
++            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
++                json.dump(
++                    {
++                        **({"source_id": source_id} if isinstance(monitor.source, int) else {
++                            "source": monitor.source,
++                            "source_id": source_id,
++                        }),
++                        "destination_id": monitor.destination_id,
++                        "last_processed_message_id": last_processed_message_id,
++                    },
++                    handle,
++                    sort_keys=True,
++                )
++                handle.write("\n")
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.chmod(temporary, 0o600)
++            os.replace(temporary, path)
++        finally:
++            try:
++                os.unlink(temporary)
++            except FileNotFoundError:
++                pass
++
++    def _store_monitor_failure(
++        self,
++        monitor: _NativeForwardMonitor,
++        *,
++        source_id: int,
++        publication_message_ids: set[int],
++        delivered_message_ids: set[int],
++        stage: str,
++    ) -> None:
++        path = self._monitor_failure_path(monitor)
++        descriptor, temporary = tempfile.mkstemp(
++            prefix=f".{monitor.name}.failure.", suffix=".tmp", dir=path.parent
++        )
++        try:
++            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
++                json.dump(
++                    {
++                        "source_id": source_id,
++                        "destination_id": monitor.destination_id,
++                        "publication_message_ids": sorted(publication_message_ids),
++                        "delivered_message_ids": sorted(delivered_message_ids),
++                        "missing_message_ids": sorted(
++                            publication_message_ids - delivered_message_ids
++                        ),
++                        "stage": stage,
++                    },
++                    handle,
++                    sort_keys=True,
++                )
++                handle.write("\n")
++                handle.flush()
++                os.fsync(handle.fileno())
++            os.chmod(temporary, 0o600)
++            os.replace(temporary, path)
++        finally:
++            try:
++                os.unlink(temporary)
++            except FileNotFoundError:
++                pass
++
++    def _clear_monitor_failure(self, monitor: _NativeForwardMonitor) -> None:
++        self._monitor_failure_path(monitor).unlink(missing_ok=True)
++
++    @staticmethod
++    def _forwarded_source_message_id(message: Any, source_id: int) -> Optional[int]:
++        header = getattr(message, "fwd_from", None)
++        if header is None:
++            return None
++        from_id = getattr(header, "from_id", None)
++        peer_id = (
++            getattr(from_id, "channel_id", None)
++            or getattr(from_id, "chat_id", None)
++            or getattr(from_id, "user_id", None)
++        )
++        if _coerce_int(peer_id) != source_id:
++            return None
++        return _coerce_int(
++            getattr(header, "channel_post", None)
++            or getattr(header, "saved_from_msg_id", None)
++        )
++
++    async def _destination_forward_ids(
++        self, client: Any, destination: Any, source_id: int
++    ) -> set[int]:
++        forwarded: set[int] = set()
++        async for message in client.iter_messages(destination, limit=1000):
++            source_message_id = self._forwarded_source_message_id(message, source_id)
++            if source_message_id is not None:
++                forwarded.add(source_message_id)
++        return forwarded
++
++    @staticmethod
++    def _message_text(message: Any) -> str:
++        return _as_str(getattr(message, "message", None))
++
++    @classmethod
++    def _verified_forward_results(
++        cls, records: list[Any], forwarded: Any
++    ) -> tuple[set[int], list[Any]]:
++        results = list(forwarded) if isinstance(forwarded, (list, tuple)) else [forwarded]
++        if len(results) != len(records):
++            return set(), results
++        delivered: set[int] = set()
++        for source_message, destination_message in zip(records, results):
++            if destination_message is None:
++                continue
++            if cls._message_text(source_message) != cls._message_text(destination_message):
++                continue
++            delivered.add(int(source_message.id))
++        return delivered, results
++
++    @staticmethod
++    def _author_card_name(author: Any) -> str:
++        name = " ".join(
++            value.strip()
++            for value in (
++                _as_str(getattr(author, "first_name", None)),
++                _as_str(getattr(author, "last_name", None)),
++            )
++            if value.strip()
++        )
++        if name:
++            return name
++        username = _as_str(getattr(author, "username", None)).strip().lstrip("@")
++        return f"@{username}" if username else "Автор"
++
++    async def _author_card(self, client: Any, records: list[Any]) -> tuple[str, str]:
++        sender_id = _coerce_int(getattr(records[0], "sender_id", None))
++        if sender_id is None or sender_id <= 0:
++            raise RuntimeError("native forward author identity is unavailable")
++        author = await client.get_entity(sender_id)
++        username = _as_str(getattr(author, "username", None)).strip().lstrip("@")
++        if not username:
++            raise RuntimeError("native forward author has no public username")
++        return self._author_card_name(author), username
++
++    async def _send_author_card(
++        self,
++        client: Any,
++        destination: Any,
++        forwarded: list[Any],
++        author_name: str,
++        author_username: str,
++    ) -> None:
++        anchor_id = _coerce_int(getattr(forwarded[0], "id", None)) if forwarded else None
++        if anchor_id is None:
++            raise RuntimeError("native forward author card has no delivery anchor")
++        from telethon.helpers import add_surrogate
++        from telethon.tl.types import MessageEntityTextUrl
++
++        prefix = "Автор: "
++        text = f"{prefix}{author_name}"
++        await client.send_message(
++            destination,
++            text,
++            reply_to=anchor_id,
++            link_preview=False,
++            formatting_entities=[
++                MessageEntityTextUrl(
++                    offset=len(add_surrogate(prefix)),
++                    length=len(add_surrogate(author_name)),
++                    url=f"https://t.me/{author_username}",
++                )
++            ],
++        )
++
++    async def _latest_source_message_id(self, client: Any, source: Any) -> int:
++        async for message in client.iter_messages(source, limit=1):
++            message_id = _coerce_int(getattr(message, "id", None))
++            if message_id is not None:
++                return message_id
++        return 0
++
++    async def _new_source_publications(
++        self, client: Any, source: Any, cursor: int
++    ) -> tuple[list[list[Any]], int]:
++        records: list[Any] = []
++        highest_seen = cursor
++        async for message in client.iter_messages(source):
++            message_id = _coerce_int(getattr(message, "id", None))
++            if message_id is None:
++                continue
++            if message_id <= cursor:
++                break
++            highest_seen = max(highest_seen, message_id)
++            if getattr(message, "action", None) is None:
++                records.append(message)
++        records.sort(key=lambda item: int(item.id))
++        grouped: dict[tuple[str, int], list[Any]] = {}
++        for message in records:
++            grouped_id = _coerce_int(getattr(message, "grouped_id", None))
++            key = (
++                ("album", grouped_id)
++                if grouped_id is not None
++                else ("message", int(message.id))
++            )
++            grouped.setdefault(key, []).append(message)
++        publications = list(grouped.values())
++        publications.sort(key=lambda items: min(int(item.id) for item in items))
++        return publications, highest_seen
++
++    async def _run_native_forward_monitor_once(
++        self, monitor: _NativeForwardMonitor
++    ) -> None:
++        client = self._client
++        if client is None:
++            raise RuntimeError("native forward monitor requires the connected userbot client")
++        source = await client.get_entity(monitor.source)
++        destination = await client.get_entity(monitor.destination_id)
++        source_id = _coerce_int(getattr(source, "id", None))
++        if source_id is None or source_id <= 0:
++            raise RuntimeError(f"native forward source resolution failed: {monitor.name}")
++        cursor = self._load_monitor_state(monitor)
++        if cursor is None:
++            self._store_monitor_state(
++                monitor, await self._latest_source_message_id(client, source), source_id
++            )
++            return
++
++        publications, highest_seen = await self._new_source_publications(
++            client, source, cursor
++        )
++        verified_cursor = cursor
++        for records in publications:
++            source_message_ids = {int(message.id) for message in records}
++            if monitor.forward_author_card:
++                try:
++                    author_card = await self._author_card(client, records)
++                except RuntimeError as exc:
++                    if str(exc) in {
++                        "native forward author identity is unavailable",
++                        "native forward author has no public username",
++                    }:
++                        logger.warning(
++                            "[TELEGRAM_USERBOT] native forward %s: "
++                            "author card unavailable; forwarding without attribution: %s",
++                            monitor.name,
++                            exc,
++                        )
++                        author_card = None
++                    else:
++                        self._store_monitor_failure(
++                            monitor,
++                            source_id=source_id,
++                            publication_message_ids=source_message_ids,
++                            delivered_message_ids=set(),
++                            stage="author_card_identity",
++                        )
++                        raise
++            else:
++                author_card = None
++            forwarded_ids = await self._destination_forward_ids(
++                client, destination, source_id
++            )
++            overlap = source_message_ids & forwarded_ids
++            if overlap == source_message_ids:
++                pass
++            elif overlap:
++                self._store_monitor_failure(
++                    monitor,
++                    source_id=source_id,
++                    publication_message_ids=source_message_ids,
++                    delivered_message_ids=overlap,
++                    stage="pre_existing_partial_album",
++                )
++                raise RuntimeError(
++                    f"native forward destination has a partial album: {monitor.name}"
++                )
++            else:
++                forwarded = await client.forward_messages(
++                    destination, records, from_peer=source
++                )
++                delivered_ids, forwarded_results = self._verified_forward_results(
++                    records, forwarded
++                )
++                if delivered_ids != source_message_ids:
++                    self._store_monitor_failure(
++                        monitor,
++                        source_id=source_id,
++                        publication_message_ids=source_message_ids,
++                        delivered_message_ids=delivered_ids,
++                        stage="forward_result_verification",
++                    )
++                    raise RuntimeError(
++                        f"native forward destination verification failed: {monitor.name}"
++                    )
++                if author_card is not None:
++                    try:
++                        await self._send_author_card(
++                            client,
++                            destination,
++                            forwarded_results,
++                            *author_card,
++                        )
++                    except Exception:
++                        self._store_monitor_failure(
++                            monitor,
++                            source_id=source_id,
++                            publication_message_ids=source_message_ids,
++                            delivered_message_ids=delivered_ids,
++                            stage="author_card_delivery",
++                        )
++                        raise
++            verified_cursor = max(verified_cursor, max(source_message_ids))
++            self._store_monitor_state(monitor, verified_cursor, source_id)
++            self._clear_monitor_failure(monitor)
++        if not publications and highest_seen > cursor:
++            self._store_monitor_state(monitor, highest_seen, source_id)
++
++    def _start_native_forward_monitors(self) -> None:
++        client = self._client
++        if client is None:
++            return
++        for monitor in self.native_forward_monitors:
++            existing = self._native_forward_tasks.get(monitor.name)
++            if existing is not None and not existing.done():
++                continue
++            task = asyncio.create_task(
++                self._native_forward_monitor_loop(monitor, client),
++                name=f"telegram-userbot-native-forward-{monitor.name}",
++            )
++            self._native_forward_tasks[monitor.name] = task
++
++    async def _native_forward_monitor_loop(
++        self, monitor: _NativeForwardMonitor, client: Any
++    ) -> None:
++        current_task = asyncio.current_task()
++        try:
++            while self._running and self._client is client:
++                try:
++                    await self._run_native_forward_monitor_once(monitor)
++                except asyncio.CancelledError:
++                    raise
++                except Exception as exc:
++                    logger.error(
++                        "[TELEGRAM_USERBOT] native forward monitor %s failed: %s",
++                        monitor.name,
++                        exc,
++                    )
++                await asyncio.sleep(monitor.interval_seconds)
++        finally:
++            if self._native_forward_tasks.get(monitor.name) is current_task:
++                self._native_forward_tasks.pop(monitor.name, None)
++
++    async def _cancel_native_forward_monitors(self) -> None:
++        tasks = list(self._native_forward_tasks.values())
++        self._native_forward_tasks.clear()
++        for task in tasks:
++            task.cancel()
++        if tasks:
++            await asyncio.gather(*tasks, return_exceptions=True)
++
+     async def _hold_typing(
+         self,
+         key: str,
+diff --git a/tests/plugins/test_telegram_userbot_platform_plugin.py b/tests/plugins/test_telegram_userbot_platform_plugin.py
+index 0c10b1024..1ca5a7417 100644
+--- a/tests/plugins/test_telegram_userbot_platform_plugin.py
++++ b/tests/plugins/test_telegram_userbot_platform_plugin.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import json
+ import sys
+ from contextlib import asynccontextmanager
+ from datetime import datetime, timezone
+@@ -97,6 +98,89 @@ class FakeTelegramClient:
+         self.disconnected = True
+ 
+ 
++class FakeNativeForwardClient:
++    """Small in-memory Telethon surface for native-forward monitor tests."""
++
++    def __init__(
++        self,
++        source_messages,
++        destination_messages=(),
++        *,
++        dropped_forward_ids=(),
++        preserves_source_header=True,
++        author_username: str | None = "kirill",
++    ):
++        self.source_messages = list(source_messages)
++        self.destination_messages = list(destination_messages)
++        self.dropped_forward_ids = set(dropped_forward_ids)
++        self.preserves_source_header = preserves_source_header
++        self.author_username = author_username
++        self.forward_calls = []
++        self.sent_messages = []
++
++    async def get_entity(self, entity_id):
++        entity_id = abs(int(entity_id))
++        if entity_id == 7001:
++            return SimpleNamespace(
++                id=7001,
++                access_hash=987654321,
++                first_name="Кирилл",
++                last_name=None,
++                username=self.author_username,
++            )
++        return SimpleNamespace(id=entity_id)
++
++    async def iter_messages(self, entity, **_kwargs):
++        messages = (
++            self.source_messages
++            if int(getattr(entity, "id", entity)) == 1001
++            else self.destination_messages
++        )
++        for message in sorted(messages, key=lambda item: item.id, reverse=True):
++            yield message
++
++    async def forward_messages(self, destination, messages, *, from_peer):
++        records = list(messages)
++        self.forward_calls.append(
++            {"destination": destination, "messages": records, "from_peer": from_peer}
++        )
++        delivered = []
++        for message in records:
++            if message.id in self.dropped_forward_ids:
++                delivered.append(None)
++                continue
++            forwarded = SimpleNamespace(
++                id=10000 + message.id,
++                message=message.message,
++                fwd_from=(
++                    SimpleNamespace(
++                        channel_post=message.id,
++                        from_id=SimpleNamespace(channel_id=1001),
++                    )
++                    if self.preserves_source_header
++                    else SimpleNamespace(from_name="source sender")
++                ),
++            )
++            self.destination_messages.append(forwarded)
++            delivered.append(forwarded)
++        return delivered
++
++    async def send_message(self, destination, message, **kwargs):
++        self.sent_messages.append(
++            {"destination": destination, "message": message, **kwargs}
++        )
++        return SimpleNamespace(id=20000 + len(self.sent_messages))
++
++
++def native_forward_message(message_id, *, grouped_id=None, text="", sender_id=None):
++    return SimpleNamespace(
++        id=message_id,
++        grouped_id=grouped_id,
++        action=None,
++        message=text,
++        sender_id=sender_id,
++    )
++
+ 
+ def test_register_exposes_telegram_userbot_platform_metadata():
+     from plugins.platforms.telegram_userbot import register
+@@ -128,6 +212,318 @@ def test_dynamic_platform_value_is_accepted_for_telegram_userbot_plugin():
+     assert Platform("telegram_userbot").value == "telegram_userbot"
+ 
+ 
++@pytest.mark.asyncio
++async def test_native_forward_monitor_seeds_then_forwards_a_complete_album(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "interval_seconds": 10800,
++                }]
++            },
++        )
++    )
++    client = FakeNativeForwardClient([
++        native_forward_message(102, grouped_id=77),
++        native_forward_message(101, grouped_id=77),
++    ])
++    adapter._client = client
++    monitor = adapter.native_forward_monitors[0]
++
++    await adapter._run_native_forward_monitor_once(monitor)
++
++    state_path = tmp_path / "native_forwards" / "source-to-destination.json"
++    assert client.forward_calls == []
++    assert json.loads(state_path.read_text()) == {
++        "destination_id": 2002,
++        "last_processed_message_id": 102,
++        "source_id": 1001,
++    }
++
++    client.source_messages.extend([
++        native_forward_message(104, grouped_id=88),
++        native_forward_message(103, grouped_id=88),
++    ])
++    await adapter._run_native_forward_monitor_once(monitor)
++
++    assert [[item.id for item in call["messages"]] for call in client.forward_calls] == [
++        [103, 104]
++    ]
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 104
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_records_caption_loss_without_advancing_cursor(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    adapter._client = FakeNativeForwardClient(
++        [
++            native_forward_message(102, grouped_id=77),
++            native_forward_message(101, grouped_id=77),
++        ],
++        dropped_forward_ids={101},
++    )
++
++    with pytest.raises(RuntimeError, match="destination verification failed"):
++        await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 100
++    failure_path = tmp_path / "native_forwards" / "source-to-destination.failure.json"
++    assert json.loads(failure_path.read_text()) == {
++        "destination_id": 2002,
++        "delivered_message_ids": [102],
++        "missing_message_ids": [101],
++        "publication_message_ids": [101, 102],
++        "source_id": 1001,
++        "stage": "forward_result_verification",
++    }
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_accepts_private_group_forward_result_without_source_header(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    adapter._client = FakeNativeForwardClient(
++        [native_forward_message(101, text="caption")],
++        preserves_source_header=False,
++    )
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++    assert not (state_path.parent / "private-source-to-destination.failure.json").exists()
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_replies_with_clickable_author_card_for_private_group_post(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "forward_author_card": True,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    client = FakeNativeForwardClient(
++        [native_forward_message(101, text="Объявление", sender_id=7001)],
++        preserves_source_header=False,
++    )
++    class MessageEntityTextUrl:
++        def __init__(self, offset, length, url):
++            self.offset = offset
++            self.length = length
++            self.url = url
++
++    telethon_module = ModuleType("telethon")
++    tl_module = ModuleType("telethon.tl")
++    types_module = ModuleType("telethon.tl.types")
++    helpers_module = ModuleType("telethon.helpers")
++    setattr(types_module, "MessageEntityTextUrl", MessageEntityTextUrl)
++    setattr(helpers_module, "add_surrogate", lambda value: value)
++    setattr(telethon_module, "tl", tl_module)
++    setattr(telethon_module, "helpers", helpers_module)
++    setattr(tl_module, "types", types_module)
++    monkeypatch.setitem(sys.modules, "telethon", telethon_module)
++    monkeypatch.setitem(sys.modules, "telethon.tl", tl_module)
++    monkeypatch.setitem(sys.modules, "telethon.tl.types", types_module)
++    monkeypatch.setitem(sys.modules, "telethon.helpers", helpers_module)
++    adapter._client = client
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert len(client.sent_messages) == 1
++    sent = client.sent_messages[0]
++    assert sent["destination"] == SimpleNamespace(id=2002)
++    assert sent["message"] == "Автор: Кирилл"
++    assert sent["reply_to"] == 10101
++    assert sent["link_preview"] is False
++    entity = sent["formatting_entities"][0]
++    assert type(entity).__name__ == "MessageEntityTextUrl"
++    assert (entity.offset, entity.length, entity.url) == (7, 6, "https://t.me/kirill")
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    ("sender_id", "author_username"),
++    [(None, "kirill"), (7001, None)],
++)
++async def test_native_forward_monitor_forwards_when_author_card_is_unavailable(
++    tmp_path, monkeypatch, sender_id, author_username
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "private-source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "forward_author_card": True,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "private-source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    client = FakeNativeForwardClient(
++        [native_forward_message(101, text="Объявление", sender_id=sender_id)],
++        preserves_source_header=False,
++        author_username=author_username,
++    )
++    adapter._client = client
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert len(client.forward_calls) == 1
++    assert client.sent_messages == []
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++    assert not (state_path.parent / "private-source-to-destination.failure.json").exists()
++
++
++@pytest.mark.asyncio
++async def test_native_forward_monitor_deduplicates_before_advancing_cursor(
++    tmp_path, monkeypatch
++):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "source-to-destination",
++                    "source_id": 1001,
++                    "destination_id": 2002,
++                    "interval_seconds": 10800,
++                }]
++            },
++        )
++    )
++    state_path = tmp_path / "native_forwards" / "source-to-destination.json"
++    state_path.parent.mkdir()
++    state_path.write_text(json.dumps({
++        "source_id": 1001,
++        "destination_id": 2002,
++        "last_processed_message_id": 100,
++    }))
++    client = FakeNativeForwardClient(
++        [native_forward_message(101)],
++        [SimpleNamespace(
++            id=10101,
++            fwd_from=SimpleNamespace(
++                channel_post=101,
++                from_id=SimpleNamespace(channel_id=1001),
++            ),
++        )],
++    )
++    adapter._client = client
++
++    await adapter._run_native_forward_monitor_once(adapter.native_forward_monitors[0])
++
++    assert client.forward_calls == []
++    assert json.loads(state_path.read_text())["last_processed_message_id"] == 101
++
++
++def test_native_forward_monitor_accepts_a_username_source(tmp_path, monkeypatch):
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    from plugins.platforms.telegram_userbot.adapter import TelegramUserbotAdapter
++
++    adapter = TelegramUserbotAdapter(
++        PlatformConfig(
++            enabled=True,
++            extra={
++                "native_forward_monitors": [{
++                    "name": "domkzn-to-ilnur",
++                    "source": "@domkzn",
++                    "destination_id": 5553851530,
++                }]
++            },
++        )
++    )
++
++    assert adapter.native_forward_monitors[0].source == "domkzn"
++
++
+ 
+ def test_session_work_dir_is_profile_local(tmp_path, monkeypatch):
+     monkeypatch.setenv("HERMES_HOME", str(tmp_path))

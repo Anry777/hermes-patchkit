@@ -1,0 +1,9 @@
+{
+  "name": "v2026.8.27-with-telegram-userbot",
+  "patches": [
+    "personal-overlay-v2026.8.27",
+    "relay-optional-noop-v2026.8.27",
+    "telegram-userbot-platform-plugin",
+    "telegram-userbot-native-forward-monitor"
+  ]
+}
