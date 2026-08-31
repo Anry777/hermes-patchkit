@@ -10713,3 +10713,80 @@ index 08e002dab..41817a30a 100644
  
  class TestInternalActivityResetPolicy:
      def test_internal_turn_does_not_advance_activity_clock(self, tmp_path):
+diff --git a/tests/tools/test_mcp_lazy_sdk_import.py b/tests/tools/test_mcp_lazy_sdk_import.py
+new file mode 100644
+index 000000000..b4595e6a1
+--- /dev/null
++++ b/tests/tools/test_mcp_lazy_sdk_import.py
+@@ -0,0 +1,21 @@
++"""Regression coverage for MCP SDK lazy-import availability."""
++
++
++def test_partial_sdk_import_reimports_required_symbols(monkeypatch):
++    """A partial lazy import must rebind every required stdio symbol.
++
++    A true availability result without ``StdioServerParameters`` reached
++    ``_run_stdio`` and failed with ``NameError`` during gateway startup.
++    """
++    import tools.mcp_tool as mcp_tool
++
++    monkeypatch.setattr(mcp_tool, "_MCP_AVAILABLE", True)
++    monkeypatch.setattr(mcp_tool, "_MCP_SDK_IMPORT_ATTEMPTED", True)
++    monkeypatch.setattr(mcp_tool, "ClientSession", object())
++    monkeypatch.delattr(mcp_tool, "StdioServerParameters", raising=False)
++    monkeypatch.delattr(mcp_tool, "stdio_client", raising=False)
++
++    assert mcp_tool._ensure_mcp_sdk() is True
++    assert mcp_tool.ClientSession is not None
++    assert mcp_tool.StdioServerParameters is not None
++    assert mcp_tool.stdio_client is not None
+diff --git a/tools/mcp_tool.py b/tools/mcp_tool.py
+index 658024e78..949a79a64 100644
+--- a/tools/mcp_tool.py
++++ b/tools/mcp_tool.py
+@@ -311,6 +311,14 @@ def __getattr__(name: str):
+     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+ 
+ 
++def _mcp_sdk_core_symbols_ready() -> bool:
++    """Whether the SDK symbols needed by every stdio transport are bound."""
++    return all(
++        globals().get(name) is not None
++        for name in ("ClientSession", "StdioServerParameters", "stdio_client")
++    )
++
++
+ def _ensure_mcp_sdk() -> bool:
+     """Import the optional ``mcp`` SDK on first use. Returns availability.
+ 
+@@ -334,10 +342,14 @@ def _ensure_mcp_sdk() -> bool:
+ 
+     if not _MCP_AVAILABLE:
+         return False
+-    if _MCP_SDK_IMPORT_ATTEMPTED or ClientSession is not None:
++    if _MCP_SDK_IMPORT_ATTEMPTED and _mcp_sdk_core_symbols_ready():
++        return _MCP_AVAILABLE
++    if ClientSession is not None and _mcp_sdk_core_symbols_ready():
+         return _MCP_AVAILABLE
+     with _MCP_SDK_IMPORT_LOCK:
+-        if _MCP_SDK_IMPORT_ATTEMPTED or ClientSession is not None:
++        if _MCP_SDK_IMPORT_ATTEMPTED and _mcp_sdk_core_symbols_ready():
++            return _MCP_AVAILABLE
++        if ClientSession is not None and _mcp_sdk_core_symbols_ready():
+             return _MCP_AVAILABLE
+         try:
+             from mcp import ClientSession, StdioServerParameters
+@@ -421,6 +433,13 @@ def _ensure_mcp_sdk() -> bool:
+             except ImportError:
+                 logger.debug("MCP notification types not available -- dynamic tool discovery disabled")
+         except ImportError:
++            # A ``from mcp import A, B`` statement can leave ``A`` bound when
++            # resolving ``B`` fails. Do not let a later guard treat that
++            # partial state as a usable SDK and leak a NameError from _run_stdio.
++            _MCP_AVAILABLE = False
++            ClientSession = None
++            StdioServerParameters = None
++            stdio_client = None
+             logger.debug("mcp package not installed -- MCP tool support disabled")
+ 
+         if _MCP_AVAILABLE:
