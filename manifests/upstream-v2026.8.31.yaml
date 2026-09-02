@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "upstream": {
+    "repo": "NousResearch/hermes-agent",
+    "ref": "v2026.8.31",
+    "commit": "29112bef099274229cadff79cdff7bf7b99c4b77"
+  },
+  "notes_en": "PatchKit personal and optional Telegram userbot overlays re-anchored on official Hermes Agent v0.21.0 / v2026.8.31. The refresh preserves only local behavior verified as absent upstream, including the MCP lazy-SDK recovery, and keeps Relay/userbot as separate optional units.",
+  "notes_ru": "Personal и optional Telegram userbot overlay PatchKit переякорены на официальный Hermes Agent v0.21.0 / v2026.8.31. Refresh сохраняет только локальное поведение, подтверждённо отсутствующее в upstream, включая recovery для lazy MCP SDK; Relay и userbot остаются отдельными optional units.",
+  "patches": [
+    {
+      "id": "personal-overlay-v2026.8.31",
+      "file": "patches/v2026.8.31/010-personal-overlay.patch",
+      "title_en": "Personal Hermes overlay for v2026.8.31",
+      "title_ru": "Personal Hermes overlay для v2026.8.31",
+      "description_en": "Carries still-needed local semantics on top of upstream v2026.8.31: root-global auth store, credential-pool safety, Telegram overflow first-chunk flood-control duplicate guard, MAX/MAX-userbot plugins with scoped TLS CA-bundle support, API server provider proxy/Codex Responses proxy with required Codex headers, configured LSP WebSocket transport, VibeMode provider routing metadata, explicit gateway local-file delivery safety, idle/daily reset context continuity, and lazy MCP SDK recovery.",
+      "description_ru": "Переносит нужные local semantics поверх upstream v2026.8.31: root-global auth store, credential-pool safety, guard от Telegram overflow duplicate при first-chunk flood-control, MAX/MAX-userbot plugins со scoped TLS CA bundle, API server provider proxy/Codex Responses proxy с обязательными Codex headers, configured LSP WebSocket transport, VibeMode provider routing, explicit gateway local-file delivery safety, continuity контекста через idle/daily reset и recovery lazy MCP SDK.",
+      "category": "personal",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "29112bef099274229cadff79cdff7bf7b99c4b77",
+      "refreshed_for": "v2026.8.31",
+      "absorbs": [
+        "auth-profile-root-fallback",
+        "credential-pool-recovery",
+        "telegram-rich-flood-fallback",
+        "max-platform-plugin",
+        "max-userbot-platform-plugin",
+        "api-server-provider-proxy",
+        "lsp-configured-websocket-transport",
+        "provider-plugin-model-switch",
+        "gateway-explicit-media-delivery-safety",
+        "gateway-auto-reset-context-continuity",
+        "vibemode-provider-plugin",
+        "mcp-lazy-sdk-recovery"
+      ],
+      "verification": {
+        "focused_tests": [
+          "tests/patchkit/test_auth_shared_root.py",
+          "tests/patchkit/test_credential_pool_recovery.py",
+          "tests/gateway/test_api_server_provider_proxy.py",
+          "tests/gateway/test_session_reset_notify.py",
+          "tests/hermes_cli/test_model_switch_custom_providers.py",
+          "tests/hermes_cli/test_vibemode_auth.py",
+          "tests/providers/test_provider_profiles.py",
+          "tests/providers/test_plugin_discovery.py",
+          "tests/run_agent/test_vibemode_provider_headers.py",
+          "tests/gateway/test_auto_upload_local_paths.py",
+          "tests/plugins/test_max_platform_plugin.py",
+          "tests/gateway/test_media_download_retry.py",
+          "tests/plugins/test_max_userbot_platform_plugin.py",
+          "tests/gateway/test_telegram_overflow_partial.py",
+          "tests/tools/test_mcp_lazy_sdk_import.py"
+        ]
+      },
+      "impact": [
+        "Auth remains root-global by design; profile-local auth.json is not authoritative on this host.",
+        "codex-responses-proxy/provider-proxy remains available for OpenAI-compatible and Responses-native clients.",
+        "VibeMode Claude slugs use the native Anthropic Messages endpoint; OpenAI-wire requests remove only X-Stainless SDK metadata at the final HTTPX boundary.",
+        "MAX overlays remain in the personal overlay; Telegram userbot remains separately optional."
+      ]
+    },
+    {
+      "id": "relay-optional-noop-v2026.8.31",
+      "file": "patches/v2026.8.31/081-relay-optional-noop.patch",
+      "title_en": "Quiet no-op fallback when NeMo Relay is unavailable (v2026.8.31)",
+      "title_ru": "Тихий no-op fallback при отсутствии NeMo Relay (v2026.8.31)",
+      "description_en": "Keeps optional NeMo Relay integration fail-open: a missing nemo-relay binding selects NoopRelayRuntime without a traceback, while missing transitive dependencies remain visible as warnings.",
+      "description_ru": "Сохраняет fail-open для optional NeMo Relay: отсутствие binding nemo-relay выбирает NoopRelayRuntime без traceback, а missing transitive dependencies остаются видимыми как warnings.",
+      "category": "observability",
+      "track": "local-overlay",
+      "optional": true,
+      "default": true,
+      "depends_on": ["personal-overlay-v2026.8.31"],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "29112bef099274229cadff79cdff7bf7b99c4b77",
+      "refreshed_for": "v2026.8.31",
+      "verification": {"focused_tests": ["tests/hermes_cli/test_relay_shared_metrics_runtime.py"]}
+    },
+    {
+      "id": "telegram-userbot-platform-plugin",
+      "file": "patches/v2026.8.31/079-telegram-userbot-platform-plugin.patch",
+      "title_en": "Telegram MTProto userbot platform plugin",
+      "title_ru": "Telegram MTProto userbot platform plugin",
+      "description_en": "Adds an experimental, opt-in telegram_userbot platform plugin backed by Telethon with profile-local locked sessions, deny-by-default sender/chat allowlists before gateway dispatch, fail-closed approvals, text/reply/edit/typing/media support, and no changes to the official Bot API adapter.",
+      "description_ru": "Добавляет experimental opt-in platform plugin telegram_userbot на базе Telethon с profile-local locked sessions, deny-by-default allowlist до gateway dispatch, fail-closed approvals, text/reply/edit/typing/media и без изменений official Bot API adapter.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": [],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "29112bef099274229cadff79cdff7bf7b99c4b77",
+      "refreshed_for": "v2026.8.31",
+      "verification": {"focused_tests": ["tests/plugins/test_telegram_userbot_platform_plugin.py", "tests/providers/test_plugin_discovery.py", "tests/gateway/test_platform_registry.py", "tests/gateway/test_status_command.py"]}
+    },
+    {
+      "id": "telegram-userbot-native-forward-monitor",
+      "file": "patches/v2026.8.31/082-telegram-userbot-native-forward-monitor.patch",
+      "title_en": "In-process Telegram native-forward monitor",
+      "title_ru": "Встроенный monitor нативной пересылки Telegram",
+      "description_en": "Adds profile-configured background native-forward monitors to the connected Telegram userbot. Monitors use the existing client and profile-local atomic cursors, seed without history replay, preserve albums, verify destination forward metadata, and stop with the adapter.",
+      "description_ru": "Добавляет profile-configured фоновые native-forward monitor-ы в подключённый Telegram userbot. Monitor использует существующий client и profile-local atomic cursor, стартует без replay истории, сохраняет альбомы, проверяет metadata пересылки в получателе и останавливается вместе с adapter.",
+      "category": "messaging",
+      "track": "local-overlay",
+      "optional": true,
+      "default": false,
+      "depends_on": ["telegram-userbot-platform-plugin"],
+      "conflicts_with": [],
+      "status": "exported",
+      "base_upstream": "29112bef099274229cadff79cdff7bf7b99c4b77",
+      "refreshed_for": "v2026.8.31",
+      "verification": {"focused_tests": ["tests/plugins/test_telegram_userbot_platform_plugin.py"]}
+    }
+  ]
+}

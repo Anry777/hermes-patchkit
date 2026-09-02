@@ -1,0 +1,7 @@
+{
+  "name": "v2026.8.31-upstream-fixes",
+  "patches": [
+    "personal-overlay-v2026.8.31",
+    "relay-optional-noop-v2026.8.31"
+  ]
+}

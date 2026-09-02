@@ -83,6 +83,20 @@ def git_apply_check(repo: Path, patch_path: Path, reverse: bool = False) -> tupl
     return result.returncode == 0, output
 
 
+def git_apply(repo: Path, patch_path: Path) -> None:
+    """Apply a patch to the disposable upstream candidate.
+
+    ``update.py`` previously checked every selected unit against the untouched
+    release tree. That is wrong for a profile where a later patch intentionally
+    modifies a file created by an earlier dependency: its standalone check
+    reports a false conflict even though the profile applies cleanly.
+    """
+    result = run_git(repo, "apply", str(patch_path), check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"git apply {patch_path} failed").strip()
+        raise PatchKitError(detail)
+
+
 def classify_patch(candidate_repo: Path, patchkit_root: Path, patch: dict, allow_placeholder: bool = False) -> PatchCheckResult:
     path = patch_file(patchkit_root, patch)
     patch_id = str(patch["id"])
@@ -122,7 +136,35 @@ def selected_patch_results(
     with tempfile.TemporaryDirectory(prefix="patchkit-update-") as tmp:
         candidate = clone_candidate(repo, upstream_ref, Path(tmp))
         upstream_head = run_git(candidate, "rev-parse", "--short", "HEAD").stdout.strip()
-        results = [classify_patch(candidate, patchkit_root, patch, allow_placeholder=allow_placeholder) for patch in selected]
+        results: list[PatchCheckResult] = []
+        result_by_id: dict[str, PatchCheckResult] = {}
+        for patch in selected:
+            patch_id = str(patch["id"])
+            failed_dependencies = [
+                dependency
+                for dependency in patch.get("depends_on", [])
+                if dependency in result_by_id
+                and result_by_id[dependency].status not in SAFE_STATUSES
+            ]
+            if failed_dependencies:
+                result = PatchCheckResult(
+                    patch_id,
+                    str(patch.get("title_en") or patch.get("title_ru") or patch_id),
+                    "blocked",
+                    patch_file(patchkit_root, patch),
+                    "blocked by failed dependency: " + ", ".join(failed_dependencies),
+                )
+            else:
+                result = classify_patch(
+                    candidate,
+                    patchkit_root,
+                    patch,
+                    allow_placeholder=allow_placeholder,
+                )
+                if result.status == "applies-cleanly":
+                    git_apply(candidate, result.patch_path)
+            results.append(result)
+            result_by_id[patch_id] = result
 
     return results, current_branch, current_head, upstream_head
 

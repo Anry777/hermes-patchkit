@@ -140,6 +140,86 @@ class UpdateScriptTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("dirty", result.stdout + result.stderr)
 
+    def test_update_stages_dependencies_before_checking_dependents(self):
+        """A dependent patch may modify a file created by an earlier unit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = root / "upstream"
+            live = root / "live-hermes"
+            patchkit = root / "patchkit"
+            reports = root / "reports"
+            (patchkit / "manifests").mkdir(parents=True)
+            (patchkit / "patches").mkdir()
+            (patchkit / "profiles").mkdir()
+
+            upstream.mkdir()
+            self.run_git(upstream, "init", "-b", "main")
+            self.configure_git(upstream)
+            (upstream / "base.txt").write_text("base\n", encoding="utf-8")
+            self.run_git(upstream, "add", ".")
+            self.run_git(upstream, "commit", "-m", "base")
+            base_head = self.run_git(upstream, "rev-parse", "HEAD").stdout.strip()
+
+            (upstream / "dependent.txt").write_text("first stage\n", encoding="utf-8")
+            self.run_git(upstream, "add", "dependent.txt")
+            first_patch = self.run_git(upstream, "diff", "--cached", "--binary").stdout
+            self.run_git(upstream, "commit", "-m", "first patch stage")
+            (upstream / "dependent.txt").write_text("second stage\n", encoding="utf-8")
+            second_patch = self.run_git(upstream, "diff", "--binary", "HEAD", "--", "dependent.txt").stdout
+            self.run_git(upstream, "reset", "--hard", base_head)
+
+            (patchkit / "patches" / "first.patch").write_text(first_patch, encoding="utf-8")
+            (patchkit / "patches" / "second.patch").write_text(second_patch, encoding="utf-8")
+            manifest = patchkit / "manifests" / "test.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "upstream": {"repo": str(upstream), "ref": "HEAD"},
+                        "patches": [
+                            {"id": "first", "file": "patches/first.patch", "status": "exported"},
+                            {"id": "second", "file": "patches/second.patch", "status": "exported", "depends_on": ["first"]},
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            profile = patchkit / "profiles" / "test.json"
+            profile.write_text(
+                json.dumps({"name": "dependent", "patches": ["first", "second"]}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "clone", str(upstream), str(live)], text=True, capture_output=True, check=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(UPDATE),
+                    "--repo",
+                    str(live),
+                    "--manifest",
+                    str(manifest),
+                    "--profile",
+                    str(profile),
+                    "--upstream",
+                    "HEAD",
+                    "--report-dir",
+                    str(reports),
+                    "--no-fetch",
+                    "--no-color",
+                ],
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("first", result.stdout)
+            self.assertIn("second", result.stdout)
+            self.assertEqual(result.stdout.count("applies-cleanly"), 2)
+            self.assertEqual(self.run_git(live, "status", "--porcelain").stdout.strip(), "")
+
     def test_tui_once_renders_dashboard_without_interactive_input(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
